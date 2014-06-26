@@ -70,6 +70,20 @@ struct token_t {
     bool empty() const {
         return range.length == 0;
     }
+    
+    // For debugging
+    const char *name() const {
+        switch (this->type) {
+            case none: return "<NONE>";
+            case open_paren: return "(";
+            case close_paren: return ")";
+            case open_square: return "[";
+            case close_square: return "]";
+            case bar: return "|";
+            case word: return "<word>";
+            default: return NULL;
+        }
+    }
 };
 typedef std::vector<token_t> token_list_t;
 
@@ -85,7 +99,7 @@ typedef std::vector<token_t> token_list_t;
 
 /* Usage grammar:
  
-    usage = expression_list
+    usage = WORD expression_list
 
     expression_list = expression opt_expression_list
  
@@ -119,6 +133,9 @@ class opt_ellipsis_t;
 struct parse_context_t {
     const token_list_t tokens;
     range_t remaining_range;
+    
+    parse_context_t(token_list_t &lst) : tokens(lst), remaining_range(0, lst.size())
+    {}
 
     /* Returns true if there are no more next tokens */
     bool is_at_end() const {
@@ -132,6 +149,14 @@ struct parse_context_t {
             result = tokens.at(remaining_range.start).type == t;
         }
         return result;
+    }
+    
+    token_t::type_t next_token_type() const {
+        if (this->is_at_end()) {
+            return token_t::none;
+        } else {
+            return tokens.at(remaining_range.start).type;
+        }
     }
 
     /* Returns the next token, decreasing the remaining range. Requires that there be a next token */
@@ -181,6 +206,80 @@ PARENT *parse_1_or_empty(parse_context_t *ctx) {
     return result;
 }
 
+/* Little helper class for dumping */
+class node_dumper_t {
+    std::string text;
+    unsigned int depth;
+    
+    // Instances of this class are expected to be quite transient. src is unowned.
+    const std::string *src;
+    
+    std::vector<std::string> lines;
+    
+    template<typename NODE_TYPE>
+    void dump_tree_internal(const NODE_TYPE& node) {
+        std::string result(2 * depth, ' ');
+        result.append(node.name());
+        lines.push_back(result);
+        unsigned unindent = node.unindent();
+        depth = depth + 1 - unindent;
+        node.dump_children(this);
+        depth = depth - 1 + unindent;
+    }
+    
+public:
+    template<typename T1>
+    void dump(const T1 &t1) {
+        /* Here t1 is expected to be auto_ptr<node_type> */
+        if (t1.get() != NULL) {
+            dump_tree_internal(*t1);
+        }
+    }
+    
+    void dump(const token_t &t1) {
+        if (t1.type != token_t::none) {
+            std::string result(2 * depth, ' ');
+            char buff[32];
+            if (t1.type == token_t::word && src != NULL) {
+                const std::string word(*src, t1.range.start, t1.range.length);
+                snprintf(buff, sizeof buff, "'%s' {%lu-%lu}", word.c_str(), t1.range.start, t1.range.length);
+            } else {
+                snprintf(buff, sizeof buff, "'%s' {%lu-%lu}", t1.name(), t1.range.start, t1.range.length);
+            }
+            result.append(buff);
+            lines.push_back(result);
+        }
+    }
+
+    template<typename T1, typename T2>
+    void dump(const T1 & t1, const T2 & t2) {
+        dump(t1);
+        dump(t2);
+    }
+    
+    template<typename T1, typename T2, typename T3, typename T4, typename T5>
+    void dump(const T1 & t1, const T2 & t2, const T3 & t3, const T4 &t4, const T5 &t5) {
+        dump(t1);
+        dump(t2);
+        dump(t3);
+        dump(t4);
+        dump(t5);
+    }
+    
+    template<typename NODE_TYPE>
+    static std::string dump_tree(const NODE_TYPE &node, const std::string &src) {
+        node_dumper_t dumper;
+        dumper.src = &src;
+        dumper.dump_tree_internal(node);
+        std::string result;
+        for (size_t i=0; i < dumper.lines.size(); i++) {
+            result.append(dumper.lines.at(i));
+            result.push_back('\n');
+        }
+        dumper.src = NULL;
+        return result;
+    }
+};
 
 /* Base class of all intermediate states */
 struct base_t {
@@ -190,18 +289,12 @@ struct base_t {
     // Range of tokens used
     range_t token_range;
     
-    // Constructors. The default production index is 0. The second constructor specifies one.
+    // Constructors. The default production index is 0. The second constructor specifies a production.
     base_t() : production(0){}
     base_t(uint8_t p) : production(p) {}
-};
-
-struct usage_t : public base_t {
-    auto_ptr<expression_list_t> expression_list;
-
-    // usage = expression_list
-    usage_t(auto_ptr<expression_list_t> c) : expression_list(c) {}
-    static usage_t *parse(struct parse_context_t *ctx) { return parse_1<usage_t, expression_list_t>(ctx); }
-    std::string dump(const std::string &src) const { return "usage"; }
+    
+    // How much to un-indent children when pretty-printing
+    unsigned unindent() const { return 0; }
 };
 
 struct expression_list_t : public base_t {
@@ -211,7 +304,42 @@ struct expression_list_t : public base_t {
     // expression_list = expression opt_expression_list
     expression_list_t(auto_ptr<expression_t> c1, auto_ptr<opt_expression_list_t> c2) : expression(c1), opt_expression_list(c2) {}
     static expression_list_t *parse(struct parse_context_t *ctx) {  return parse_2<expression_list_t, expression_t, opt_expression_list_t>(ctx); }
-    std::string dump(const std::string &src) const { return "usage"; }
+    std::string name() const { return "expression_list"; }
+    
+    void dump_children(node_dumper_t *d) const {
+        d->dump(expression, opt_expression_list);
+    }
+    
+    /* Don't indent children of opt_expression_list to keep the list looking flatter */
+    unsigned unindent() const { return 1; }
+};
+
+
+struct usage_t : public base_t {
+    token_t prog_name;
+    auto_ptr<expression_list_t> expression_list;
+
+    // usage = expression_list
+    usage_t(token_t t, auto_ptr<expression_list_t> c) : prog_name(t), expression_list(c) {}
+    
+    static usage_t *parse(struct parse_context_t *ctx) {
+        usage_t *result = NULL;
+        // TODO: generate error for missing word name
+        if (ctx->next_token_has_type(token_t::word)) {
+            token_t p = ctx->acquire_token();
+            auto_ptr<expression_list_t> el(expression_list_t::parse(ctx));
+            if (el.get()) {
+                result = new usage_t(p, el);
+            }
+        }
+        return result;
+    }
+    
+    std::string name() const { return "usage"; }
+    void dump_children(node_dumper_t *d) const {
+        d->dump(prog_name, expression_list);
+    }
+    
 };
 
 struct opt_expression_list_t : public base_t {
@@ -223,6 +351,11 @@ struct opt_expression_list_t : public base_t {
     // opt_expression_list = expression_list
     opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
     static opt_expression_list_t *parse(struct parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
+    std::string name() const { return "opt_expression_list"; }
+    void dump_children(node_dumper_t *d) const {
+        d->dump(expression_list);
+    }
+    unsigned unindent() const { return 1; }
 };
 
 struct expression_t : public base_t {
@@ -231,6 +364,10 @@ struct expression_t : public base_t {
     // expression = or_clause
     expression_t(auto_ptr<or_clause_t> c) : or_clause(c) {}
     static expression_t *parse(struct parse_context_t *ctx) { return parse_1<expression_t, or_clause_t>(ctx); }
+    std::string name() const { return "expression"; }
+    void dump_children(node_dumper_t *d) const {
+        d->dump(or_clause);
+    }
 };
 
 struct or_clause_t : public base_t {
@@ -240,6 +377,10 @@ struct or_clause_t : public base_t {
     //or_clause_t = simple_clause or_continuation
     or_clause_t(auto_ptr<simple_clause_t> c1, auto_ptr<or_continuation_t> c2) : clause(c1), or_continuation(c2) {}
     static or_clause_t *parse(struct parse_context_t *ctx) { return parse_2<or_clause_t, simple_clause_t, or_continuation_t>(ctx); }
+    std::string name() const { return "or_clause"; }
+    void dump_children(node_dumper_t *d) const {
+        d->dump(clause, or_continuation);
+    }
 };
 
 struct or_continuation_t : public base_t {
@@ -261,11 +402,17 @@ struct or_continuation_t : public base_t {
                 result = new or_continuation_t(token, c);
             } else {
                 // TODO: generate an error about trailing bar
+                fprintf(stderr, "Trailing bar\n");
             }
         } else {
             result = new or_continuation_t();
         }
         return result;
+    }
+    
+    std::string name() const { return "or_continuation"; }
+    void dump_children(node_dumper_t *d) const {
+        d->dump(vertical_bar, or_clause);
     }
 };
 
@@ -286,6 +433,11 @@ struct opt_ellipsis_t : public base_t {
             result = new opt_ellipsis_t();
         }
         return result;
+    }
+    
+    std::string name() const { return "opt_ellipsis"; }
+    void dump_children(node_dumper_t *d) const {
+        d->dump(ellipsis);
     }
 };
 
@@ -313,14 +465,15 @@ struct simple_clause_t : public base_t {
     static simple_clause_t *parse(struct parse_context_t * ctx) {
         simple_clause_t *result = NULL;
         if (ctx->is_at_end()) {
+            fprintf(stderr, "At end\n");
             return NULL;
         }
         
-        token_t init_token = ctx->acquire_token();
-        switch (init_token.type) {
+        switch (ctx->next_token_type()) {
             case token_t::open_paren:
             case token_t::open_square:
             {
+                token_t init_token = ctx->acquire_token();
                 auto_ptr<expression_list_t> contents(expression_list_t::parse(ctx));
                 if (contents.get()) {
                     bool is_paren = (init_token.type == token_t::open_paren);
@@ -336,6 +489,7 @@ struct simple_clause_t : public base_t {
                 }
                 break;
             }
+            
             case token_t::close_paren:
             case token_t::close_square:
                 result = NULL;
@@ -349,6 +503,7 @@ struct simple_clause_t : public base_t {
                 
             case token_t::word:
             {
+                token_t init_token = ctx->acquire_token();
                 auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
                 assert(ellipsis.get() != NULL); // should never fail
                 result = new simple_clause_t(init_token, ellipsis);
@@ -356,11 +511,17 @@ struct simple_clause_t : public base_t {
             }
                 
             case token_t::none:
-                assert(0 && "none-type token returned from acquire_token");
+                assert(0 && "none-type token returned from next_token_type when not at end of token stream");
                 break;
         }
         return result;
     }
+    
+    std::string name() const { return "simple_clause"; }
+    void dump_children(node_dumper_t *d) const {
+        d->dump(word, open_token, expression_list, close_token, opt_ellipsis);
+    }
+
 };
 
 #pragma mark -
@@ -371,7 +532,7 @@ template<typename string_t>
 class docopt_impl OPEN_DOCOPT_IMPL
 
 /* Class representing an error */
-class error_t {
+struct error_t {
     /* Where the error occurred */
     size_t location;
     
@@ -381,6 +542,7 @@ class error_t {
 typedef std::vector<error_t> error_list_t;
 
 /* Constructor takes the source */
+public:
 const string_t source;
 docopt_impl(const string_t &s) : source(s)
 {}
@@ -629,6 +791,7 @@ token_list_t tokenize_usage(size_t start, size_t end) {
         tokens.push_back(token_t(word_start, size - word_start, word_type));
         word_start = npos;
     }
+    return tokens;
 }
 
 CLOSE_DOCOPT_IMPL;
@@ -642,3 +805,25 @@ std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const
     
 }
 #endif
+
+int main(void) {
+    using namespace docopt_fish;
+    const std::string usage = "naval_fate ship <name> move <x> <y> [--speed=<kn>]";
+    docopt_impl<std::string> impl(usage);
+    token_list_t tokens = impl.tokenize_usage(0, usage.size());
+    fprintf(stderr, "%s\n", usage.c_str());
+    for (size_t i=0; i < tokens.size(); i++) {
+        const token_t &tok = tokens.at(i);
+        fprintf(stderr, "%lu: '%c' [%lu, %lu]\n", i, (char)tok.type, tok.range.start, tok.range.length);
+    }
+    
+    parse_context_t ctx(tokens);
+    usage_t *tree = usage_t::parse(&ctx);
+    
+    std::string dumped = node_dumper_t::dump_tree(*tree, usage);
+    fprintf(stderr, "%s\n", dumped.c_str());
+    
+    delete tree;
+    
+    return 0;
+}
