@@ -240,11 +240,19 @@ public:
         if (t1.type != token_t::none) {
             std::string result(2 * depth, ' ');
             char buff[32];
+            
             if (t1.type == token_t::word && src != NULL) {
                 const std::string word(*src, t1.range.start, t1.range.length);
-                snprintf(buff, sizeof buff, "'%s' {%lu-%lu}", word.c_str(), t1.range.start, t1.range.length);
+                snprintf(buff, sizeof buff, "'%s' ", word.c_str());
             } else {
-                snprintf(buff, sizeof buff, "'%s' {%lu-%lu}", t1.name(), t1.range.start, t1.range.length);
+                snprintf(buff, sizeof buff, "'%s' ", t1.name());
+            }
+            result.append(buff);
+            
+            if (t1.range.length == 1) {
+                snprintf(buff, sizeof buff, "{%lu}", t1.range.start);
+            } else {
+                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.range.start, t1.range.length);
             }
             result.append(buff);
             lines.push_back(result);
@@ -808,7 +816,7 @@ std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const
 
 int main(void) {
     using namespace docopt_fish;
-    const std::string usage = "naval_fate ship <name> move <x> <y> [--speed=<kn>]";
+    const std::string usage = "naval_fate mine (set|remove) <x> <y> [--moored|--drifting]";
     docopt_impl<std::string> impl(usage);
     token_list_t tokens = impl.tokenize_usage(0, usage.size());
     fprintf(stderr, "%s\n", usage.c_str());
