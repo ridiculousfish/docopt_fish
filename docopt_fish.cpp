@@ -108,24 +108,28 @@ typedef std::vector<token_t> token_list_t;
  
     expression = or_clause
  
-    or_clause = simple_clause or_continuation
+    or_clause = compound_clause or_continuation
  
     or_continuation = <empty> |
                       VERT_BAR or_clause
  
+    compound_clause = simple_clause |
+                      OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
+                      OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
+ 
     simple_clause = WORD opt_ellipsis
-                    OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
-                    OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
  
     opt_ellipsis = <empty> |
                    ELLIPSIS
 */
+
 class usage_t;
 class expression_list_t;
 class opt_expression_list_t;
 class expression_t;
 class or_clause_t;
 class or_continuation_t;
+class compound_clause_t;
 class simple_clause_t;
 class opt_ellipsis_t;
 
@@ -206,8 +210,55 @@ PARENT *parse_1_or_empty(parse_context_t *ctx) {
     return result;
 }
 
+// Node visitor class, using CRTP. Child classes should override accept(
+template<typename T>
+struct node_visitor_t {
+    /* Fallback implementation of accept, does nothing */
+    template<typename IGNORED_TYPE>
+    void accept(const IGNORED_TYPE& t) {}
+
+    /* Additional overrides */
+    template<typename IGNORED_TYPE>
+    void will_visit_children(const IGNORED_TYPE& t) {}
+    
+    template<typename IGNORED_TYPE>
+    void did_visit_children(const IGNORED_TYPE& t) {}
+
+    template<typename NODE_TYPE>
+    void visit_internal(const NODE_TYPE &node)
+    {
+        T *derived_this = static_cast<T *>(this);
+        derived_this->accept(node);
+        derived_this->will_visit_children(node);
+        node.visit_children(this);
+        derived_this->did_visit_children(node);
+    }
+    
+    
+    /* Function called from overrides of visit_children. We invoke an override of accept(), and then recurse to children. */
+    template<typename NODE_TYPE>
+    void visit(const NODE_TYPE &t)
+    {
+        if (t.get() != NULL) {
+            this->visit_internal(*t);
+        }
+    }
+    
+    /* Visit is called from node visit_children implementations. A token has no children. */
+    void visit(const token_t &token)
+    {
+        static_cast<T *>(this)->accept(token);
+    }
+    
+    /* Public entry point */
+    template<typename SOME_TYPE>
+    void begin(const SOME_TYPE &t) {
+        this->visit_internal(t);
+    }
+};
+
 /* Little helper class for dumping */
-class node_dumper_t {
+class node_dumper_t : public node_visitor_t<node_dumper_t> {
     std::string text;
     unsigned int depth;
     
@@ -216,27 +267,26 @@ class node_dumper_t {
     
     std::vector<std::string> lines;
     
+public:
     template<typename NODE_TYPE>
-    void dump_tree_internal(const NODE_TYPE& node) {
+    void accept(const NODE_TYPE& node) {
         std::string result(2 * depth, ' ');
         result.append(node.name());
         lines.push_back(result);
-        unsigned unindent = node.unindent();
-        depth = depth + 1 - unindent;
-        node.dump_children(this);
-        depth = depth - 1 + unindent;
     }
     
-public:
-    template<typename T1>
-    void dump(const T1 &t1) {
-        /* Here t1 is expected to be auto_ptr<node_type> */
-        if (t1.get() != NULL) {
-            dump_tree_internal(*t1);
-        }
+    template<typename NODE_TYPE>
+    void will_visit_children(const NODE_TYPE &t) {
+        depth = depth + 1 - t.unindent();
     }
     
-    void dump(const token_t &t1) {
+    template<typename NODE_TYPE>
+    void did_visit_children(const NODE_TYPE &t) {
+        depth = depth - 1 + t.unindent();
+    }
+
+    
+    void accept(const token_t &t1) {
         if (t1.type != token_t::none) {
             std::string result(2 * depth, ' ');
             char buff[32];
@@ -259,26 +309,11 @@ public:
         }
     }
 
-    template<typename T1, typename T2>
-    void dump(const T1 & t1, const T2 & t2) {
-        dump(t1);
-        dump(t2);
-    }
-    
-    template<typename T1, typename T2, typename T3, typename T4, typename T5>
-    void dump(const T1 & t1, const T2 & t2, const T3 & t3, const T4 &t4, const T5 &t5) {
-        dump(t1);
-        dump(t2);
-        dump(t3);
-        dump(t4);
-        dump(t5);
-    }
-    
     template<typename NODE_TYPE>
     static std::string dump_tree(const NODE_TYPE &node, const std::string &src) {
         node_dumper_t dumper;
         dumper.src = &src;
-        dumper.dump_tree_internal(node);
+        dumper.begin(node);
         std::string result;
         for (size_t i=0; i < dumper.lines.size(); i++) {
             result.append(dumper.lines.at(i));
@@ -314,8 +349,10 @@ struct expression_list_t : public base_t {
     static expression_list_t *parse(struct parse_context_t *ctx) {  return parse_2<expression_list_t, expression_t, opt_expression_list_t>(ctx); }
     std::string name() const { return "expression_list"; }
     
-    void dump_children(node_dumper_t *d) const {
-        d->dump(expression, opt_expression_list);
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(expression);
+        v->visit(opt_expression_list);
     }
     
     /* Don't indent children of opt_expression_list to keep the list looking flatter */
@@ -344,9 +381,13 @@ struct usage_t : public base_t {
     }
     
     std::string name() const { return "usage"; }
-    void dump_children(node_dumper_t *d) const {
-        d->dump(prog_name, expression_list);
+    
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(prog_name);
+        v->visit(expression_list);
     }
+
     
 };
 
@@ -360,10 +401,12 @@ struct opt_expression_list_t : public base_t {
     opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
     static opt_expression_list_t *parse(struct parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
     std::string name() const { return "opt_expression_list"; }
-    void dump_children(node_dumper_t *d) const {
-        d->dump(expression_list);
-    }
     unsigned unindent() const { return 1; }
+    
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(expression_list);
+    }
 };
 
 struct expression_t : public base_t {
@@ -373,21 +416,26 @@ struct expression_t : public base_t {
     expression_t(auto_ptr<or_clause_t> c) : or_clause(c) {}
     static expression_t *parse(struct parse_context_t *ctx) { return parse_1<expression_t, or_clause_t>(ctx); }
     std::string name() const { return "expression"; }
-    void dump_children(node_dumper_t *d) const {
-        d->dump(or_clause);
+    
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(or_clause);
     }
 };
 
 struct or_clause_t : public base_t {
-    auto_ptr<simple_clause_t> clause;
+    auto_ptr<compound_clause_t> clause;
     auto_ptr<or_continuation_t> or_continuation;
     
-    //or_clause_t = simple_clause or_continuation
-    or_clause_t(auto_ptr<simple_clause_t> c1, auto_ptr<or_continuation_t> c2) : clause(c1), or_continuation(c2) {}
-    static or_clause_t *parse(struct parse_context_t *ctx) { return parse_2<or_clause_t, simple_clause_t, or_continuation_t>(ctx); }
+    //or_clause_t = compound_clause or_continuation
+    or_clause_t(auto_ptr<compound_clause_t> c1, auto_ptr<or_continuation_t> c2) : clause(c1), or_continuation(c2) {}
+    static or_clause_t *parse(struct parse_context_t *ctx) { return parse_2<or_clause_t, compound_clause_t, or_continuation_t>(ctx); }
     std::string name() const { return "or_clause"; }
-    void dump_children(node_dumper_t *d) const {
-        d->dump(clause, or_continuation);
+    
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(clause);
+        v->visit(or_continuation);
     }
 };
 
@@ -419,8 +467,11 @@ struct or_continuation_t : public base_t {
     }
     
     std::string name() const { return "or_continuation"; }
-    void dump_children(node_dumper_t *d) const {
-        d->dump(vertical_bar, or_clause);
+    
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(vertical_bar);
+        v->visit(or_clause);
     }
 };
 
@@ -444,34 +495,59 @@ struct opt_ellipsis_t : public base_t {
     }
     
     std::string name() const { return "opt_ellipsis"; }
-    void dump_children(node_dumper_t *d) const {
-        d->dump(ellipsis);
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(ellipsis);
     }
 };
 
 struct simple_clause_t : public base_t {
-    // production 0
     token_t word;
+    auto_ptr<opt_ellipsis_t> opt_ellipsis;
+    
+    simple_clause_t(const token_t &t, auto_ptr<opt_ellipsis_t> e) : word(t), opt_ellipsis(e)
+    {}
+    
+    static simple_clause_t *parse(struct parse_context_t *ctx) {
+        if (! ctx->next_token_has_type(token_t::word)) {
+            return NULL;
+        }
+        token_t word = ctx->acquire_token();
+        auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
+        assert(ellipsis.get() != NULL); // should never fail
+        return new simple_clause_t(word, ellipsis);
+    }
+
+    std::string name() const { return "simple_clause"; }
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(word);
+        v->visit(opt_ellipsis);
+    }
+
+};
+
+struct compound_clause_t : public base_t {
+    // production 0
+    auto_ptr<simple_clause_t> simple_clause;
     
     // Collapsed for productions 1 and 2
     token_t open_token;
     auto_ptr<expression_list_t> expression_list;
     token_t close_token;
-    
-    // All ellipsis are collapsed into this
     auto_ptr<opt_ellipsis_t> opt_ellipsis;
     
-    //simple_clause = WORD opt_ellipsis
-    simple_clause_t(token_t w, auto_ptr<opt_ellipsis_t> e) : base_t(0), word(w), opt_ellipsis(e) {}
+    //compound_clause = simple_clause
+    compound_clause_t(auto_ptr<simple_clause_t> e) : base_t(0), simple_clause(e) {}
 
-    //simple_clause = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
-    //simple_clause = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
-    simple_clause_t(token_t a, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
+    //compound_clause = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
+    //compound_clause = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
+    compound_clause_t(token_t a, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
         : base_t(a.type == token_t::open_paren ? 1  : 2), open_token(a), expression_list(el), close_token(b), opt_ellipsis(e)
     {}
 
-    static simple_clause_t *parse(struct parse_context_t * ctx) {
-        simple_clause_t *result = NULL;
+    static compound_clause_t *parse(struct parse_context_t * ctx) {
+        compound_clause_t *result = NULL;
         if (ctx->is_at_end()) {
             fprintf(stderr, "At end\n");
             return NULL;
@@ -490,7 +566,7 @@ struct simple_clause_t : public base_t {
                         token_t close_token = ctx->acquire_token();
                         auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
                         assert(ellipsis.get() != NULL); // should never fail
-                        result = new simple_clause_t(init_token, contents, close_token, ellipsis);
+                        result = new compound_clause_t(init_token, contents, close_token, ellipsis);
                     } else {
                         // TODO: generate error of unclosed paren
                     }
@@ -511,10 +587,10 @@ struct simple_clause_t : public base_t {
                 
             case token_t::word:
             {
-                token_t init_token = ctx->acquire_token();
-                auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
-                assert(ellipsis.get() != NULL); // should never fail
-                result = new simple_clause_t(init_token, ellipsis);
+                auto_ptr<simple_clause_t> simple_clause(simple_clause_t::parse(ctx));
+                if (simple_clause.get()) {
+                    result = new compound_clause_t(simple_clause);
+                }
                 break;
             }
                 
@@ -525,9 +601,14 @@ struct simple_clause_t : public base_t {
         return result;
     }
     
-    std::string name() const { return "simple_clause"; }
-    void dump_children(node_dumper_t *d) const {
-        d->dump(word, open_token, expression_list, close_token, opt_ellipsis);
+    std::string name() const { return "compound_clause"; }
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(simple_clause);
+        v->visit(open_token);
+        v->visit(expression_list);
+        v->visit(close_token);
+        v->visit(opt_ellipsis);
     }
 
 };
