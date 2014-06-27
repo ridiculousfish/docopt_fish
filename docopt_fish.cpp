@@ -245,19 +245,18 @@ struct node_visitor_t {
     }
     
     /* Visit is called from node visit_children implementations. A token has no children. */
-    void visit(const token_t &token)
-    {
+    void visit(const token_t &token) {
         static_cast<T *>(this)->accept(token);
     }
     
     /* Public entry point */
-    template<typename SOME_TYPE>
-    void begin(const SOME_TYPE &t) {
+    template<typename ENTRY_TYPE>
+    void begin(const ENTRY_TYPE &t) {
         this->visit_internal(t);
     }
 };
 
-/* Little helper class for dumping */
+/* Helper class for pretty-printing */
 class node_dumper_t : public node_visitor_t<node_dumper_t> {
     std::string text;
     unsigned int depth;
@@ -324,6 +323,27 @@ public:
     }
 };
 
+/* Helper class for collecting options from a tree */
+template<typename NODE_TYPE>
+struct node_collector_t : public node_visitor_t<node_collector_t<NODE_TYPE> > {
+    std::vector<const NODE_TYPE *> results;
+    void accept(const NODE_TYPE& node) {
+        results.push_back(&node);
+    }
+
+};
+
+/* Helper class for collecting all nodes of a given type */
+template<typename ENTRY_TYPE, typename TYPE_TO_COLLECT>
+std::vector<const TYPE_TO_COLLECT *> collect_nodes(const ENTRY_TYPE *entry) {
+    node_collector_t<TYPE_TO_COLLECT> collector;
+    collector.begin(entry);
+    std::vector<const TYPE_TO_COLLECT *> result;
+    result.swap(collector.results);
+    return result;
+}
+
+
 /* Base class of all intermediate states */
 struct base_t {
     // Which production was used
@@ -387,8 +407,6 @@ struct usage_t : public base_t {
         v->visit(prog_name);
         v->visit(expression_list);
     }
-
-    
 };
 
 struct opt_expression_list_t : public base_t {
@@ -610,7 +628,6 @@ struct compound_clause_t : public base_t {
         v->visit(close_token);
         v->visit(opt_ellipsis);
     }
-
 };
 
 #pragma mark -
