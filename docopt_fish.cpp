@@ -38,6 +38,10 @@ struct range_t {
         assert(result >= start); //don't overflow
         return result;
     }
+    
+    bool empty() const {
+        return length == 0;
+    }
 };
 typedef std::vector<range_t> range_list_t;
 
@@ -87,6 +91,37 @@ struct token_t {
 };
 typedef std::vector<token_t> token_list_t;
 
+/* An option represents something like '--foo=bar' */
+struct option_t {
+    enum type_t {
+        single_short, // '-f'
+        single_long, // '-foo'
+        double_long // '--foo'
+    } type;
+    
+    // name of the option, like '--foo'
+    range_t name;
+    
+    // value of the option. Empty for no value.
+    range_t value;
+    
+    option_t(const range_t &n, const range_t &v, size_t leading_dash_count) : name(n), value(v) {
+        // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
+        if (leading_dash_count > 1) {
+            this->type = option_t::double_long;
+        } else if (n.length > 1) {
+            this->type = option_t::single_long;
+        } else {
+            this->type = option_t::single_short;
+        }
+    }
+    
+    /* We want a value if we have a non-empty value range */
+    bool has_value() const {
+        return ! value.empty();
+    }
+};
+typedef std::vector<option_t> option_list_t;
 
 /* Hide open and close brackets to avoid an annoying leading indent inside our class */
 #define OPEN_DOCOPT_IMPL {
@@ -213,10 +248,6 @@ PARENT *parse_1_or_empty(parse_context_t *ctx) {
 // Node visitor class, using CRTP. Child classes should override accept(
 template<typename T>
 struct node_visitor_t {
-    /* Fallback implementation of accept, does nothing */
-    template<typename IGNORED_TYPE>
-    void accept(const IGNORED_TYPE& t) {}
-
     /* Additional overrides */
     template<typename IGNORED_TYPE>
     void will_visit_children(const IGNORED_TYPE& t) {}
@@ -322,27 +353,6 @@ public:
         return result;
     }
 };
-
-/* Helper class for collecting options from a tree */
-template<typename NODE_TYPE>
-struct node_collector_t : public node_visitor_t<node_collector_t<NODE_TYPE> > {
-    std::vector<const NODE_TYPE *> results;
-    void accept(const NODE_TYPE& node) {
-        results.push_back(&node);
-    }
-
-};
-
-/* Helper class for collecting all nodes of a given type */
-template<typename ENTRY_TYPE, typename TYPE_TO_COLLECT>
-std::vector<const TYPE_TO_COLLECT *> collect_nodes(const ENTRY_TYPE *entry) {
-    node_collector_t<TYPE_TO_COLLECT> collector;
-    collector.begin(entry);
-    std::vector<const TYPE_TO_COLLECT *> result;
-    result.swap(collector.results);
-    return result;
-}
-
 
 /* Base class of all intermediate states */
 struct base_t {
@@ -633,6 +643,34 @@ struct compound_clause_t : public base_t {
 #pragma mark -
 
 
+/* Helper class for collecting options from a tree */
+template<typename NODE_TYPE>
+struct node_collector_t : public node_visitor_t<node_collector_t<NODE_TYPE> > {
+    std::vector<const NODE_TYPE *> results;
+    
+    // The requested type we capture
+    void accept(const NODE_TYPE& node) {
+        results.push_back(&node);
+    }
+    
+    // Other types we ignore
+    template<typename IGNORED_TYPE>
+    void accept(const IGNORED_TYPE& t) {}
+
+    
+};
+
+/* Helper class for collecting all nodes of a given type */
+template<typename ENTRY_TYPE, typename TYPE_TO_COLLECT>
+std::vector<const TYPE_TO_COLLECT *> collect_nodes(const ENTRY_TYPE &entry) {
+    node_collector_t<TYPE_TO_COLLECT> collector;
+    collector.begin(entry);
+    std::vector<const TYPE_TO_COLLECT *> result;
+    result.swap(collector.results);
+    return result;
+}
+
+
 /* Wrapper template class that takes either a string or wstring as string_t */
 template<typename string_t>
 class docopt_impl OPEN_DOCOPT_IMPL
@@ -679,21 +717,47 @@ typedef typename string_t::value_type char_t;
 
 /* Immutable class representing an optional string */
 class optional_string_t {
-    const bool imissing;
-    const string_t ivalue;
+public:
+    bool is_missing;
+    string_t ivalue;
     
-    optional_string_t() : imissing(true) {}
-    optional_string_t(const std::string &s) : imissing(false), ivalue(s) {}
+    optional_string_t() : is_missing(true) {}
+    optional_string_t(const string_t &s) : is_missing(false), ivalue(s) {}
+    
+    void operator=(const string_t &s) {
+        is_missing = false;
+        ivalue = s;
+    }
     
     bool missing() const {
-        return imissing;
+        return is_missing;
     }
     
     const string_t &value() {
-        assert(! this->missing);
+        assert(! this->is_missing);
         return ivalue;
     }
 };
+
+
+/* A positional argument */
+struct positional_argument_t {
+    string_t value;
+    
+    positional_argument_t(const string_t &s) : value(s)
+    {}
+};
+typedef std::vector<positional_argument_t> positional_argument_list_t;
+
+/* A resolved option with a name and optionally a value */
+struct resolved_option_t {
+    option_t option;
+    optional_string_t value;
+    
+    resolved_option_t(const option_t &opt, const optional_string_t &val) : option(opt), value(val)
+    {}
+};
+typedef std::vector<resolved_option_t> resolved_option_list_t;
 
 /* Helper function to efficiently iterate over lines of a string 'source'. On input, line_end should be initialized to the start point for the iteration. On return, line_start will point at the next line, and line_end will point just after the trailing newline, or possibly at source.size(). The length of the line is line_end - line_start (and is guaranteed to be positive). Returns true if a line was returned, false if we reached the end. */
 static bool get_next_line(const string_t &str, size_t *line_start, size_t *line_end)
@@ -729,6 +793,22 @@ static bool contains(const char *cstr, char_t c) {
     return false;
 }
 
+/* Returns true if the two strings are equal. */
+static bool str_equals(const char *a, const string_t &str) {
+    size_t len = str.size();
+    const char_t *cstr = str.c_str();
+    for (size_t i=0; i < len; i++) {
+        // See if we've either reached the end of a, or the characters are different
+        if (a[i] == '\0' || cstr[i] != a[i]) {
+            return false;
+        }
+    }
+    
+    // We made it through. Ensure they have the same lengths
+    // Note that we already dereferenced the previous characters of a
+    return a[len] == '\0';
+}
+
 /* Helper function for string equality. Returns true if a and b are equal up to the first len characters */
 static bool substr_equals(const char *a, const char_t *b, size_t len) {
     bool equals = true;
@@ -743,6 +823,11 @@ static bool substr_equals(const char *a, const char_t *b, size_t len) {
         }
     }
     return equals;
+}
+
+/* Helper function for string equality. Returns true if a and b are equal up to the first len characters */
+static bool substr_equals(const char *a, const string_t &b, size_t len) {
+    return substr_equals(a, b.c_str(), len);
 }
 
 /* Given a name like 'options:' and the usage text (as source), return a list of substrings of the
@@ -785,17 +870,19 @@ string_list_t parse_section(const char *name) {
     return sections;
 }
 
-/* Class representing options */
-class option_t {
-    /* Name, like 'speed' */
-    string_t name;
-    
-    /* Default value, like '10'.  */
-    optional_string_t default_value;
-    
-    /* How many dashes appeared, at least 1 */
-    unsigned dash_count;
-};
+
+/* Copies out the string of a token */
+string_t string_for_token(const token_t &tok) {
+    assert(tok.range.end() < this->source.length());
+    return string_t(this->source, tok.range.start, tok.range.length);
+}
+
+/* Copies out the string of a token */
+void set_string_for_token(const token_t &tok, string_t *result) {
+    assert(tok.range.end() < this->source.length());
+    result->assign(this->source, tok.range.start, tok.range.length);
+}
+
 
 /* Returns true if the given token matches the given narrow string, up to len characters */
 bool token_substr_equals(const token_t &tok, const char *str, size_t len) {
@@ -900,6 +987,140 @@ token_list_t tokenize_usage(size_t start, size_t end) {
     return tokens;
 }
 
+/* Collects options, i.e. tokens of the form --foo */
+template<typename ENTRY_TYPE>
+option_list_t collect_options(const ENTRY_TYPE &entry) {
+    option_list_t resulting_options;
+    std::vector<const simple_clause_t *> nodes = collect_nodes<ENTRY_TYPE, simple_clause_t>(entry);
+    for (size_t i=0; i < nodes.size(); i++) {
+        const token_t &tok = nodes.at(i)->word;
+        if (this->token_substr_equals(tok, "-", 1)) {
+            resulting_options.push_back(parse_option_from_string(this->source, tok.range, &this->errors));
+        }
+    }
+    return resulting_options;
+}
+
+/* Separates a substring of str into name and value ranges about an = sign. String must start with = */
+option_t parse_option_from_string(const string_t &str, const range_t &range, error_list_t *errors) {
+    assert(range.length > 0);
+    size_t start = range.start;
+    size_t len = range.length;
+    size_t end = range.end();
+    
+    // Count how many leading dashes
+    size_t leading_dash_count = 0;
+    while (leading_dash_count < len && str.at(start + leading_dash_count) == char_t('-')) {
+        leading_dash_count++;
+    }
+    assert(leading_dash_count > 0);
+    if (leading_dash_count > 2) {
+        append_error(errors, start, "Too many dashes");
+    }
+    
+    // find an =. We ignore any = signs after the first
+    size_t equals_pos = str.find(char_t('='), start);
+    if (equals_pos >= end) {
+        // Ignore any = sign at or past the end of our substring
+        equals_pos = string_t::npos;
+    }
+    
+    // Construct ranges
+    range_t name, value;
+    if (equals_pos == string_t::npos) {
+        // No value, name only
+        name = range_t(start + leading_dash_count, len - leading_dash_count);
+        value = range_t(len, 0);
+    } else {
+        // Has a value. The value starts just after the = sign
+        assert(equals_pos > leading_dash_count);
+        name = range_t(start + leading_dash_count, equals_pos - leading_dash_count - start);
+        value = range_t(equals_pos + 1, end - equals_pos - 1);
+    }
+    
+    return option_t(name, value, leading_dash_count);
+}
+
+/* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx. */
+bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
+    const string_t &arg = argv.at(*idx);
+    assert(substr_equals("--", arg, 2));
+    
+    /* Parse the argument into an 'option'. Note that this option does not appear in the options list. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
+    error_list_t local_errors;
+    const option_t arg_as_option = parse_option_from_string(arg, range_t(0, arg.size()), &local_errors);
+    // TODO: What if we get an error, e.g. there's more than two dashes?
+    assert(arg_as_option.type == option_t::double_long);
+    
+    /* Get list of matching long options. These are pointers into our options array */
+    std::vector<const option_t *> matches;
+    for (size_t i=0; i < options.size(); i++) {
+        const option_t &opt = options.at(i);
+        // This comparison is terrifying. It's just comparing two substrings: one in source (the given option) and the name portion of the argument
+        if (opt.type == option_t::double_long && this->source.compare(opt.name.start, opt.name.length, arg, arg_as_option.name.start, arg_as_option.name.length) == 0) {
+            matches.push_back(&opt);
+        }
+    }
+    
+    /* TODO: handle unambiguous prefix */
+    /* TODO: Better error reporting */
+    /* TODO: can eliminate matches array entirely, just use a single index */
+    
+    bool success = false;
+    size_t match_count = matches.size();
+    if (match_count > 1) {
+        append_error(out_errors, matches.at(0)->name.start, "Option specified too many times");
+    } else if (match_count < 1) {
+        append_error(out_errors, -1, "Unknown option");
+    } else {
+        assert(match_count == 1);
+        const option_t *match = matches.at(0);
+        /* Ensure the option and argument agree on having a value */
+        if (match->has_value() && ! arg_as_option.has_value()) {
+            // TODO: need a mechanism to report an error in an argument
+            append_error(&errors, match->value.start, "Option expects an argument");
+        } else if (! match->has_value() && arg_as_option.has_value()) {
+            append_error(&errors, match->name.start, "Option does not expect an argument");
+        } else {
+            // They agree
+            optional_string_t value;
+            if (arg_as_option.has_value()) {
+                value = string_t(arg, arg_as_option.value.start, arg_as_option.value.length);
+            }
+            out_result->push_back(resolved_option_t(*match, value));
+            *idx += 1;
+            success = true;
+        }
+    }
+    return success;
+}
+
+/* Parse argv */
+void parse_argv(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first = false) {
+    
+    size_t idx = 0;
+    while (idx < argv.size()) {
+        const string_t arg = argv.at(idx);
+        if (str_equals("--", arg)) {
+            // Literal --. The remaining arguments are positional. Insert everything left and exit early
+            out_positionals->insert(out_positionals->end(), argv.begin() + idx + 1, argv.end());
+            break;
+        } else if (substr_equals("--", arg, 2)) {
+            // Leading long option
+            if (parse_long(argv, &idx, options, out_resolved_options, &this->errors)) {
+                // parse_long will have updated idx and out_resolved_options
+            } else {
+                // We have to update idx
+                idx += 1;
+            }
+        } else {
+            // TODO: single options
+            out_positionals->push_back(arg);
+            idx += 1;
+        }
+    }
+}
+
 CLOSE_DOCOPT_IMPL;
 
 #if 0
@@ -926,8 +1147,22 @@ int main(void) {
     parse_context_t ctx(tokens);
     usage_t *tree = usage_t::parse(&ctx);
     
+    option_list_t options = impl.collect_options(*tree);
+    
     std::string dumped = node_dumper_t::dump_tree(*tree, usage);
     fprintf(stderr, "%s\n", dumped.c_str());
+    
+    std::vector<std::string> argv;
+    argv.push_back("naval_fate");
+    argv.push_back("mine");
+    argv.push_back("set");
+    argv.push_back("10");
+    argv.push_back("20");
+    argv.push_back("--moored");
+    
+    docopt_impl<std::string>::positional_argument_list_t positionals;
+    docopt_impl<std::string>::resolved_option_list_t resolved_options;
+    impl.parse_argv(argv, options, &positionals, &resolved_options);
     
     delete tree;
     
