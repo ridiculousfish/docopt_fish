@@ -43,6 +43,10 @@ struct range_t {
     bool empty() const {
         return length == 0;
     }
+    
+    bool operator==(const range_t &rhs) const {
+        return this->start == rhs.start && this->length == rhs.length;
+    }
 };
 typedef std::vector<range_t> range_list_t;
 
@@ -121,6 +125,10 @@ struct option_t {
     bool has_value() const {
         return ! value.empty();
     }
+    
+    bool operator==(const option_t &rhs) const {
+        return this->type == rhs.type && this->name == rhs.name && this->value == rhs.value;
+    }
 };
 typedef std::vector<option_t> option_list_t;
 
@@ -149,11 +157,11 @@ typedef std::vector<option_t> option_list_t;
     or_continuation = <empty> |
                       VERT_BAR or_clause
  
-    compound_clause = simple_clause |
+    compound_clause = simple_clause opt_ellipsis |
                       OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
                       OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
  
-    simple_clause = WORD opt_ellipsis
+    simple_clause = WORD
  
     opt_ellipsis = <empty> |
                    ELLIPSIS
@@ -532,9 +540,8 @@ struct opt_ellipsis_t : public base_t {
 
 struct simple_clause_t : public base_t {
     token_t word;
-    auto_ptr<opt_ellipsis_t> opt_ellipsis;
     
-    simple_clause_t(const token_t &t, auto_ptr<opt_ellipsis_t> e) : word(t), opt_ellipsis(e)
+    simple_clause_t(const token_t &t) : word(t)
     {}
     
     static simple_clause_t *parse(struct parse_context_t *ctx) {
@@ -542,16 +549,13 @@ struct simple_clause_t : public base_t {
             return NULL;
         }
         token_t word = ctx->acquire_token();
-        auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
-        assert(ellipsis.get() != NULL); // should never fail
-        return new simple_clause_t(word, ellipsis);
+        return new simple_clause_t(word);
     }
 
     std::string name() const { return "simple_clause"; }
     template<typename T>
     void visit_children(T *v) const {
         v->visit(word);
-        v->visit(opt_ellipsis);
     }
 
 };
@@ -564,16 +568,19 @@ struct compound_clause_t : public base_t {
     token_t open_token;
     auto_ptr<expression_list_t> expression_list;
     token_t close_token;
+    
+    // Collapsed for all
     auto_ptr<opt_ellipsis_t> opt_ellipsis;
     
     //compound_clause = simple_clause
-    compound_clause_t(auto_ptr<simple_clause_t> e) : base_t(0), simple_clause(e) {}
+    compound_clause_t(auto_ptr<simple_clause_t> c, auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
 
     //compound_clause = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
     //compound_clause = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
     compound_clause_t(token_t a, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
         : base_t(a.type == token_t::open_paren ? 1  : 2), open_token(a), expression_list(el), close_token(b), opt_ellipsis(e)
-    {}
+    {
+    }
 
     static compound_clause_t *parse(struct parse_context_t * ctx) {
         compound_clause_t *result = NULL;
@@ -583,8 +590,8 @@ struct compound_clause_t : public base_t {
         }
         
         switch (ctx->next_token_type()) {
-            case token_t::open_paren:
             case token_t::open_square:
+            case token_t::open_paren:
             {
                 token_t init_token = ctx->acquire_token();
                 auto_ptr<expression_list_t> contents(expression_list_t::parse(ctx));
@@ -618,7 +625,9 @@ struct compound_clause_t : public base_t {
             {
                 auto_ptr<simple_clause_t> simple_clause(simple_clause_t::parse(ctx));
                 if (simple_clause.get()) {
-                    result = new compound_clause_t(simple_clause);
+                    auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
+                    assert(ellipsis.get() != NULL); // should never fail
+                    result = new compound_clause_t(simple_clause, ellipsis);
                 }
                 break;
             }
@@ -734,7 +743,7 @@ public:
         return is_missing;
     }
     
-    const string_t &value() {
+    const string_t &value() const {
         assert(! this->is_missing);
         return ivalue;
     }
@@ -876,11 +885,15 @@ string_list_t parse_section(const char *name) {
     return sections;
 }
 
+/* Copies out the string of a range */
+string_t string_for_range(const range_t &range) {
+    assert(range.end() < this->source.length());
+    return string_t(this->source, range.start, range.length);
+}
 
 /* Copies out the string of a token */
 string_t string_for_token(const token_t &tok) {
-    assert(tok.range.end() < this->source.length());
-    return string_t(this->source, tok.range.start, tok.range.length);
+    return string_for_range(tok.range);
 }
 
 /* Copies out the string of a token */
@@ -1113,8 +1126,8 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
     return success;
 }
 
-/* Parse argv */
-void parse_argv(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first = false) {
+/* The Python implementation calls this "parse_argv" */
+void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first = false) {
     
     size_t idx = 0;
     while (idx < argv.size()) {
@@ -1303,33 +1316,61 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, ma
 }
 
 match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) {
-    if (! ctx->has_more_positionals(state)) {
-        return no_match();
-    }
-    
     // todo: ellipsis
     // Check to see if this is an argument or a variable
     match_state_list_t result;
     const range_t &range = node.word.range;
-    if (this->source.at(range.start) == char_t('<')) {
-        // Variable argument. Modify the state.
-        assert(range.length >= 2);
-        const string_t name = string_t(this->source, range.start + 1, range.length - 2);
-        arg_t *arg = &state->option_map[name];
-        arg->key = name;
-        arg->values.push_back(ctx->acquire_next_positional(state).value);
-        state_destructive_append_to(state, &result);
-    } else {
-        // Fixed argument
-        const string_t &name = ctx->next_positional(state).value;
-        if (0 == this->source.compare(range.start, range.length, name)) {
-            // The fixed argument matches
+    char_t first_char = this->source.at(range.start);
+    
+    if (first_char == char_t('<')) {
+        if (ctx->has_more_positionals(state)) {
+            // Variable argument. Modify the state.
+            assert(range.length >= 2);
+            const string_t name = string_t(this->source, range.start + 1, range.length - 2);
+            arg_t *arg = &state->option_map[name];
+            arg->key = name;
+            arg->values.push_back(ctx->acquire_next_positional(state).value);
+            state_destructive_append_to(state, &result);
+        }
+    } else if (first_char == char_t('-')) {
+        // Option
+        const option_t opt_in_doc = parse_option_from_string(this->source, range, NULL);
+        
+        // Find the matching option from the option list
+        const resolved_option_t *resolved_opt = NULL;
+        for (size_t i=0; i < ctx->resolved_options.size(); i++) {
+            const resolved_option_t *opt_in_argv = &ctx->resolved_options.at(i);
+            if (opt_in_argv->option == opt_in_doc) {
+                resolved_opt = opt_in_argv;
+                break;
+            }
+        }
+        
+        if (resolved_opt != NULL) {
+            // woo hoo
+            const string_t name = this->string_for_range(opt_in_doc.name);
             arg_t *arg = &state->option_map[name];
             arg->key.assign(name);
-            arg->values.push_back(string_t(1, char_t('1')));
+            if (! resolved_opt->value.missing()) {
+                arg->values.push_back(resolved_opt->value.value());
+            }
             arg->count += 1;
-            ctx->acquire_next_positional(state);
             state_destructive_append_to(state, &result);
+        }
+        
+    } else {
+        // Fixed argument
+        if (ctx->has_more_positionals(state)) {
+            const string_t &name = ctx->next_positional(state).value;
+            if (this->source.compare(range.start, range.length, name) == 0) {
+                // The fixed argument matches
+                arg_t *arg = &state->option_map[name];
+                arg->key.assign(name);
+                arg->values.push_back(string_t(1, char_t('1')));
+                arg->count += 1;
+                ctx->acquire_next_positional(state);
+                state_destructive_append_to(state, &result);
+            }
         }
     }
     return result;
@@ -1402,7 +1443,7 @@ int main(void) {
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
     docopt_impl<std::string>::resolved_option_list_t resolved_options;
-    impl.parse_argv(argv, options, &positionals, &resolved_options);
+    impl.separate_argv_into_options_and_positionals(argv, options, &positionals, &resolved_options);
     
     for (size_t i=0; i < positionals.size(); i++) {
         fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
