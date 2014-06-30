@@ -158,12 +158,10 @@ typedef std::vector<option_t> option_list_t;
     opt_expression_list = <empty> |
                           expression_list
  
-    expression = or_clause
- 
-    or_clause = compound_clause or_continuation
+    expression = compound_clause or_continuation
  
     or_continuation = <empty> |
-                      VERT_BAR or_clause
+                      VERT_BAR expression
  
     compound_clause = simple_clause opt_ellipsis |
                       OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
@@ -179,7 +177,6 @@ class usage_t;
 class expression_list_t;
 class opt_expression_list_t;
 class expression_t;
-class or_clause_t;
 class or_continuation_t;
 class compound_clause_t;
 class simple_clause_t;
@@ -455,50 +452,36 @@ struct opt_expression_list_t : public base_t {
 };
 
 struct expression_t : public base_t {
-    auto_ptr<or_clause_t> or_clause;
+    auto_ptr<compound_clause_t> compound_clause;
+    auto_ptr<or_continuation_t> or_continuation;
     
-    // expression = or_clause
-    expression_t(auto_ptr<or_clause_t> c) : or_clause(c) {}
-    static expression_t *parse(struct parse_context_t *ctx) { return parse_1<expression_t, or_clause_t>(ctx); }
+    // expression = compound_clause or_continuation
+    expression_t(auto_ptr<compound_clause_t> c, auto_ptr<or_continuation_t> oc) : compound_clause(c), or_continuation(oc) {}
+    static expression_t *parse(struct parse_context_t *ctx) { return parse_2<expression_t, compound_clause_t, or_continuation_t>(ctx); }
     std::string name() const { return "expression"; }
     
     template<typename T>
     void visit_children(T *v) const {
-        v->visit(or_clause);
-    }
-};
-
-struct or_clause_t : public base_t {
-    auto_ptr<compound_clause_t> clause;
-    auto_ptr<or_continuation_t> or_continuation;
-    
-    //or_clause_t = compound_clause or_continuation
-    or_clause_t(auto_ptr<compound_clause_t> c1, auto_ptr<or_continuation_t> c2) : clause(c1), or_continuation(c2) {}
-    static or_clause_t *parse(struct parse_context_t *ctx) { return parse_2<or_clause_t, compound_clause_t, or_continuation_t>(ctx); }
-    std::string name() const { return "or_clause"; }
-    
-    template<typename T>
-    void visit_children(T *v) const {
-        v->visit(clause);
+        v->visit(compound_clause);
         v->visit(or_continuation);
     }
 };
 
 struct or_continuation_t : public base_t {
     token_t vertical_bar;
-    auto_ptr<or_clause_t> or_clause;
+    auto_ptr<expression_t> expression;
     
     // or_continuation = <empty>
     or_continuation_t() {}
     
     // or_continuation =  VERT_BAR or_clause
-    or_continuation_t(token_t b, auto_ptr<or_clause_t> c) : base_t(1), vertical_bar(b), or_clause(c) {}
+    or_continuation_t(token_t b, auto_ptr<expression_t> c) : base_t(1), vertical_bar(b), expression(c) {}
     
     static or_continuation_t *parse(struct parse_context_t *ctx) {
         or_continuation_t *result = NULL;
         if (ctx->next_token_has_type(token_t::bar)) {
             token_t token = ctx->acquire_token();
-            auto_ptr<or_clause_t> c(or_clause_t::parse(ctx));
+            auto_ptr<expression_t> c(expression_t::parse(ctx));
             if (c.get()) {
                 result = new or_continuation_t(token, c);
             } else {
@@ -516,7 +499,7 @@ struct or_continuation_t : public base_t {
     template<typename T>
     void visit_children(T *v) const {
         v->visit(vertical_bar);
-        v->visit(or_clause);
+        v->visit(expression);
     }
 };
 
@@ -1290,13 +1273,9 @@ match_state_list_t match(const opt_expression_list_t &node, match_state_t *state
 
 
 match_state_list_t match(const expression_t &node, match_state_t *state, match_context_t *ctx) {
-    return try_match(node.or_clause, state, ctx);
-}
-
-match_state_list_t match(const or_clause_t &node, match_state_t *state, match_context_t *ctx) {
     // Must duplicate the state for the second branch
     match_state_t copied_state = *state;
-    match_state_list_t result1 = try_match(node.clause, state, ctx);
+    match_state_list_t result1 = try_match(node.compound_clause, state, ctx);
     match_state_list_t result2 = try_match(node.or_continuation, &copied_state, ctx);
     
     // Combine the two lists into result1
@@ -1305,7 +1284,7 @@ match_state_list_t match(const or_clause_t &node, match_state_t *state, match_co
 }
 
 match_state_list_t match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx) {
-    return try_match(node.or_clause, state, ctx);
+    return try_match(node.expression, state, ctx);
 }
 
 match_state_list_t match(const compound_clause_t &node, match_state_t *state, match_context_t *ctx) {
