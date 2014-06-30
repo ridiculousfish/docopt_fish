@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <cstring>
 #include <cstdint>
+#include <iostream>
 
 using namespace docopt_fish;
 
@@ -386,7 +387,7 @@ struct expression_list_t : public base_t {
     }
     
     /* Don't indent children of opt_expression_list to keep the list looking flatter */
-    unsigned unindent() const { return 1; }
+    unsigned unindent() const { return 1*0; }
 };
 
 
@@ -429,7 +430,7 @@ struct opt_expression_list_t : public base_t {
     opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
     static opt_expression_list_t *parse(struct parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
     std::string name() const { return "opt_expression_list"; }
-    unsigned unindent() const { return 1; }
+    unsigned unindent() const { return 1*0; }
     
     template<typename T>
     void visit_children(T *v) const {
@@ -737,6 +738,11 @@ public:
         assert(! this->is_missing);
         return ivalue;
     }
+    
+    const char_t *c_str_or_empty() const {
+        // A missing optional string has an empty underlying string
+        return ivalue.c_str();
+    }
 };
 
 
@@ -886,7 +892,7 @@ void set_string_for_token(const token_t &tok, string_t *result) {
 
 /* Returns true if the given token matches the given narrow string, up to len characters */
 bool token_substr_equals(const token_t &tok, const char *str, size_t len) {
-    assert(tok.range.end() < this->source.length());
+    assert(tok.range.end() <= this->source.length());
     if (len > tok.range.length) {
         /* If our token is too short, then it doesn't match */
         return false;
@@ -1073,24 +1079,36 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
     } else if (match_count < 1) {
         append_error(out_errors, -1, "Unknown option");
     } else {
+        bool errored = false;
         assert(match_count == 1);
         const option_t *match = matches.at(0);
+        optional_string_t value;
+        
         /* Ensure the option and argument agree on having a value */
-        if (match->has_value() && ! arg_as_option.has_value()) {
-            // TODO: need a mechanism to report an error in an argument
-            append_error(&errors, match->value.start, "Option expects an argument");
-        } else if (! match->has_value() && arg_as_option.has_value()) {
-            append_error(&errors, match->name.start, "Option does not expect an argument");
-        } else {
-            // They agree
-            optional_string_t value;
+        if (match->has_value()) {
             if (arg_as_option.has_value()) {
+                // The arg was specified as --foo=bar
                 value = string_t(arg, arg_as_option.value.start, arg_as_option.value.length);
+            } else {
+                // The arg was (hopefully) specified as --foo bar
+                if (*idx + 1 < argv.size()) {
+                    value = argv.at(*idx + 1);
+                    *idx += 1;
+                } else {
+                    append_error(&errors, match->value.start, "Option expects an argument");
+                    errored = true;
+                }
             }
+        } else if (arg_as_option.has_value()) {
+            // A value was specified as --foo=bar, but none was expected
+            append_error(&errors, match->name.start, "Option does not expect an argument");
+            errored = true;
+        }
+        if (! errored) {
             out_result->push_back(resolved_option_t(*match, value));
             *idx += 1;
-            success = true;
         }
+        success = true;
     }
     return success;
 }
@@ -1117,6 +1135,228 @@ void parse_argv(const string_list_t &argv, const option_list_t &options, positio
             // TODO: single options
             out_positionals->push_back(arg);
             idx += 1;
+        }
+    }
+}
+
+/* The result of parsing argv */
+typedef std::map<string_t, base_argument_t<string_t> > option_map_t;
+typedef std::vector<option_map_t> option_map_list_t;
+
+struct match_state_t {
+    option_map_t option_map;
+    size_t next_positional_index;
+    
+    match_state_t() : next_positional_index(0)
+    {}
+    
+    void swap(match_state_t &rhs) {
+        this->option_map.swap(rhs.option_map);
+        std::swap(this->next_positional_index, rhs.next_positional_index);
+    }
+};
+
+typedef std::vector<match_state_t> match_state_list_t;
+
+static match_state_list_t no_match() { return match_state_list_t(); }
+
+struct match_context_t {
+    /* Note: these are stored references. These objects are expected to be transient. */
+    const positional_argument_list_t &positionals;
+    const resolved_option_list_t &resolved_options;
+    
+    bool has_more_positionals(const match_state_t *state) const {
+        assert(state->next_positional_index <= positionals.size());
+        return state->next_positional_index < positionals.size();
+    }
+    
+    const positional_argument_t &next_positional(match_state_t *state) const {
+        assert(state->next_positional_index < positionals.size());
+        return positionals.at(state->next_positional_index);
+    }
+    
+    const positional_argument_t &acquire_next_positional(match_state_t *state) {
+        assert(state->next_positional_index < positionals.size());
+        return positionals.at(state->next_positional_index++);
+    }
+    
+    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r) : positionals(p), resolved_options(r)
+    {}
+};
+
+static void state_list_destructive_append_to(match_state_list_t *source, match_state_list_t *dest) {
+    size_t src_count = source->size();
+    size_t dst_init_count = dest->size();
+    
+    // Add a bunch of empty maps to the destination
+    dest->resize(dst_init_count + src_count);
+    
+    // Swap corresponding empty maps
+    for (size_t i=0; i < src_count; i++) {
+        match_state_t &src_state = source->at(i);
+        match_state_t &dst_state = dest->at(i + dst_init_count);
+        dst_state.swap(src_state);
+    }
+    
+    // Clean up source since it's now useless
+    source->clear();
+}
+
+static void state_destructive_append_to(match_state_t *state, match_state_list_t *dest) {
+    dest->resize(dest->size() + 1);
+    dest->back().swap(*state);
+}
+
+template<typename T>
+match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx) {
+    match_state_list_t result;
+    if (ptr.get()) {
+        result = this->match(*ptr, state, ctx);
+    }
+    return result;
+}
+
+template<typename T>
+match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx) {
+    match_state_list_t total_result;
+    if (ptr.get()) {
+        for (size_t i=0; i < state_list.size(); i++) {
+            match_state_t *state = &state_list.at(i);
+            match_state_list_t child_result = this->match(*ptr, state, ctx);
+            state_list_destructive_append_to(&child_result, &total_result);
+        }
+    }
+    return total_result;
+}
+
+/* Match overrides */
+match_state_list_t match(const usage_t &node, match_state_t *map, match_context_t *ctx) {
+    if (! ctx->has_more_positionals(map)) {
+        // todo: error handling
+        return no_match();
+    }
+    ctx->acquire_next_positional(map);
+    return try_match(node.expression_list, map, ctx);
+}
+
+match_state_list_t match(const expression_list_t &node, match_state_t *state, match_context_t *ctx) {
+    match_state_list_t intermed_state_list = try_match(node.expression, state, ctx);
+    return try_match(node.opt_expression_list, intermed_state_list, ctx);
+}
+
+match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx) {
+    match_state_list_t result;
+    if (node.expression_list.get()) {
+        return match(*node.expression_list, state, ctx);
+    } else {
+        // end of the list
+        return match_state_list_t(1, *state);
+    }
+}
+
+
+match_state_list_t match(const expression_t &node, match_state_t *state, match_context_t *ctx) {
+    return try_match(node.or_clause, state, ctx);
+}
+
+match_state_list_t match(const or_clause_t &node, match_state_t *state, match_context_t *ctx) {
+    // Must duplicate the state for the second branch
+    match_state_t copied_state = *state;
+    match_state_list_t result1 = try_match(node.clause, state, ctx);
+    match_state_list_t result2 = try_match(node.or_continuation, &copied_state, ctx);
+    
+    // Combine the two lists into result1
+    state_list_destructive_append_to(&result2, &result1);
+    return result1;
+}
+
+match_state_list_t match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx) {
+    return try_match(node.or_clause, state, ctx);
+}
+
+match_state_list_t match(const compound_clause_t &node, match_state_t *state, match_context_t *ctx) {
+    // todo: ellipsis
+    switch (node.production) {
+        case 0:
+            // simple clause
+            return try_match(node.simple_clause, state, ctx);
+            
+        case 1:
+            // paren, is required
+            return try_match(node.expression_list, state, ctx);
+            
+        case 2:
+        {
+            // Square, is optional. Duplicate the state for the not-taken branch.
+            match_state_t not_taken_branch = *state;
+            match_state_list_t result = try_match(node.expression_list, state, ctx);
+            
+            // Append the not taken branch
+            state_destructive_append_to(&not_taken_branch, &result);
+            return result;
+        }
+        
+        default:
+            assert(0 && "unknown production");
+            return no_match();
+    }
+}
+
+match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) {
+    if (! ctx->has_more_positionals(state)) {
+        return no_match();
+    }
+    
+    // todo: ellipsis
+    // Check to see if this is an argument or a variable
+    match_state_list_t result;
+    const range_t &range = node.word.range;
+    if (this->source.at(range.start) == char_t('<')) {
+        // Variable argument. Modify the state.
+        assert(range.length >= 2);
+        const string_t name = string_t(this->source, range.start + 1, range.length - 2);
+        arg_t *arg = &state->option_map[name];
+        arg->key = name;
+        arg->values.push_back(ctx->acquire_next_positional(state).value);
+        state_destructive_append_to(state, &result);
+    } else {
+        // Fixed argument
+        const string_t &name = ctx->next_positional(state).value;
+        if (0 == this->source.compare(range.start, range.length, name)) {
+            // The fixed argument matches
+            arg_t *arg = &state->option_map[name];
+            arg->key.assign(name);
+            arg->values.push_back(string_t(1, char_t('1')));
+            arg->count += 1;
+            ctx->acquire_next_positional(state);
+            state_destructive_append_to(state, &result);
+        }
+    }
+    return result;
+}
+
+/* Matches argv */
+void match_argv(const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const usage_t &tree) {
+    match_context_t ctx(positionals, resolved_options);
+    match_state_t init_state;
+    match_state_list_t result = match(tree, &init_state, &ctx);
+    
+    std::cerr << "Result count: " << result.size() << "\n";
+    for (size_t i=0; i < result.size(); i++) {
+        const match_state_t &state = result.at(i);
+        bool is_incomplete = ctx.has_more_positionals(&state);
+        std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
+        for (typename option_map_t::const_iterator iter = state.option_map.begin(); iter != state.option_map.end(); ++iter) {
+            const string_t &name = iter->first;
+            const arg_t &arg = iter->second;
+            std::cerr << "\t" << name << ": ";
+            for (size_t j=0; j < arg.values.size(); j++) {
+                if (j > 0) {
+                    std::cerr << ", ";
+                }
+                std::cerr << arg.values.at(j);
+            }
+            std::cerr << '\n';
         }
     }
 }
@@ -1163,6 +1403,19 @@ int main(void) {
     docopt_impl<std::string>::positional_argument_list_t positionals;
     docopt_impl<std::string>::resolved_option_list_t resolved_options;
     impl.parse_argv(argv, options, &positionals, &resolved_options);
+    
+    for (size_t i=0; i < positionals.size(); i++) {
+        fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
+    }
+    
+    for (size_t i=0; i < resolved_options.size(); i++) {
+        const docopt_impl<std::string>::resolved_option_t &opt = resolved_options.at(i);
+        range_t range = opt.option.name;
+        const std::string name = std::string(usage, range.start, range.length);
+        fprintf(stderr, "%lu: %s (%s)\n", i, name.c_str(), opt.value.c_str_or_empty());
+    }
+
+    impl.match_argv(positionals, resolved_options, *tree);
     
     delete tree;
     

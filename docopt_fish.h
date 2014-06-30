@@ -22,6 +22,10 @@ namespace docopt_fish
         const string_t &value() const {
             return values.at(0);
         }
+        
+        /* Constructor */
+        base_argument_t() : count(0)
+        {}
     };
     
     /* Concrete types */
