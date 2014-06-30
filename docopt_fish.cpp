@@ -47,6 +47,14 @@ struct range_t {
     bool operator==(const range_t &rhs) const {
         return this->start == rhs.start && this->length == rhs.length;
     }
+    
+    // Range comparison so these can be used as dictionary keys
+    bool operator<(const range_t &rhs) const {
+        if (this->start != rhs.start) {
+            return this->start < rhs.start;
+        }
+        return this->length < rhs.length;
+    }
 };
 typedef std::vector<range_t> range_list_t;
 
@@ -1183,6 +1191,19 @@ struct match_context_t {
         return state->next_positional_index < positionals.size();
     }
     
+    bool has_unconsumed_options(const match_state_t *state, const string_t &src) const {
+        /* An unconsumed option means an option from resolved_options that was not matched during tree descent, i.e. is not in option_map. This can be derived from option_map. */
+        string_t name;
+        for (size_t i=0; i < resolved_options.size(); i++) {
+            const range_t &opt_range = resolved_options.at(i).option.name;
+            name.assign(src, opt_range.start, opt_range.length);
+            if (state->option_map.find(name) == state->option_map.end()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
     const positional_argument_t &next_positional(match_state_t *state) const {
         assert(state->next_positional_index < positionals.size());
         return positionals.at(state->next_positional_index);
@@ -1385,7 +1406,7 @@ void match_argv(const positional_argument_list_t &positionals, const resolved_op
     std::cerr << "Result count: " << result.size() << "\n";
     for (size_t i=0; i < result.size(); i++) {
         const match_state_t &state = result.at(i);
-        bool is_incomplete = ctx.has_more_positionals(&state);
+        bool is_incomplete = ctx.has_more_positionals(&state) || ctx.has_unconsumed_options(&state, this->source);
         std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
         for (typename option_map_t::const_iterator iter = state.option_map.begin(); iter != state.option_map.end(); ++iter) {
             const string_t &name = iter->first;
