@@ -1315,35 +1315,79 @@ match_state_list_t match(const or_continuation_t &node, match_state_t *state, ma
 }
 
 match_state_list_t match(const compound_clause_t &node, match_state_t *state, match_context_t *ctx) {
-    // todo: ellipsis
+    // Check to see if we have ellipsis. If so, we keep going as long as we can.
+    bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
+    match_state_list_t result;
+    
     switch (node.production) {
         case 0:
-            // simple clause
-            return try_match(node.simple_clause, state, ctx);
+        {
+            /* This is a simple clause which may have ellipsis, like foo...
+               If we have ellipsis, we match one time, and then construct a sequence of 'intermediate state lists'.
+               An intermediate state represents the result of matching N times. Each time we construct
+               a new intermediate state, we append (copy) all of its states into the result; thus we may
+               match one time, two times, three times...
+               We stop when we get no more matches, which usually happens when we run out of positionals.
+            */
+            result = try_match(node.simple_clause, state, ctx);
+            if (has_ellipsis) {
+                match_state_list_t intermediate_states = result;
+                while (! intermediate_states.empty()) {
+                    match_state_list_t next_states = try_match(node.simple_clause, intermediate_states, ctx);
+                    result.insert(result.end(), next_states.begin(), next_states.end());
+                    intermediate_states.swap(next_states);
+                }
+            }
+            break;
+        }
             
         case 1:
-            // paren, is required
-            return try_match(node.expression_list, state, ctx);
+        {
+            /* This is a parenthesized clause which may have ellipsis, like (foo)...
+               Same algorithm as the simple clause above.
+               TODO: this may loop forever with states that do not consume any values, e.g. ([foo])...
+            */
+            result = try_match(node.expression_list, state, ctx);
+            if (has_ellipsis) {
+                match_state_list_t intermediate_states = result;
+                while (! intermediate_states.empty()) {
+                    match_state_list_t next_states = try_match(node.expression_list, intermediate_states, ctx);
+                    result.insert(result.end(), next_states.begin(), next_states.end());
+                    intermediate_states.swap(next_states);
+                }
+            }
+            break;
+        }
             
         case 2:
         {
-            // Square, is optional. Duplicate the state for the not-taken branch.
+            /* This is a square-bracketed clause which may have ellipsis, like [foo]...
+               Same algorithm as the simple clause above, except that we also append the initial state as a not-taken branch.
+            */
             match_state_t not_taken_branch = *state;
-            match_state_list_t result = try_match(node.expression_list, state, ctx);
-            
+            result = try_match(node.expression_list, state, ctx);
+            if (has_ellipsis) {
+                match_state_list_t intermediate_states = result;
+                while (! intermediate_states.empty()) {
+                    match_state_list_t next_states = try_match(node.simple_clause, intermediate_states, ctx);
+                    result.insert(result.end(), next_states.begin(), next_states.end());
+                    intermediate_states.swap(next_states);
+                }
+            }
             // Append the not taken branch
             state_destructive_append_to(&not_taken_branch, &result);
-            return result;
+            break;
         }
         
         default:
             assert(0 && "unknown production");
             return no_match();
     }
+    
+    return result;
 }
 
 match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) {
-    // todo: ellipsis
     // Check to see if this is an argument or a variable
     match_state_list_t result;
     const range_t &range = node.word.range;
@@ -1444,6 +1488,7 @@ std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const
 int main(void) {
     using namespace docopt_fish;
     const std::string usage =
+        "naval_fate ship new <name>...\n"
         "naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
         "naval_fate.py ship shoot <x> <y>";
     
@@ -1466,6 +1511,12 @@ int main(void) {
     std::vector<std::string> argv;
     argv.push_back("naval_fate");
 #if 1
+    argv.push_back("ship");
+    argv.push_back("new");
+    argv.push_back("alpha");
+    argv.push_back("beta");
+    argv.push_back("gamma");
+#elif 0
     argv.push_back("mine");
     argv.push_back("set");
     argv.push_back("10");
