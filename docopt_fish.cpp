@@ -68,6 +68,7 @@ struct token_t {
         close_square = ']',
         ellipsis = '.', // represents three dots ...
         bar = '|',
+        newline = 'n', //newline
         word='X' // represents a word, possibly with angle brackets <foo>
     };
     
@@ -77,7 +78,7 @@ struct token_t {
     /* Constructor */
     token_t(size_t a, size_t b, char type_char) : range(a, b)
     {
-        assert(strchr("()[]|.X", type_char));
+        assert(strchr("()[]|.Xn", type_char));
         this->type = static_cast<type_t>(type_char);
     }
     
@@ -151,7 +152,8 @@ typedef std::vector<option_t> option_list_t;
 
 /* Usage grammar:
  
-    usage = WORD expression_list
+    usage = <empty> |
+            WORD expression_list usage
 
     expression_list = expression opt_expression_list
  
@@ -173,7 +175,6 @@ typedef std::vector<option_t> option_list_t;
                    ELLIPSIS
 */
 
-class usage_t;
 class expression_list_t;
 class opt_expression_list_t;
 class expression_t;
@@ -390,7 +391,7 @@ struct expression_list_t : public base_t {
     
     // expression_list = expression opt_expression_list
     expression_list_t(auto_ptr<expression_t> c1, auto_ptr<opt_expression_list_t> c2) : expression(c1), opt_expression_list(c2) {}
-    static expression_list_t *parse(struct parse_context_t *ctx) {  return parse_2<expression_list_t, expression_t, opt_expression_list_t>(ctx); }
+    static expression_list_t *parse(parse_context_t *ctx) {  return parse_2<expression_list_t, expression_t, opt_expression_list_t>(ctx); }
     std::string name() const { return "expression_list"; }
     
     template<typename T>
@@ -407,18 +408,34 @@ struct expression_list_t : public base_t {
 struct usage_t : public base_t {
     token_t prog_name;
     auto_ptr<expression_list_t> expression_list;
+    auto_ptr<usage_t> next_usage;
 
-    // usage = expression_list
-    usage_t(token_t t, auto_ptr<expression_list_t> c) : prog_name(t), expression_list(c) {}
+    // usage = <empty>
+    usage_t() : base_t(0) {}
     
-    static usage_t *parse(struct parse_context_t *ctx) {
+    // usage = word expression_list usage
+    usage_t(token_t t, auto_ptr<expression_list_t> c, auto_ptr<usage_t> next) : base_t(1), prog_name(t), expression_list(c), next_usage(next) {}
+    
+    static usage_t *parse(parse_context_t *ctx) {
+        // If we reach the end, we return an empty usage
+        if (ctx->is_at_end()) {
+            return new usage_t();
+        }
+        
         usage_t *result = NULL;
+        
         // TODO: generate error for missing word name
         if (ctx->next_token_has_type(token_t::word)) {
             token_t p = ctx->acquire_token();
             auto_ptr<expression_list_t> el(expression_list_t::parse(ctx));
             if (el.get()) {
-                result = new usage_t(p, el);
+                // Consume as many newlines as we can, and then try to generate the tail
+                while (ctx->next_token_has_type(token_t::newline)) {
+                    ctx->acquire_token();
+                }
+                
+                auto_ptr<usage_t> next(usage_t::parse(ctx));
+                result = new usage_t(p, el, next);
             }
         }
         return result;
@@ -430,6 +447,7 @@ struct usage_t : public base_t {
     void visit_children(T *v) const {
         v->visit(prog_name);
         v->visit(expression_list);
+        v->visit(next_usage);
     }
 };
 
@@ -441,7 +459,7 @@ struct opt_expression_list_t : public base_t {
     
     // opt_expression_list = expression_list
     opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
-    static opt_expression_list_t *parse(struct parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
+    static opt_expression_list_t *parse(parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
     std::string name() const { return "opt_expression_list"; }
     unsigned unindent() const { return 1*0; }
     
@@ -457,7 +475,7 @@ struct expression_t : public base_t {
     
     // expression = compound_clause or_continuation
     expression_t(auto_ptr<compound_clause_t> c, auto_ptr<or_continuation_t> oc) : compound_clause(c), or_continuation(oc) {}
-    static expression_t *parse(struct parse_context_t *ctx) { return parse_2<expression_t, compound_clause_t, or_continuation_t>(ctx); }
+    static expression_t *parse(parse_context_t *ctx) { return parse_2<expression_t, compound_clause_t, or_continuation_t>(ctx); }
     std::string name() const { return "expression"; }
     
     template<typename T>
@@ -477,7 +495,7 @@ struct or_continuation_t : public base_t {
     // or_continuation =  VERT_BAR or_clause
     or_continuation_t(token_t b, auto_ptr<expression_t> c) : base_t(1), vertical_bar(b), expression(c) {}
     
-    static or_continuation_t *parse(struct parse_context_t *ctx) {
+    static or_continuation_t *parse(parse_context_t *ctx) {
         or_continuation_t *result = NULL;
         if (ctx->next_token_has_type(token_t::bar)) {
             token_t token = ctx->acquire_token();
@@ -512,7 +530,7 @@ struct opt_ellipsis_t : public base_t {
     // opt_ellipsis = ELLIPSIS
     opt_ellipsis_t(token_t t) : base_t(1), ellipsis(t) {}
     
-    static opt_ellipsis_t *parse(struct parse_context_t *ctx) {
+    static opt_ellipsis_t *parse(parse_context_t *ctx) {
         opt_ellipsis_t *result = NULL;
         if (ctx->next_token_has_type(token_t::ellipsis)) {
             result = new opt_ellipsis_t(ctx->acquire_token());
@@ -535,7 +553,7 @@ struct simple_clause_t : public base_t {
     simple_clause_t(const token_t &t) : word(t)
     {}
     
-    static simple_clause_t *parse(struct parse_context_t *ctx) {
+    static simple_clause_t *parse(parse_context_t *ctx) {
         if (! ctx->next_token_has_type(token_t::word)) {
             return NULL;
         }
@@ -573,7 +591,7 @@ struct compound_clause_t : public base_t {
     {
     }
 
-    static compound_clause_t *parse(struct parse_context_t * ctx) {
+    static compound_clause_t *parse(parse_context_t * ctx) {
         compound_clause_t *result = NULL;
         if (ctx->is_at_end()) {
             fprintf(stderr, "At end\n");
@@ -603,6 +621,7 @@ struct compound_clause_t : public base_t {
             
             case token_t::close_paren:
             case token_t::close_square:
+            case token_t::newline:
                 result = NULL;
                 break;
                 
@@ -622,7 +641,7 @@ struct compound_clause_t : public base_t {
                 }
                 break;
             }
-                
+            
             case token_t::none:
                 assert(0 && "none-type token returned from next_token_type when not at end of token stream");
                 break;
@@ -919,7 +938,7 @@ bool token_equals(const token_t &tok, const string_t &str) {
 /* Tokenize a usage specification from 'source' */
 token_list_t tokenize_usage(size_t start, size_t end) {
     /* The following are tokens:
-         [, ], (, ), |, ..., strings_without_spaces, <stuff in brackets>
+         [, ], (, ), |, ..., strings_without_spaces, <stuff in brackets>, newlines
          A string_without_spaces abutting <stuff_in_brackets> like so:
             foo<bar baz>
          counts as only a single token.
@@ -954,6 +973,9 @@ token_list_t tokenize_usage(size_t start, size_t end) {
                 if (word_start != npos) {
                     tokens.push_back(token_t(word_start, i - word_start, word_type));
                     word_start = npos;
+                }
+                if (c == '\n') {
+                    tokens.push_back(token_t(i, 1, 'n'));
                 }
                 i += 1;
             } else if (substr_equals("...", sc + i, 3)) {
@@ -1247,13 +1269,18 @@ match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_conte
 }
 
 /* Match overrides */
-match_state_list_t match(const usage_t &node, match_state_t *map, match_context_t *ctx) {
-    if (! ctx->has_more_positionals(map)) {
+match_state_list_t match(const usage_t &node, match_state_t *state, match_context_t *ctx) {
+    if (! ctx->has_more_positionals(state)) {
         // todo: error handling
         return no_match();
     }
-    ctx->acquire_next_positional(map);
-    return try_match(node.expression_list, map, ctx);
+    /* Must duplicate the state for the next usage */
+    match_state_t copied_state = *state;
+    ctx->acquire_next_positional(state);
+    match_state_list_t main_branch = try_match(node.expression_list, state, ctx);
+    match_state_list_t next_branch = try_match(node.next_usage, &copied_state, ctx);
+    state_list_destructive_append_to(&next_branch, &main_branch);
+    return main_branch;
 }
 
 match_state_list_t match(const expression_list_t &node, match_state_t *state, match_context_t *ctx) {
@@ -1416,7 +1443,10 @@ std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const
 
 int main(void) {
     using namespace docopt_fish;
-    const std::string usage = "naval_fate mine (set|remove) <x> <y> [--moored|--drifting]";
+    const std::string usage =
+        "naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
+        "naval_fate.py ship shoot <x> <y>";
+    
     docopt_impl<std::string> impl(usage);
     token_list_t tokens = impl.tokenize_usage(0, usage.size());
     fprintf(stderr, "%s\n", usage.c_str());
@@ -1435,11 +1465,18 @@ int main(void) {
     
     std::vector<std::string> argv;
     argv.push_back("naval_fate");
+#if 1
     argv.push_back("mine");
     argv.push_back("set");
     argv.push_back("10");
     argv.push_back("20");
     argv.push_back("--moored");
+#else
+    argv.push_back("ship");
+    argv.push_back("shoot");
+    argv.push_back("3");
+    argv.push_back("5");
+#endif
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
     docopt_impl<std::string>::resolved_option_list_t resolved_options;
