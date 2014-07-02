@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <iostream>
 
+#define UNUSED __attribute__((unused))
+
 using namespace docopt_fish;
 
 using std::auto_ptr;
@@ -12,10 +14,12 @@ using std::auto_ptr;
 static const size_t npos = (size_t)(-1);
 
 /* Overloads */
+UNUSED
 static void assign_narrow_string_to_string(const char *s, std::string *result) {
     *result = s;
 }
 
+UNUSED
 static void assign_narrow_string_to_string(const char *s, std::wstring *result) {
     size_t len = std::strlen(s);
     for (size_t i=0; i < len; i++) {
@@ -222,13 +226,13 @@ typedef std::vector<option_t> option_list_t;
  
 */
 
-class expression_list_t;
-class opt_expression_list_t;
-class expression_t;
-class or_continuation_t;
-class compound_clause_t;
-class simple_clause_t;
-class opt_ellipsis_t;
+struct expression_list_t;
+struct opt_expression_list_t;
+struct expression_t;
+struct or_continuation_t;
+struct compound_clause_t;
+struct simple_clause_t;
+struct opt_ellipsis_t;
 
 /* Context passed around in our recursive descent parser */
 struct parse_context_t {
@@ -312,10 +316,10 @@ template<typename T>
 struct node_visitor_t {
     /* Additional overrides */
     template<typename IGNORED_TYPE>
-    void will_visit_children(const IGNORED_TYPE& t) {}
+    void will_visit_children(const IGNORED_TYPE& t UNUSED) {}
     
     template<typename IGNORED_TYPE>
-    void did_visit_children(const IGNORED_TYPE& t) {}
+    void did_visit_children(const IGNORED_TYPE& t UNUSED) {}
 
     template<typename NODE_TYPE>
     void visit_internal(const NODE_TYPE &node)
@@ -596,7 +600,7 @@ struct opt_ellipsis_t : public base_t {
 
 struct options_shortcut_t : public base_t {
     // The options shortcut does not need to remember its token, since we never use it
-    options_shortcut_t(const token_t &t1) : base_t() {}
+    options_shortcut_t(const token_t &t1 UNUSED) : base_t() {}
     
     static options_shortcut_t *parse(parse_context_t *ctx) {
         if (! ctx->next_token_has_type(token_t::options)) {
@@ -607,7 +611,7 @@ struct options_shortcut_t : public base_t {
     
     std::string name() const { return "options_shortcut"; }
     template<typename T>
-    void visit_children(T *v) const {}
+    void visit_children(T *v UNUSED) const {}
 };
 
 struct simple_clause_t : public base_t {
@@ -753,7 +757,7 @@ struct node_collector_t : public node_visitor_t<node_collector_t<NODE_TYPE> > {
     
     // Other types we ignore
     template<typename IGNORED_TYPE>
-    void accept(const IGNORED_TYPE& t) {}
+    void accept(const IGNORED_TYPE& t UNUSED) {}
 
     
 };
@@ -1115,7 +1119,7 @@ static bool it_equals(char_t c) { return c == T; }
 template<typename T>
 static range_t scan_while(const string_t &str, range_t *remaining, T func) {
     range_t result(remaining->start, 0);
-    while (result.end() < remaining->end() && func(result.end())) {
+    while (result.end() < remaining->end() && func(str.at(result.end()))) {
         result.length += 1;
         remaining->start += 1;
         remaining->length -= 1;
@@ -1381,7 +1385,7 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
 }
 
 /* The Python implementation calls this "parse_argv" */
-void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first = false) {
+void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first UNUSED = false) {
     
     size_t idx = 0;
     while (idx < argv.size()) {

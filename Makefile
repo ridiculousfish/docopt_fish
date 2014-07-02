@@ -1,7 +1,7 @@
 TEST_SRC_FILES=docopt_fish.cpp run_testcase.cpp
 HEADERS=docopt_fish.h
 CXX=clang++
-CXXFLAGS=-O0 -g
+CXXFLAGS=-O0 -g -W -Wall
 
 simple_test: docopt_fish.o ${HEADERS}
 	${CXX} ${CXXFLAGS} docopt_fish.o -o $@
