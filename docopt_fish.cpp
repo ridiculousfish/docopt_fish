@@ -862,24 +862,31 @@ struct resolved_option_t {
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
 
-/* Helper function to efficiently iterate over lines of a string 'source'. On input, line_end should be initialized to the start point for the iteration. On return, line_start will point at the next line, and line_end will point just after the trailing newline, or possibly at source.size(). The length of the line is line_end - line_start (and is guaranteed to be positive). Returns true if a line was returned, false if we reached the end. */
-static bool get_next_line(const string_t &str, size_t *line_start, size_t *line_end)
+/* Helper function to efficiently iterate over lines of a string 'source'. On input, inout_range.end() should be initialized to the start point for the iteration. On return, the range will contain the line, with its end pointing just after the trailing newline, or possibly at source.size(). The length of the line is thus the length of the range (and is guaranteed to be positive). Returns true if a line was returned, false if we reached the end.
+
+    If end is specified, it is treated as the end of the string (i.e. str.size())
+*/
+static bool get_next_line(const string_t &str, range_t *inout_range, size_t end = string_t::npos)
 {
+    const size_t effective_end = std::min(str.size(), end);
     bool success = false;
-    if (*line_end < str.size())
+    if (inout_range->end() < effective_end)
     {
         // Start at the end of the last line, or zero if this is the first call
-        *line_start = *line_end;
-        size_t newline = str.find(char_t('\n'), *line_start);
-        if (newline == std::string::npos) {
+        size_t line_start = inout_range->end();
+        size_t line_end;
+        size_t newline = str.find(char_t('\n'), line_start);
+        if (newline > effective_end) {
             // Point just after the last character
-            *line_end = str.size();
+            line_end = effective_end;
         } else {
             // Point just after the newline
-            *line_end = newline + 1;
+            line_end = newline + 1;
         }
         // Empty lines are impossible
-        assert(*line_end > *line_start);
+        assert(line_end > line_start);
+        inout_range->start = line_start;
+        inout_range->length = line_end - line_start;
         success = true;
     }
     return success;
@@ -933,46 +940,6 @@ static bool substr_equals(const char *a, const string_t &b, size_t len) {
     return substr_equals(a, b.c_str(), len);
 }
 
-/* Given a name like 'options:' and the usage text (as source), return a list of substrings of the
- source text that match the usage. The Python docopt is quite permissive, and is prone to false
- positive. For example, if the word "options:" appears anywhere in a line, it may be picked up. We
- wish to be more conservative. We model the source text as a list of lines, separated into sections.
- A section has a header like 'foo options:' that must not be indented (no leading whitespace) and must
- have a colon. All lines after the header until the next header are part of that section.
- */
-string_list_t parse_section(const char *name) {
-    string_list_t sections;
-    
-    bool in_desired_section = false;
-    size_t line_start = 0, line_end = 0;
-    while (get_next_line(source, &line_start, &line_end)) {
-        // It's a header line if the first character is not whitespace
-        if (! isspace(source.at(line_start))) {
-            // Check to see if the name is found before the first colon
-            // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
-            size_t name_pos = find_case_insensitive(source, name, line_start);
-            in_desired_section = (name_pos < line_end && name_pos < source.find(':', line_start));
-            if (in_desired_section) {
-                // This line is the start of a section we want.
-                // Append a blank line to our result vector to hold this section.
-                sections.push_back(std::string());
-            }
-        }
-        
-        if (in_desired_section) {
-            // We're in the section we want. Append the line to the current section.
-            // Note this line may be its header.
-            // Also note that result must be nonempty, because we always append to result at the point that in_desired_section is set to true
-            sections.back().append(source, line_start, line_end - line_start);
-        }
-        
-        // Update our next line to start just past the newline (or past the end of the source)
-        line_start = line_end;
-    }
-    
-    return sections;
-}
-
 /* Copies out the string of a range */
 string_t string_for_range(const range_t &range) {
     assert(range.end() < this->source.length());
@@ -1019,6 +986,7 @@ token_list_t tokenize_usage() {
     const range_list_t usage_sections = this->source_ranges_for_section("Usage:");
     for (size_t usage_idx = 0; usage_idx < usage_sections.size(); usage_idx++) {
         const range_t &usage_range = usage_sections.at(usage_idx);
+        fprintf(stderr, "usage_range: %lu %lu\n", usage_range.start, usage_range.length);
         if (usage_range.empty()) {
             continue;
         }
@@ -1279,15 +1247,17 @@ static bool line_contains_option_spec(const string_t &str, const range_t &range)
 /* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. */
 range_list_t source_ranges_for_section(const char *name) const {
     range_list_t result;
-    size_t line_start = 0, line_end = 0;
     bool in_desired_section = false;
-    while (get_next_line(this->source, &line_start, &line_end)) {
+    range_t line_range;
+    while (get_next_line(this->source, &line_range)) {
+        size_t line_start = line_range.start;
         // It's a header line if the first character is not whitespace
         bool is_header = ! isspace(source.at(line_start));
         if (is_header) {
             // Check to see if the name is found before the first colon
             // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
             size_t name_pos = find_case_insensitive(source, name, line_start);
+            size_t line_end = line_range.end();
             in_desired_section = (name_pos < line_end && name_pos < source.find(':', line_start));
             
             if (in_desired_section) {
@@ -1298,7 +1268,6 @@ range_list_t source_ranges_for_section(const char *name) const {
         
         if (in_desired_section && ! is_header) {
             // Extend the last range with this line
-            range_t line_range(line_start, line_end - line_start);
             result.back().merge(line_range);
         }
     }
@@ -1313,8 +1282,8 @@ option_list_t parse_options_spec(error_list_t *errors) const {
     for (size_t range_idx = 0; range_idx < section_ranges.size(); range_idx++) {
         const range_t section_range = section_ranges.at(range_idx);
         const size_t section_end = section_range.end();
-        size_t line_start = section_range.start, line_end = section_range.start;
-        while (get_next_line(source, &line_start, &line_end) && line_start < section_end) {
+        range_t line_range(section_range.start, 0);
+        while (get_next_line(source, &line_range, section_end)) {
             // These are all valid option specifications:
             // --foo
             // --foo <bar>
@@ -1325,18 +1294,15 @@ option_list_t parse_options_spec(error_list_t *errors) const {
             
 
             // Check to see if this line starts with a -
-            range_t line_range = range_t(line_start, line_end - line_start);
             if (line_contains_option_spec(this->source, line_range)) {
                 // It's a new option. Determine how long its description goes.
                 range_t option_spec_range = line_range;
-                size_t local_line_start = line_start, local_line_end = line_end;
-                while (get_next_line(this->source, &local_line_start, &local_line_end) && local_line_start < section_end) {
-                    const range_t local_range(local_line_start, local_line_end - local_line_start);
+                range_t local_range = line_range;
+                while (get_next_line(this->source, &local_range, section_end)) {
                     if (! line_contains_option_spec(this->source, local_range)) {
                         option_spec_range.merge(local_range);
-                        // Set our outermost lines to this line
-                        line_start = local_line_start;
-                        line_end = local_line_end;
+                        // Set our outermost lines to this line, so we'll skip past it next iteration
+                        line_range = local_range;
                     }
                 }
                 
