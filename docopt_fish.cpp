@@ -1013,96 +1013,104 @@ bool token_equals(const token_t &tok, const string_t &str) {
     }
 }
 
-/* Tokenize a usage specification from 'source' */
-token_list_t tokenize_usage(size_t start, size_t end) {
-    /* The following are tokens:
-         [, ], (, ), |, ..., strings_without_spaces, <stuff in brackets>, newlines
-         A string_without_spaces abutting <stuff_in_brackets> like so:
-            foo<bar baz>
-         counts as only a single token.
-    */
-    assert(end >= start);
-    token_list_t result;
-    bool within_brackets = false;
-    size_t bracket_start = npos;
-    size_t word_start = npos;
-    
-    const token_t::type_t word_type = token_t::word;
-    
-    const char_t *sc = source.c_str() + start;
-    const size_t size = end - start;
-    
-    const char *options_shortcut = "[options]";
-    
+/* Tokenize usage specifications from 'source' */
+token_list_t tokenize_usage() {
     token_list_t tokens;
-    for (size_t i=0; i < size;)
-    {
-        const char_t c = sc[i];
-        if (! within_brackets)
-        {
-            if (substr_equals(options_shortcut, sc + i, strlen(options_shortcut))) {
-                // Some sort of parenthesis
-                if (word_start != npos) {
-                    tokens.push_back(token_t(word_start, i - word_start, word_type));
-                    word_start = npos;
-                }
-                tokens.push_back(token_t(i, 1, token_t::options));
-                i += strlen(options_shortcut);
-            } else if (contains("()[]|", c)) {
-                // Some sort of parenthesis
-                if (word_start != npos) {
-                    tokens.push_back(token_t(word_start, i - word_start, word_type));
-                    word_start = npos;
-                }
-                tokens.push_back(token_t(i, 1, c));
-                i += 1;
-            } else if (contains(" \t\n", c)) {
-                // Whitespace
-                if (word_start != npos) {
-                    tokens.push_back(token_t(word_start, i - word_start, word_type));
-                    word_start = npos;
-                }
-                if (c == '\n') {
-                    tokens.push_back(token_t(i, 1, token_t::newline));
-                }
-                i += 1;
-            } else if (substr_equals("...", sc + i, 3)) {
-                // Ellipsis
-                if (word_start != npos) {
-                    tokens.push_back(token_t(word_start, i - word_start, word_type));
-                    word_start = npos;
-                }
-                tokens.push_back(token_t(i, 3, '.'));
-                i += 3;
-            } else {
-                // Normal char, or possibly bracket
-                if (word_start == npos) {
-                    word_start = i;
-                }
-                if (c == '<') {
-                    within_brackets = true;
-                    bracket_start = i;
-                }
-                i += 1;
-            }
-        } else {
-            // Within brackets
-            if (c == '>') {
-                within_brackets = false;
-                bracket_start = npos;
-            }
-            i += 1;
+    const range_list_t usage_sections = this->source_ranges_for_section("Usage:");
+    for (size_t usage_idx = 0; usage_idx < usage_sections.size(); usage_idx++) {
+        const range_t &usage_range = usage_sections.at(usage_idx);
+        if (usage_range.empty()) {
+            continue;
         }
-    }
-    
-    if (within_brackets) {
-        append_error(&this->errors, bracket_start, "Unclosed bracket");
-    }
-    
-    // grab trailing word
-    if (word_start != npos) {
-        tokens.push_back(token_t(word_start, size - word_start, word_type));
-        word_start = npos;
+
+        /* The following are tokens:
+             [, ], (, ), |, ..., strings_without_spaces, <stuff in brackets>, newlines
+             A string_without_spaces abutting <stuff_in_brackets> like so:
+                foo<bar baz>
+             counts as only a single token.
+        */
+        const size_t start = usage_range.start, end = usage_range.end();
+        assert(end >= start);
+        bool within_brackets = false;
+        size_t bracket_start = npos;
+        size_t word_start = npos;
+        
+        const token_t::type_t word_type = token_t::word;
+        
+        const char_t *sc = source.c_str();
+        
+        const char *options_shortcut = "[options]";
+        const size_t options_shortcut_len = strlen(options_shortcut);
+        
+        for (size_t i=start; i < end;)
+        {
+            const char_t c = sc[i];
+            if (! within_brackets)
+            {
+                if (substr_equals(options_shortcut, sc + i, options_shortcut_len)) {
+                    // Some sort of parenthesis
+                    if (word_start != npos) {
+                        tokens.push_back(token_t(word_start, i - word_start, word_type));
+                        word_start = npos;
+                    }
+                    tokens.push_back(token_t(i, 1, token_t::options));
+                    i += options_shortcut_len;
+                } else if (contains("()[]|", c)) {
+                    // Some sort of parenthesis
+                    if (word_start != npos) {
+                        tokens.push_back(token_t(word_start, i - word_start, word_type));
+                        word_start = npos;
+                    }
+                    tokens.push_back(token_t(i, 1, c));
+                    i += 1;
+                } else if (contains(" \t\n", c)) {
+                    // Whitespace
+                    if (word_start != npos) {
+                        tokens.push_back(token_t(word_start, i - word_start, word_type));
+                        word_start = npos;
+                    }
+                    if (c == '\n') {
+                        tokens.push_back(token_t(i, 1, token_t::newline));
+                    }
+                    i += 1;
+                } else if (substr_equals("...", sc + i, 3)) {
+                    // Ellipsis
+                    if (word_start != npos) {
+                        tokens.push_back(token_t(word_start, i - word_start, word_type));
+                        word_start = npos;
+                    }
+                    tokens.push_back(token_t(i, 3, '.'));
+                    i += 3;
+                } else {
+                    // Normal char, or possibly bracket
+                    if (word_start == npos) {
+                        word_start = i;
+                    }
+                    if (c == '<') {
+                        within_brackets = true;
+                        bracket_start = i;
+                    }
+                    i += 1;
+                }
+            } else {
+                // Within brackets
+                if (c == '>') {
+                    within_brackets = false;
+                    bracket_start = npos;
+                }
+                i += 1;
+            }
+        }
+        
+        if (within_brackets) {
+            append_error(&this->errors, bracket_start, "Unclosed bracket");
+        }
+        
+        // grab trailing word
+        if (word_start != npos) {
+            tokens.push_back(token_t(word_start, end - word_start, word_type));
+            word_start = npos;
+        }
     }
     return tokens;
 }
@@ -1268,15 +1276,12 @@ static bool line_contains_option_spec(const string_t &str, const range_t &range)
     return space.length > 0 && dashes.length > 0;
 }
 
-/* Parses the option specification at the given location */
-option_list_t parse_options_spec(error_list_t *errors) const {
-    option_list_t result;
-    const char *name = "Options:";
-    bool in_options_section = false;
+/* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. */
+range_list_t source_ranges_for_section(const char *name) const {
+    range_list_t result;
     size_t line_start = 0, line_end = 0;
-    
     bool in_desired_section = false;
-    while (get_next_line(source, &line_start, &line_end)) {
+    while (get_next_line(this->source, &line_start, &line_end)) {
         // It's a header line if the first character is not whitespace
         bool is_header = ! isspace(source.at(line_start));
         if (is_header) {
@@ -1284,10 +1289,32 @@ option_list_t parse_options_spec(error_list_t *errors) const {
             // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
             size_t name_pos = find_case_insensitive(source, name, line_start);
             in_desired_section = (name_pos < line_end && name_pos < source.find(':', line_start));
+            
+            if (in_desired_section) {
+                // Append a new empty range. We will add to it.
+                result.push_back(range_t(0, 0));
+            }
         }
         
         if (in_desired_section && ! is_header) {
-            // We're in the section we want, and this is not a header line.
+            // Extend the last range with this line
+            range_t line_range(line_start, line_end - line_start);
+            result.back().merge(line_range);
+        }
+    }
+    return result;
+}
+
+/* Parses the option specification at the given location */
+option_list_t parse_options_spec(error_list_t *errors) const {
+    option_list_t result;
+    
+    const range_list_t section_ranges = source_ranges_for_section("Options:");
+    for (size_t range_idx = 0; range_idx < section_ranges.size(); range_idx++) {
+        const range_t section_range = section_ranges.at(range_idx);
+        const size_t section_end = section_range.end();
+        size_t line_start = section_range.start, line_end = section_range.start;
+        while (get_next_line(source, &line_start, &line_end) && line_start < section_end) {
             // These are all valid option specifications:
             // --foo
             // --foo <bar>
@@ -1303,9 +1330,9 @@ option_list_t parse_options_spec(error_list_t *errors) const {
                 // It's a new option. Determine how long its description goes.
                 range_t option_spec_range = line_range;
                 size_t local_line_start = line_start, local_line_end = line_end;
-                while (get_next_line(this->source, &local_line_start, &local_line_end)) {
+                while (get_next_line(this->source, &local_line_start, &local_line_end) && local_line_start < section_end) {
                     const range_t local_range(local_line_start, local_line_end - local_line_start);
-                    if (isspace(this->source.at(local_range.start)) && ! line_contains_option_spec(this->source, local_range)) {
+                    if (! line_contains_option_spec(this->source, local_range)) {
                         option_spec_range.merge(local_range);
                         // Set our outermost lines to this line
                         line_start = local_line_start;
@@ -1755,7 +1782,7 @@ int main(void) {
         "  -i <file>, --input <file>  Set input file\n";
     
     docopt_impl<std::string> impl(usage);
-    token_list_t tokens = impl.tokenize_usage(0, usage.size());
+    token_list_t tokens = impl.tokenize_usage();
     fprintf(stderr, "%s\n", usage.c_str());
     for (size_t i=0; i < tokens.size(); i++) {
         const token_t &tok = tokens.at(i);
