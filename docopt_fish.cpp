@@ -144,7 +144,7 @@ struct option_t {
     // name of the option, like '--foo'
     range_t name;
     
-    // value of the option. Empty for no value.
+    // value of the option, i.e. variable name. Empty for no value.
     range_t value;
     
     // Range of the description. Empty for none.
@@ -181,7 +181,7 @@ struct option_t {
         if (! value.empty()) {
             result.push_back(':');
             result.push_back(' ');
-            result.append(src, name.start, name.length);
+            result.append(src, value.start, value.length);
         }
         return result;
     }
@@ -1207,7 +1207,7 @@ option_t parse_option_from_string(const string_t &str, const range_t &range, err
 }
 
 /* Given an option spec in the given range, that extends from the initial - to the end of the description, parse out a list of options */
-void parse_one_option_spec(const range_t &range, option_list_t *out_result, error_list_t *errors) const {
+void parse_option_spec(const range_t &range, option_list_t *out_result, error_list_t *errors) const {
     assert(! range.empty());
     assert(this->source.at(range.start) == char_t('-'));
     const size_t end = range.end();
@@ -1310,8 +1310,9 @@ option_list_t parse_options_spec(error_list_t *errors) const {
                     }
                 }
                 
-                // Got the description. Parse out an option.
-                parse_one_option_spec(option_spec_range, &result, errors);
+                // Got the description. Skip leading whitespace and then parse out an option.
+                scan_while(this->source, &option_spec_range, isspace);
+                parse_option_spec(option_spec_range, &result, errors);
             }
         }
     }
