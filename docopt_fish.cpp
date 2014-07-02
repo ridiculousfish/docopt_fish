@@ -25,6 +25,14 @@ static void assign_narrow_string_to_string(const char *s, std::wstring *result) 
     }
 }
 
+// Need a wstring implementation of this
+static size_t find_case_insensitive(const std::string &haystack, const char *needle, size_t haystack_start) {
+    assert(haystack_start < haystack.size());
+    const char *haystack_cstr = haystack.c_str();
+    const char *found = strcasestr(haystack_cstr + haystack_start, needle);
+    return found ? found - haystack_cstr : std::string::npos;
+}
+
 /* Class representing a range of a string */
 struct range_t {
     size_t start;
@@ -55,6 +63,16 @@ struct range_t {
         }
         return this->length < rhs.length;
     }
+    
+    // Merges a range into this range. Empty ranges are discarded.
+    void merge(const range_t &rhs) {
+        if (this->empty()) {
+            *this = rhs;
+        } else if (! rhs.empty()) {
+            this->start = std::min(this->start, rhs.start);
+            this->length = std::max(this->end(), rhs.end()) - this->start;
+        }
+    }
 };
 typedef std::vector<range_t> range_list_t;
 
@@ -68,7 +86,8 @@ struct token_t {
         close_square = ']',
         ellipsis = '.', // represents three dots ...
         bar = '|',
-        newline = 'n', //newline
+        newline = 'n', //newline,
+        options = 'o', //represents [options]
         word='X' // represents a word, possibly with angle brackets <foo>
     };
     
@@ -78,8 +97,12 @@ struct token_t {
     /* Constructor */
     token_t(size_t a, size_t b, char type_char) : range(a, b)
     {
-        assert(strchr("()[]|.Xn", type_char));
+        assert(strchr("()[]|.noX", type_char));
         this->type = static_cast<type_t>(type_char);
+    }
+    
+    token_t(size_t a, size_t b, type_t t) : range(a, b), type(t)
+    {
     }
     
     token_t() : range(0, 0), type(none)
@@ -98,6 +121,7 @@ struct token_t {
             case open_square: return "[";
             case close_square: return "]";
             case bar: return "|";
+            case options: return "[options]";
             case word: return "<word>";
             default: return NULL;
         }
@@ -119,7 +143,13 @@ struct option_t {
     // value of the option. Empty for no value.
     range_t value;
     
-    option_t(const range_t &n, const range_t &v, size_t leading_dash_count) : name(n), value(v) {
+    // Range of the description. Empty for none.
+    range_t description_range;
+    
+    // Whether we require an = sign to match
+    bool require_equals;
+    
+    option_t(const range_t &n, const range_t &v, size_t leading_dash_count, bool requals = false) : name(n), value(v), description_range(0, 0), require_equals(requals) {
         // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
         if (leading_dash_count > 1) {
             this->type = option_t::double_long;
@@ -137,6 +167,19 @@ struct option_t {
     
     bool operator==(const option_t &rhs) const {
         return this->type == rhs.type && this->name == rhs.name && this->value == rhs.value;
+    }
+    
+    /* Helper function for dumping */
+    template<typename string_t>
+    string_t describe(const string_t &src) const {
+        string_t result;
+        result.append(src, name.start, name.length);
+        if (! value.empty()) {
+            result.push_back(':');
+            result.push_back(' ');
+            result.append(src, name.start, name.length);
+        }
+        return result;
     }
 };
 typedef std::vector<option_t> option_list_t;
@@ -168,11 +211,15 @@ typedef std::vector<option_t> option_list_t;
     compound_clause = simple_clause opt_ellipsis |
                       OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
                       OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
+                      options_shortcut
  
     simple_clause = WORD
  
     opt_ellipsis = <empty> |
                    ELLIPSIS
+                   
+    options_shortcut = OPEN_SQUARE WORD CLOSE_SQUARE
+ 
 */
 
 class expression_list_t;
@@ -547,6 +594,22 @@ struct opt_ellipsis_t : public base_t {
     }
 };
 
+struct options_shortcut_t : public base_t {
+    // The options shortcut does not need to remember its token, since we never use it
+    options_shortcut_t(const token_t &t1) : base_t() {}
+    
+    static options_shortcut_t *parse(parse_context_t *ctx) {
+        if (! ctx->next_token_has_type(token_t::options)) {
+            return NULL;
+        }
+        return new options_shortcut_t(ctx->acquire_token());
+    }
+    
+    std::string name() const { return "options_shortcut"; }
+    template<typename T>
+    void visit_children(T *v) const {}
+};
+
 struct simple_clause_t : public base_t {
     token_t word;
     
@@ -581,6 +644,8 @@ struct compound_clause_t : public base_t {
     // Collapsed for all
     auto_ptr<opt_ellipsis_t> opt_ellipsis;
     
+    auto_ptr<options_shortcut_t> options_shortcut;
+    
     //compound_clause = simple_clause
     compound_clause_t(auto_ptr<simple_clause_t> c, auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
 
@@ -588,8 +653,11 @@ struct compound_clause_t : public base_t {
     //compound_clause = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
     compound_clause_t(token_t a, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
         : base_t(a.type == token_t::open_paren ? 1  : 2), open_token(a), expression_list(el), close_token(b), opt_ellipsis(e)
-    {
-    }
+    {}
+    
+    //compound_clause = options_shortcut
+    compound_clause_t(auto_ptr<options_shortcut_t> os) : base_t(3), options_shortcut(os)
+    {}
 
     static compound_clause_t *parse(parse_context_t * ctx) {
         compound_clause_t *result = NULL;
@@ -615,6 +683,15 @@ struct compound_clause_t : public base_t {
                     } else {
                         // TODO: generate error of unclosed paren
                     }
+                }
+                break;
+            }
+            
+            case token_t::options:
+            {
+                auto_ptr<options_shortcut_t> shortcut(options_shortcut_t::parse(ctx));
+                if (shortcut.get()) {
+                    result = new compound_clause_t(shortcut);
                 }
                 break;
             }
@@ -657,6 +734,7 @@ struct compound_clause_t : public base_t {
         v->visit(expression_list);
         v->visit(close_token);
         v->visit(opt_ellipsis);
+        v->visit(options_shortcut);
     }
 };
 
@@ -720,7 +798,7 @@ static string_t string_from_narrow_string(const char *s) {
 
 /* List of errors */
 error_list_t errors;
-void append_error(error_list_t *errors, size_t where, const char *txt) {
+static void append_error(error_list_t *errors, size_t where, const char *txt) {
     if (errors != NULL) {
         errors->resize(errors->size() + 1);
         error_t *error = &errors->back();
@@ -792,7 +870,7 @@ static bool get_next_line(const string_t &str, size_t *line_start, size_t *line_
     {
         // Start at the end of the last line, or zero if this is the first call
         *line_start = *line_end;
-        size_t newline = str.find('\n', *line_start);
+        size_t newline = str.find(char_t('\n'), *line_start);
         if (newline == std::string::npos) {
             // Point just after the last character
             *line_end = str.size();
@@ -954,13 +1032,23 @@ token_list_t tokenize_usage(size_t start, size_t end) {
     const char_t *sc = source.c_str() + start;
     const size_t size = end - start;
     
+    const char *options_shortcut = "[options]";
+    
     token_list_t tokens;
     for (size_t i=0; i < size;)
     {
         const char_t c = sc[i];
         if (! within_brackets)
         {
-            if (contains("()[]|", c)) {
+            if (substr_equals(options_shortcut, sc + i, strlen(options_shortcut))) {
+                // Some sort of parenthesis
+                if (word_start != npos) {
+                    tokens.push_back(token_t(word_start, i - word_start, word_type));
+                    word_start = npos;
+                }
+                tokens.push_back(token_t(i, 1, token_t::options));
+                i += strlen(options_shortcut);
+            } else if (contains("()[]|", c)) {
                 // Some sort of parenthesis
                 if (word_start != npos) {
                     tokens.push_back(token_t(word_start, i - word_start, word_type));
@@ -975,7 +1063,7 @@ token_list_t tokenize_usage(size_t start, size_t end) {
                     word_start = npos;
                 }
                 if (c == '\n') {
-                    tokens.push_back(token_t(i, 1, 'n'));
+                    tokens.push_back(token_t(i, 1, token_t::newline));
                 }
                 i += 1;
             } else if (substr_equals("...", sc + i, 3)) {
@@ -1033,8 +1121,73 @@ option_list_t collect_options(const ENTRY_TYPE &entry) {
     return resulting_options;
 }
 
-/* Separates a substring of str into name and value ranges about an = sign. String must start with = */
-option_t parse_option_from_string(const string_t &str, const range_t &range, error_list_t *errors) {
+static bool char_is_valid_in_parameter(char_t c) {
+    const char *invalid = "|<>,= \t";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+static bool char_is_valid_in_variable(char_t c) {
+    const char *invalid = "-|,= \t";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+template<char T>
+static bool it_equals(char_t c) { return c == T; }
+
+template<typename T>
+static range_t scan_while(const string_t &str, range_t *remaining, T func) {
+    range_t result(remaining->start, 0);
+    while (result.end() < remaining->end() && func(result.end())) {
+        result.length += 1;
+        remaining->start += 1;
+        remaining->length -= 1;
+    }
+    return result;
+}
+
+static option_t parse_option_from_string(const string_t &str, range_t *remaining, bool within_options_spec, error_list_t *errors) {
+    assert(remaining->length > 0);
+    
+    // Count how many leading dashes
+    const size_t start = remaining->start;
+    range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
+    assert(leading_dash_range.length > 0);
+    if (leading_dash_range.length > 2) {
+        append_error(errors, start, "Too many dashes");
+    }
+    
+    // Walk over characters valid in a name
+    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter);
+    if (within_options_spec) {
+        scan_while(str, remaining, isspace);
+    }
+    
+    // Check to see if there's an = sign
+    const range_t equals_range = scan_while(str, remaining, it_equals<'='>);
+    if (equals_range.length > 1) {
+        append_error(errors, equals_range.start, "Too many equal signs");
+    }
+
+    // Try to scan a variable
+    if (within_options_spec) {
+        scan_while(str, remaining, isspace);
+    }
+    range_t variable_range = scan_while(str, remaining, char_is_valid_in_variable);
+    
+    // Skip over commas and whitespace for the next range
+    if (within_options_spec) {
+        scan_while(str, remaining, isspace);
+        scan_while(str, remaining, it_equals<','>);
+        scan_while(str, remaining, isspace);
+    }
+    return option_t(name_range, variable_range, leading_dash_range.length, ! equals_range.empty());
+}
+
+
+/* Separates a substring of str into name and value ranges about an = sign. String must start with - */
+option_t parse_option_from_string(const string_t &str, const range_t &range, error_list_t *errors) const {
     assert(range.length > 0);
     size_t start = range.start;
     size_t len = range.length;
@@ -1071,6 +1224,101 @@ option_t parse_option_from_string(const string_t &str, const range_t &range, err
     }
     
     return option_t(name, value, leading_dash_count);
+}
+
+/* Given an option spec in the given range, that extends from the initial - to the end of the description, parse out a list of options */
+void parse_one_option_spec(const range_t &range, option_list_t *out_result, error_list_t *errors) const {
+    assert(! range.empty());
+    assert(this->source.at(range.start) == char_t('-'));
+    const size_t end = range.end();
+    
+    // Look for two spaces. Those separate the description.
+    // This is a two-space "C-string"
+    const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
+    size_t options_end = this->source.find(two_spaces, range.start);
+    if (options_end > end) {
+        options_end = end; // no description
+    }
+    
+    // Determine the description range. Skip over its leading whitespace
+    range_t description_range = range_t(options_end, end - options_end);
+    scan_while(this->source, &description_range, isspace);
+    
+    // Parse the options portion
+    assert(options_end >= range.start);
+    range_t remaining(range.start, options_end - range.start);
+    scan_while(this->source, &remaining, isspace);
+    while (! remaining.empty()) {
+        // Skip whitespace
+        option_t opt = parse_option_from_string(this->source, &remaining, true, errors);
+        if (opt.name.empty()) {
+            // Failed to get an option, give up
+            break;
+        }
+        opt.description_range = description_range;
+        out_result->push_back(opt);
+    }
+}
+
+// Returns true if the source line contains an option spec, that is, has at least one leading space, and then a dash
+static bool line_contains_option_spec(const string_t &str, const range_t &range) {
+    range_t remaining = range;
+    range_t space = scan_while(str, &remaining, isspace);
+    range_t dashes = scan_while(str, &remaining, it_equals<'-'>);
+    return space.length > 0 && dashes.length > 0;
+}
+
+/* Parses the option specification at the given location */
+option_list_t parse_options_spec(error_list_t *errors) const {
+    option_list_t result;
+    const char *name = "Options:";
+    bool in_options_section = false;
+    size_t line_start = 0, line_end = 0;
+    
+    bool in_desired_section = false;
+    while (get_next_line(source, &line_start, &line_end)) {
+        // It's a header line if the first character is not whitespace
+        bool is_header = ! isspace(source.at(line_start));
+        if (is_header) {
+            // Check to see if the name is found before the first colon
+            // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
+            size_t name_pos = find_case_insensitive(source, name, line_start);
+            in_desired_section = (name_pos < line_end && name_pos < source.find(':', line_start));
+        }
+        
+        if (in_desired_section && ! is_header) {
+            // We're in the section we want, and this is not a header line.
+            // These are all valid option specifications:
+            // --foo
+            // --foo <bar>
+            // --foo=<bar>
+            // --foo=<bar>, -f=<bar>
+            // There may also be a description after two spaces
+            // The description may span multiple lines.
+            
+
+            // Check to see if this line starts with a -
+            range_t line_range = range_t(line_start, line_end - line_start);
+            if (line_contains_option_spec(this->source, line_range)) {
+                // It's a new option. Determine how long its description goes.
+                range_t option_spec_range = line_range;
+                size_t local_line_start = line_start, local_line_end = line_end;
+                while (get_next_line(this->source, &local_line_start, &local_line_end)) {
+                    const range_t local_range(local_line_start, local_line_end - local_line_start);
+                    if (isspace(this->source.at(local_range.start)) && ! line_contains_option_spec(this->source, local_range)) {
+                        option_spec_range.merge(local_range);
+                        // Set our outermost lines to this line
+                        line_start = local_line_start;
+                        line_end = local_line_end;
+                    }
+                }
+                
+                // Got the description. Parse out an option.
+                parse_one_option_spec(option_spec_range, &result, errors);
+            }
+        }
+    }
+    return result;
 }
 
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx. */
@@ -1187,9 +1435,10 @@ typedef std::vector<match_state_t> match_state_list_t;
 static match_state_list_t no_match() { return match_state_list_t(); }
 
 struct match_context_t {
-    /* Note: these are stored references. These objects are expected to be transient. */
+    /* Note: these are stored references. Match context objects are expected to be transient and stack-allocated. */
     const positional_argument_list_t &positionals;
     const resolved_option_list_t &resolved_options;
+    const option_list_t options_section;
     
     bool has_more_positionals(const match_state_t *state) const {
         assert(state->next_positional_index <= positionals.size());
@@ -1214,7 +1463,7 @@ struct match_context_t {
         return positionals.at(state->next_positional_index);
     }
     
-    const positional_argument_t &acquire_next_positional(match_state_t *state) {
+    const positional_argument_t &acquire_next_positional(match_state_t *state) const {
         assert(state->next_positional_index < positionals.size());
         return positionals.at(state->next_positional_index++);
     }
@@ -1247,7 +1496,7 @@ static void state_destructive_append_to(match_state_t *state, match_state_list_t
 }
 
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx) {
+match_state_list_t try_match(T& ptr, match_state_t *state, const match_context_t *ctx) {
     match_state_list_t result;
     if (ptr.get()) {
         result = this->match(*ptr, state, ctx);
@@ -1256,7 +1505,7 @@ match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx)
 }
 
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx) {
+match_state_list_t try_match(T& ptr, match_state_list_t &state_list, const match_context_t *ctx) {
     match_state_list_t total_result;
     if (ptr.get()) {
         for (size_t i=0; i < state_list.size(); i++) {
@@ -1269,7 +1518,7 @@ match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_conte
 }
 
 /* Match overrides */
-match_state_list_t match(const usage_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const usage_t &node, match_state_t *state, const match_context_t *ctx) {
     if (! ctx->has_more_positionals(state)) {
         // todo: error handling
         return no_match();
@@ -1283,12 +1532,12 @@ match_state_list_t match(const usage_t &node, match_state_t *state, match_contex
     return main_branch;
 }
 
-match_state_list_t match(const expression_list_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const expression_list_t &node, match_state_t *state, const match_context_t *ctx) {
     match_state_list_t intermed_state_list = try_match(node.expression, state, ctx);
     return try_match(node.opt_expression_list, intermed_state_list, ctx);
 }
 
-match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, const match_context_t *ctx) {
     match_state_list_t result;
     if (node.expression_list.get()) {
         return match(*node.expression_list, state, ctx);
@@ -1298,8 +1547,7 @@ match_state_list_t match(const opt_expression_list_t &node, match_state_t *state
     }
 }
 
-
-match_state_list_t match(const expression_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const expression_t &node, match_state_t *state, const match_context_t *ctx) {
     // Must duplicate the state for the second branch
     match_state_t copied_state = *state;
     match_state_list_t result1 = try_match(node.compound_clause, state, ctx);
@@ -1310,11 +1558,11 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
     return result1;
 }
 
-match_state_list_t match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const or_continuation_t &node, match_state_t *state, const match_context_t *ctx) {
     return try_match(node.expression, state, ctx);
 }
 
-match_state_list_t match(const compound_clause_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const compound_clause_t &node, match_state_t *state, const match_context_t *ctx) {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
     match_state_list_t result;
@@ -1379,6 +1627,13 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, ma
             break;
         }
         
+        case 3:
+        {
+            // This is the [options] clause. It does not have ellipsis.
+            
+            break;
+        }
+        
         default:
             assert(0 && "unknown production");
             return no_match();
@@ -1387,7 +1642,7 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, ma
     return result;
 }
 
-match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const simple_clause_t &node, match_state_t *state, const match_context_t *ctx) {
     // Check to see if this is an argument or a variable
     match_state_list_t result;
     const range_t &range = node.word.range;
@@ -1488,9 +1743,16 @@ std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const
 int main(void) {
     using namespace docopt_fish;
     const std::string usage =
-        "naval_fate ship new <name>...\n"
-        "naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
-        "naval_fate.py ship shoot <x> <y>";
+        "Usage: \n"
+        "  naval_fate ship new <name>...\n"
+        "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
+        "  naval_fate.py ship shoot <x> <y>\n"
+        "  naval_fate.py stuff [options]\n"
+        "Options:\n"
+        "  -h --help  Show this screen\n"
+        "  -a, --all  List everything\n"
+        "  -h, --human-readable  Display in human-readable format\n"
+        "  -i <file>, --input <file>  Set input file\n";
     
     docopt_impl<std::string> impl(usage);
     token_list_t tokens = impl.tokenize_usage(0, usage.size());
@@ -1503,7 +1765,22 @@ int main(void) {
     parse_context_t ctx(tokens);
     usage_t *tree = usage_t::parse(&ctx);
     
-    option_list_t options = impl.collect_options(*tree);
+    // Extract options from the usage sections
+    option_list_t usage_options = impl.collect_options(*tree);
+    
+    // Extract options from the options section
+    option_list_t shortcut_options = impl.parse_options_spec(&impl.errors);
+    
+    // Combine these into a single list
+    option_list_t all_options;
+    all_options.reserve(usage_options.size() + shortcut_options.size());
+    all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
+    all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
+    
+    // Dump them
+    for (size_t i=0; i < all_options.size(); i++) {
+        fprintf(stderr, "Option %lu: %s\n", i, all_options.at(i).describe(usage).c_str());
+    }
     
     std::string dumped = node_dumper_t::dump_tree(*tree, usage);
     fprintf(stderr, "%s\n", dumped.c_str());
@@ -1531,7 +1808,7 @@ int main(void) {
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
     docopt_impl<std::string>::resolved_option_list_t resolved_options;
-    impl.separate_argv_into_options_and_positionals(argv, options, &positionals, &resolved_options);
+    impl.separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
     
     for (size_t i=0; i < positionals.size(); i++) {
         fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
