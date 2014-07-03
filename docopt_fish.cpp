@@ -29,12 +29,55 @@ static void assign_narrow_string_to_string(const char *s, std::wstring *result) 
     }
 }
 
+UNUSED
+static const std::wstring &widen(const std::wstring &t) {
+    return t;
+}
+
+UNUSED
+static std::wstring widen(const std::string &t) {
+    std::wstring result;
+    result.insert(result.begin(), t.begin(), t.end());
+    return result;
+}
+
+
 // Need a wstring implementation of this
 static size_t find_case_insensitive(const std::string &haystack, const char *needle, size_t haystack_start) {
     assert(haystack_start < haystack.size());
     const char *haystack_cstr = haystack.c_str();
     const char *found = strcasestr(haystack_cstr + haystack_start, needle);
     return found ? found - haystack_cstr : std::string::npos;
+}
+
+static size_t find_case_insensitive(const std::wstring &haystack, const char *needle, size_t haystack_start) {
+    // Nasty implementation
+    // The assumption here is that needle is always ASCII; thus it suffices to do an ugly tolower comparison
+    assert(haystack_start < haystack.size());
+    const size_t needle_len = strlen(needle);
+    if (needle_len > haystack.size()) {
+        // needle is longer than haystack, no possible match
+        return std::wstring::npos;
+    }
+
+    const wchar_t *haystack_cstr = haystack.c_str();
+    size_t search_end = haystack.size() - needle_len;
+    
+    for (size_t i=haystack_start; i < search_end; i++) {
+        // See if we have a match at i
+        size_t j;
+        for (j = 0; j < needle_len; j++) {
+            wchar_t wc = haystack_cstr[i + j];
+            if (wc > 127 || tolower((char)wc) != tolower(needle[j])) {
+                break;
+            }
+        }
+        if (j == needle_len) {
+            // Matched them all
+            return i;
+        }
+    }
+    return std::wstring::npos;
 }
 
 /* Class representing a range of a string */
@@ -45,21 +88,21 @@ struct range_t {
     {}
     range_t(size_t s, size_t l) : start(s), length(l)
     {}
-    
+
     size_t end() const {
         size_t result = start + length;
         assert(result >= start); //don't overflow
         return result;
     }
-    
+
     bool empty() const {
         return length == 0;
     }
-    
+
     bool operator==(const range_t &rhs) const {
         return this->start == rhs.start && this->length == rhs.length;
     }
-    
+
     // Range comparison so these can be used as dictionary keys
     bool operator<(const range_t &rhs) const {
         if (this->start != rhs.start) {
@@ -67,7 +110,7 @@ struct range_t {
         }
         return this->length < rhs.length;
     }
-    
+
     // Merges a range into this range. Empty ranges are discarded.
     void merge(const range_t &rhs) {
         if (this->empty()) {
@@ -94,28 +137,28 @@ struct token_t {
         options = 'o', //represents [options]
         word='X' // represents a word, possibly with angle brackets <foo>
     };
-    
+
     range_t range;
     type_t type;
-    
+
     /* Constructor */
     token_t(size_t a, size_t b, char type_char) : range(a, b)
     {
         assert(strchr("()[]|.noX", type_char));
         this->type = static_cast<type_t>(type_char);
     }
-    
+
     token_t(size_t a, size_t b, type_t t) : range(a, b), type(t)
     {
     }
-    
+
     token_t() : range(0, 0), type(none)
     {}
-    
+
     bool empty() const {
         return range.length == 0;
     }
-    
+
     // For debugging
     const char *name() const {
         switch (this->type) {
@@ -140,19 +183,19 @@ struct option_t {
         single_long, // '-foo'
         double_long // '--foo'
     } type;
-    
+
     // name of the option, like '--foo'
     range_t name;
-    
+
     // value of the option, i.e. variable name. Empty for no value.
     range_t value;
-    
+
     // Range of the description. Empty for none.
     range_t description_range;
-    
+
     // Whether we require an = sign to match
     bool require_equals;
-    
+
     option_t(const range_t &n, const range_t &v, size_t leading_dash_count, bool requals = false) : name(n), value(v), description_range(0, 0), require_equals(requals) {
         // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
         if (leading_dash_count > 1) {
@@ -163,16 +206,23 @@ struct option_t {
             this->type = option_t::single_short;
         }
     }
-    
+
     /* We want a value if we have a non-empty value range */
     bool has_value() const {
         return ! value.empty();
     }
-    
+
     bool operator==(const option_t &rhs) const {
+        if (this->name.start == 244) {
+            fprintf(stderr, "Me!\n");
+        }
+        if (rhs.name.start == 244) {
+            fprintf(stderr, "RHS!\n");
+        }
+
         return this->type == rhs.type && this->name == rhs.name && this->value == rhs.value;
     }
-    
+
     /* Helper function for dumping */
     template<typename string_t>
     string_t describe(const string_t &src) const {
@@ -183,6 +233,14 @@ struct option_t {
             result.push_back(' ');
             result.append(src, value.start, value.length);
         }
+        result.push_back(' ');
+        
+        char range[64];
+        snprintf(range, sizeof range, "<%lu, %lu>", name.start, name.length);
+        string_t tmp;
+        assign_narrow_string_to_string(range, &tmp);
+        result.append(tmp);
+        
         return result;
     }
 };
@@ -198,32 +256,32 @@ typedef std::vector<option_t> option_list_t;
 #pragma mark -
 
 /* Usage grammar:
- 
+
     usage = <empty> |
             WORD expression_list usage
 
     expression_list = expression opt_expression_list
- 
+
     opt_expression_list = <empty> |
                           expression_list
- 
+
     expression = compound_clause or_continuation
- 
+
     or_continuation = <empty> |
                       VERT_BAR expression
- 
+
     compound_clause = simple_clause opt_ellipsis |
                       OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
                       OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
                       options_shortcut
- 
+
     simple_clause = WORD
- 
+
     opt_ellipsis = <empty> |
                    ELLIPSIS
-                   
+
     options_shortcut = OPEN_SQUARE WORD CLOSE_SQUARE
- 
+
 */
 
 struct expression_list_t;
@@ -238,7 +296,7 @@ struct opt_ellipsis_t;
 struct parse_context_t {
     const token_list_t tokens;
     range_t remaining_range;
-    
+
     parse_context_t(token_list_t &lst) : tokens(lst), remaining_range(0, lst.size())
     {}
 
@@ -246,7 +304,7 @@ struct parse_context_t {
     bool is_at_end() const {
         return remaining_range.length == 0;
     }
-    
+
     /* Returns true if there is a next token, and it has the given type */
     bool next_token_has_type(token_t::type_t t) const {
         bool result = false;
@@ -255,7 +313,7 @@ struct parse_context_t {
         }
         return result;
     }
-    
+
     token_t::type_t next_token_type() const {
         if (this->is_at_end()) {
             return token_t::none;
@@ -317,7 +375,7 @@ struct node_visitor_t {
     /* Additional overrides */
     template<typename IGNORED_TYPE>
     void will_visit_children(const IGNORED_TYPE& t UNUSED) {}
-    
+
     template<typename IGNORED_TYPE>
     void did_visit_children(const IGNORED_TYPE& t UNUSED) {}
 
@@ -330,8 +388,8 @@ struct node_visitor_t {
         node.visit_children(this);
         derived_this->did_visit_children(node);
     }
-    
-    
+
+
     /* Function called from overrides of visit_children. We invoke an override of accept(), and then recurse to children. */
     template<typename NODE_TYPE>
     void visit(const NODE_TYPE &t)
@@ -340,12 +398,12 @@ struct node_visitor_t {
             this->visit_internal(*t);
         }
     }
-    
+
     /* Visit is called from node visit_children implementations. A token has no children. */
     void visit(const token_t &token) {
         static_cast<T *>(this)->accept(token);
     }
-    
+
     /* Public entry point */
     template<typename ENTRY_TYPE>
     void begin(const ENTRY_TYPE &t) {
@@ -354,15 +412,16 @@ struct node_visitor_t {
 };
 
 /* Helper class for pretty-printing */
-class node_dumper_t : public node_visitor_t<node_dumper_t> {
-    std::string text;
+template<typename string_t>
+class node_dumper_t : public node_visitor_t<node_dumper_t<string_t> > {
+    string_t text;
     unsigned int depth;
-    
+
     // Instances of this class are expected to be quite transient. src is unowned.
-    const std::string *src;
-    
+    const string_t *src;
+
     std::vector<std::string> lines;
-    
+
 public:
     template<typename NODE_TYPE>
     void accept(const NODE_TYPE& node) {
@@ -370,31 +429,31 @@ public:
         result.append(node.name());
         lines.push_back(result);
     }
-    
+
     template<typename NODE_TYPE>
     void will_visit_children(const NODE_TYPE &t) {
         depth = depth + 1 - t.unindent();
     }
-    
+
     template<typename NODE_TYPE>
     void did_visit_children(const NODE_TYPE &t) {
         depth = depth - 1 + t.unindent();
     }
 
-    
+
     void accept(const token_t &t1) {
         if (t1.type != token_t::none) {
             std::string result(2 * depth, ' ');
             char buff[32];
-            
+
             if (t1.type == token_t::word && src != NULL) {
-                const std::string word(*src, t1.range.start, t1.range.length);
-                snprintf(buff, sizeof buff, "'%s' ", word.c_str());
+                const string_t word(*src, t1.range.start, t1.range.length);
+                snprintf(buff, sizeof buff, "'%ls' ", widen(word).c_str());
             } else {
                 snprintf(buff, sizeof buff, "'%s' ", t1.name());
             }
             result.append(buff);
-            
+
             if (t1.range.length == 1) {
                 snprintf(buff, sizeof buff, "{%lu}", t1.range.start);
             } else {
@@ -405,9 +464,9 @@ public:
         }
     }
 
-    template<typename NODE_TYPE>
-    static std::string dump_tree(const NODE_TYPE &node, const std::string &src) {
-        node_dumper_t dumper;
+    template<typename NODE_TYPE, typename STRING_TYPE>
+    static std::string dump_tree(const NODE_TYPE &node, const STRING_TYPE &src) {
+        node_dumper_t<STRING_TYPE> dumper;
         dumper.src = &src;
         dumper.begin(node);
         std::string result;
@@ -424,14 +483,14 @@ public:
 struct base_t {
     // Which production was used
     uint8_t production;
-    
+
     // Range of tokens used
     range_t token_range;
-    
+
     // Constructors. The default production index is 0. The second constructor specifies a production.
     base_t() : production(0){}
     base_t(uint8_t p) : production(p) {}
-    
+
     // How much to un-indent children when pretty-printing
     unsigned unindent() const { return 0; }
 };
@@ -439,18 +498,18 @@ struct base_t {
 struct expression_list_t : public base_t {
     auto_ptr<expression_t> expression;
     auto_ptr<opt_expression_list_t> opt_expression_list;
-    
+
     // expression_list = expression opt_expression_list
     expression_list_t(auto_ptr<expression_t> c1, auto_ptr<opt_expression_list_t> c2) : expression(c1), opt_expression_list(c2) {}
     static expression_list_t *parse(parse_context_t *ctx) {  return parse_2<expression_list_t, expression_t, opt_expression_list_t>(ctx); }
     std::string name() const { return "expression_list"; }
-    
+
     template<typename T>
     void visit_children(T *v) const {
         v->visit(expression);
         v->visit(opt_expression_list);
     }
-    
+
     /* Don't indent children of opt_expression_list to keep the list looking flatter */
     unsigned unindent() const { return 1*0; }
 };
@@ -463,18 +522,18 @@ struct usage_t : public base_t {
 
     // usage = <empty>
     usage_t() : base_t(0) {}
-    
+
     // usage = word expression_list usage
     usage_t(token_t t, auto_ptr<expression_list_t> c, auto_ptr<usage_t> next) : base_t(1), prog_name(t), expression_list(c), next_usage(next) {}
-    
+
     static usage_t *parse(parse_context_t *ctx) {
         // If we reach the end, we return an empty usage
         if (ctx->is_at_end()) {
             return new usage_t();
         }
-        
+
         usage_t *result = NULL;
-        
+
         // TODO: generate error for missing word name
         if (ctx->next_token_has_type(token_t::word)) {
             token_t p = ctx->acquire_token();
@@ -484,16 +543,16 @@ struct usage_t : public base_t {
                 while (ctx->next_token_has_type(token_t::newline)) {
                     ctx->acquire_token();
                 }
-                
+
                 auto_ptr<usage_t> next(usage_t::parse(ctx));
                 result = new usage_t(p, el, next);
             }
         }
         return result;
     }
-    
+
     std::string name() const { return "usage"; }
-    
+
     template<typename T>
     void visit_children(T *v) const {
         v->visit(prog_name);
@@ -504,16 +563,16 @@ struct usage_t : public base_t {
 
 struct opt_expression_list_t : public base_t {
     auto_ptr<expression_list_t> expression_list;
-    
+
     // opt_expression_list = empty
     opt_expression_list_t() {}
-    
+
     // opt_expression_list = expression_list
     opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
     static opt_expression_list_t *parse(parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
     std::string name() const { return "opt_expression_list"; }
     unsigned unindent() const { return 1*0; }
-    
+
     template<typename T>
     void visit_children(T *v) const {
         v->visit(expression_list);
@@ -523,12 +582,12 @@ struct opt_expression_list_t : public base_t {
 struct expression_t : public base_t {
     auto_ptr<compound_clause_t> compound_clause;
     auto_ptr<or_continuation_t> or_continuation;
-    
+
     // expression = compound_clause or_continuation
     expression_t(auto_ptr<compound_clause_t> c, auto_ptr<or_continuation_t> oc) : compound_clause(c), or_continuation(oc) {}
     static expression_t *parse(parse_context_t *ctx) { return parse_2<expression_t, compound_clause_t, or_continuation_t>(ctx); }
     std::string name() const { return "expression"; }
-    
+
     template<typename T>
     void visit_children(T *v) const {
         v->visit(compound_clause);
@@ -539,13 +598,13 @@ struct expression_t : public base_t {
 struct or_continuation_t : public base_t {
     token_t vertical_bar;
     auto_ptr<expression_t> expression;
-    
+
     // or_continuation = <empty>
     or_continuation_t() {}
-    
+
     // or_continuation =  VERT_BAR or_clause
     or_continuation_t(token_t b, auto_ptr<expression_t> c) : base_t(1), vertical_bar(b), expression(c) {}
-    
+
     static or_continuation_t *parse(parse_context_t *ctx) {
         or_continuation_t *result = NULL;
         if (ctx->next_token_has_type(token_t::bar)) {
@@ -562,9 +621,9 @@ struct or_continuation_t : public base_t {
         }
         return result;
     }
-    
+
     std::string name() const { return "or_continuation"; }
-    
+
     template<typename T>
     void visit_children(T *v) const {
         v->visit(vertical_bar);
@@ -574,13 +633,13 @@ struct or_continuation_t : public base_t {
 
 struct opt_ellipsis_t : public base_t {
     token_t ellipsis;
-    
+
     // opt_ellipsis = <empty>
     opt_ellipsis_t() {}
-    
+
     // opt_ellipsis = ELLIPSIS
     opt_ellipsis_t(token_t t) : base_t(1), ellipsis(t) {}
-    
+
     static opt_ellipsis_t *parse(parse_context_t *ctx) {
         opt_ellipsis_t *result = NULL;
         if (ctx->next_token_has_type(token_t::ellipsis)) {
@@ -590,7 +649,7 @@ struct opt_ellipsis_t : public base_t {
         }
         return result;
     }
-    
+
     std::string name() const { return "opt_ellipsis"; }
     template<typename T>
     void visit_children(T *v) const {
@@ -601,14 +660,14 @@ struct opt_ellipsis_t : public base_t {
 struct options_shortcut_t : public base_t {
     // The options shortcut does not need to remember its token, since we never use it
     options_shortcut_t(const token_t &t1 UNUSED) : base_t() {}
-    
+
     static options_shortcut_t *parse(parse_context_t *ctx) {
         if (! ctx->next_token_has_type(token_t::options)) {
             return NULL;
         }
         return new options_shortcut_t(ctx->acquire_token());
     }
-    
+
     std::string name() const { return "options_shortcut"; }
     template<typename T>
     void visit_children(T *v UNUSED) const {}
@@ -616,10 +675,10 @@ struct options_shortcut_t : public base_t {
 
 struct simple_clause_t : public base_t {
     token_t word;
-    
+
     simple_clause_t(const token_t &t) : word(t)
     {}
-    
+
     static simple_clause_t *parse(parse_context_t *ctx) {
         if (! ctx->next_token_has_type(token_t::word)) {
             return NULL;
@@ -639,17 +698,17 @@ struct simple_clause_t : public base_t {
 struct compound_clause_t : public base_t {
     // production 0
     auto_ptr<simple_clause_t> simple_clause;
-    
+
     // Collapsed for productions 1 and 2
     token_t open_token;
     auto_ptr<expression_list_t> expression_list;
     token_t close_token;
-    
+
     // Collapsed for all
     auto_ptr<opt_ellipsis_t> opt_ellipsis;
-    
+
     auto_ptr<options_shortcut_t> options_shortcut;
-    
+
     //compound_clause = simple_clause
     compound_clause_t(auto_ptr<simple_clause_t> c, auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
 
@@ -658,7 +717,7 @@ struct compound_clause_t : public base_t {
     compound_clause_t(token_t a, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
         : base_t(a.type == token_t::open_paren ? 1  : 2), open_token(a), expression_list(el), close_token(b), opt_ellipsis(e)
     {}
-    
+
     //compound_clause = options_shortcut
     compound_clause_t(auto_ptr<options_shortcut_t> os) : base_t(3), options_shortcut(os)
     {}
@@ -669,7 +728,7 @@ struct compound_clause_t : public base_t {
             fprintf(stderr, "At end\n");
             return NULL;
         }
-        
+
         switch (ctx->next_token_type()) {
             case token_t::open_square:
             case token_t::open_paren:
@@ -690,7 +749,7 @@ struct compound_clause_t : public base_t {
                 }
                 break;
             }
-            
+
             case token_t::options:
             {
                 auto_ptr<options_shortcut_t> shortcut(options_shortcut_t::parse(ctx));
@@ -699,19 +758,19 @@ struct compound_clause_t : public base_t {
                 }
                 break;
             }
-            
+
             case token_t::close_paren:
             case token_t::close_square:
             case token_t::newline:
                 result = NULL;
                 break;
-                
+
             case token_t::ellipsis:
             case token_t::bar:
                 // Indicates leading ellipsis / bar
                 // TODO: generate error
                 break;
-                
+
             case token_t::word:
             {
                 auto_ptr<simple_clause_t> simple_clause(simple_clause_t::parse(ctx));
@@ -722,14 +781,14 @@ struct compound_clause_t : public base_t {
                 }
                 break;
             }
-            
+
             case token_t::none:
                 assert(0 && "none-type token returned from next_token_type when not at end of token stream");
                 break;
         }
         return result;
     }
-    
+
     std::string name() const { return "compound_clause"; }
     template<typename T>
     void visit_children(T *v) const {
@@ -749,17 +808,17 @@ struct compound_clause_t : public base_t {
 template<typename NODE_TYPE>
 struct node_collector_t : public node_visitor_t<node_collector_t<NODE_TYPE> > {
     std::vector<const NODE_TYPE *> results;
-    
+
     // The requested type we capture
     void accept(const NODE_TYPE& node) {
         results.push_back(&node);
     }
-    
+
     // Other types we ignore
     template<typename IGNORED_TYPE>
     void accept(const IGNORED_TYPE& t UNUSED) {}
 
-    
+
 };
 
 /* Helper class for collecting all nodes of a given type */
@@ -781,7 +840,7 @@ class docopt_impl OPEN_DOCOPT_IMPL
 struct error_t {
     /* Where the error occurred */
     size_t location;
-    
+
     /* Text of the error */
     string_t text;
 };
@@ -822,24 +881,24 @@ class optional_string_t {
 public:
     bool is_missing;
     string_t ivalue;
-    
+
     optional_string_t() : is_missing(true) {}
     optional_string_t(const string_t &s) : is_missing(false), ivalue(s) {}
-    
+
     void operator=(const string_t &s) {
         is_missing = false;
         ivalue = s;
     }
-    
+
     bool missing() const {
         return is_missing;
     }
-    
+
     const string_t &value() const {
         assert(! this->is_missing);
         return ivalue;
     }
-    
+
     const char_t *c_str_or_empty() const {
         // A missing optional string has an empty underlying string
         return ivalue.c_str();
@@ -850,7 +909,7 @@ public:
 /* A positional argument */
 struct positional_argument_t {
     string_t value;
-    
+
     positional_argument_t(const string_t &s) : value(s)
     {}
 };
@@ -860,7 +919,7 @@ typedef std::vector<positional_argument_t> positional_argument_list_t;
 struct resolved_option_t {
     option_t option;
     optional_string_t value;
-    
+
     resolved_option_t(const option_t &opt, const optional_string_t &val) : option(opt), value(val)
     {}
 };
@@ -917,7 +976,7 @@ static bool str_equals(const char *a, const string_t &str) {
             return false;
         }
     }
-    
+
     // We made it through. Ensure they have the same lengths
     // Note that we already dereferenced the previous characters of a
     return a[len] == '\0';
@@ -990,7 +1049,6 @@ token_list_t tokenize_usage() {
     const range_list_t usage_sections = this->source_ranges_for_section("Usage:");
     for (size_t usage_idx = 0; usage_idx < usage_sections.size(); usage_idx++) {
         const range_t &usage_range = usage_sections.at(usage_idx);
-        fprintf(stderr, "usage_range: %lu %lu\n", usage_range.start, usage_range.length);
         if (usage_range.empty()) {
             continue;
         }
@@ -1006,14 +1064,14 @@ token_list_t tokenize_usage() {
         bool within_brackets = false;
         size_t bracket_start = npos;
         size_t word_start = npos;
-        
+
         const token_t::type_t word_type = token_t::word;
-        
+
         const char_t *sc = source.c_str();
-        
+
         const char *options_shortcut = "[options]";
         const size_t options_shortcut_len = strlen(options_shortcut);
-        
+
         for (size_t i=start; i < end;)
         {
             const char_t c = sc[i];
@@ -1073,11 +1131,11 @@ token_list_t tokenize_usage() {
                 i += 1;
             }
         }
-        
+
         if (within_brackets) {
             append_error(&this->errors, bracket_start, "Unclosed bracket");
         }
-        
+
         // grab trailing word
         if (word_start != npos) {
             tokens.push_back(token_t(word_start, end - word_start, word_type));
@@ -1129,7 +1187,7 @@ static range_t scan_while(const string_t &str, range_t *remaining, T func) {
 
 static option_t parse_option_from_string(const string_t &str, range_t *remaining, bool within_options_spec, error_list_t *errors) {
     assert(remaining->length > 0);
-    
+
     // Count how many leading dashes
     const size_t start = remaining->start;
     range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
@@ -1137,13 +1195,13 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
     if (leading_dash_range.length > 2) {
         append_error(errors, start, "Too many dashes");
     }
-    
+
     // Walk over characters valid in a name
     range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter);
     if (within_options_spec) {
         scan_while(str, remaining, isspace);
     }
-    
+
     // Check to see if there's an = sign
     const range_t equals_range = scan_while(str, remaining, it_equals<'='>);
     if (equals_range.length > 1) {
@@ -1155,7 +1213,7 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
         scan_while(str, remaining, isspace);
     }
     range_t variable_range = scan_while(str, remaining, char_is_valid_in_variable);
-    
+
     // Skip over commas and whitespace for the next range
     if (within_options_spec) {
         scan_while(str, remaining, isspace);
@@ -1172,7 +1230,7 @@ option_t parse_option_from_string(const string_t &str, const range_t &range, err
     size_t start = range.start;
     size_t len = range.length;
     size_t end = range.end();
-    
+
     // Count how many leading dashes
     size_t leading_dash_count = 0;
     while (leading_dash_count < len && str.at(start + leading_dash_count) == char_t('-')) {
@@ -1182,14 +1240,14 @@ option_t parse_option_from_string(const string_t &str, const range_t &range, err
     if (leading_dash_count > 2) {
         append_error(errors, start, "Too many dashes");
     }
-    
+
     // find an =. We ignore any = signs after the first
     size_t equals_pos = str.find(char_t('='), start);
     if (equals_pos >= end) {
         // Ignore any = sign at or past the end of our substring
         equals_pos = string_t::npos;
     }
-    
+
     // Construct ranges
     range_t name, value;
     if (equals_pos == string_t::npos) {
@@ -1202,7 +1260,7 @@ option_t parse_option_from_string(const string_t &str, const range_t &range, err
         name = range_t(start + leading_dash_count, equals_pos - leading_dash_count - start);
         value = range_t(equals_pos + 1, end - equals_pos - 1);
     }
-    
+
     return option_t(name, value, leading_dash_count);
 }
 
@@ -1211,7 +1269,7 @@ void parse_option_spec(const range_t &range, option_list_t *out_result, error_li
     assert(! range.empty());
     assert(this->source.at(range.start) == char_t('-'));
     const size_t end = range.end();
-    
+
     // Look for two spaces. Those separate the description.
     // This is a two-space "C-string"
     const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
@@ -1219,11 +1277,11 @@ void parse_option_spec(const range_t &range, option_list_t *out_result, error_li
     if (options_end > end) {
         options_end = end; // no description
     }
-    
+
     // Determine the description range. Skip over its leading whitespace
     range_t description_range = range_t(options_end, end - options_end);
     scan_while(this->source, &description_range, isspace);
-    
+
     // Parse the options portion
     assert(options_end >= range.start);
     range_t remaining(range.start, options_end - range.start);
@@ -1263,13 +1321,13 @@ range_list_t source_ranges_for_section(const char *name) const {
             size_t name_pos = find_case_insensitive(source, name, line_start);
             size_t line_end = line_range.end();
             in_desired_section = (name_pos < line_end && name_pos < source.find(':', line_start));
-            
+
             if (in_desired_section) {
                 // Append a new empty range. We will add to it.
                 result.push_back(range_t(0, 0));
             }
         }
-        
+
         if (in_desired_section && ! is_header) {
             // Extend the last range with this line
             result.back().merge(line_range);
@@ -1281,7 +1339,7 @@ range_list_t source_ranges_for_section(const char *name) const {
 /* Parses the option specification at the given location */
 option_list_t parse_options_spec(error_list_t *errors) const {
     option_list_t result;
-    
+
     const range_list_t section_ranges = source_ranges_for_section("Options:");
     for (size_t range_idx = 0; range_idx < section_ranges.size(); range_idx++) {
         const range_t section_range = section_ranges.at(range_idx);
@@ -1295,7 +1353,7 @@ option_list_t parse_options_spec(error_list_t *errors) const {
             // --foo=<bar>, -f=<bar>
             // There may also be a description after two spaces
             // The description may span multiple lines.
-            
+
 
             // Check to see if this line starts with a -
             if (line_contains_option_spec(this->source, line_range)) {
@@ -1309,7 +1367,7 @@ option_list_t parse_options_spec(error_list_t *errors) const {
                         line_range = local_range;
                     }
                 }
-                
+
                 // Got the description. Skip leading whitespace and then parse out an option.
                 scan_while(this->source, &option_spec_range, isspace);
                 parse_option_spec(option_spec_range, &result, errors);
@@ -1323,13 +1381,13 @@ option_list_t parse_options_spec(error_list_t *errors) const {
 bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
     const string_t &arg = argv.at(*idx);
     assert(substr_equals("--", arg, 2));
-    
+
     /* Parse the argument into an 'option'. Note that this option does not appear in the options list. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
     error_list_t local_errors;
     const option_t arg_as_option = parse_option_from_string(arg, range_t(0, arg.size()), &local_errors);
     // TODO: What if we get an error, e.g. there's more than two dashes?
     assert(arg_as_option.type == option_t::double_long);
-    
+
     /* Get list of matching long options. These are pointers into our options array */
     std::vector<const option_t *> matches;
     for (size_t i=0; i < options.size(); i++) {
@@ -1339,11 +1397,11 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
             matches.push_back(&opt);
         }
     }
-    
+
     /* TODO: handle unambiguous prefix */
     /* TODO: Better error reporting */
     /* TODO: can eliminate matches array entirely, just use a single index */
-    
+
     bool success = false;
     size_t match_count = matches.size();
     if (match_count > 1) {
@@ -1355,7 +1413,7 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
         assert(match_count == 1);
         const option_t *match = matches.at(0);
         optional_string_t value;
-        
+
         /* Ensure the option and argument agree on having a value */
         if (match->has_value()) {
             if (arg_as_option.has_value()) {
@@ -1387,7 +1445,7 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
 
 /* The Python implementation calls this "parse_argv" */
 void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first UNUSED = false) {
-    
+
     size_t idx = 0;
     while (idx < argv.size()) {
         const string_t arg = argv.at(idx);
@@ -1418,10 +1476,10 @@ typedef std::vector<option_map_t> option_map_list_t;
 struct match_state_t {
     option_map_t option_map;
     size_t next_positional_index;
-    
+
     match_state_t() : next_positional_index(0)
     {}
-    
+
     void swap(match_state_t &rhs) {
         this->option_map.swap(rhs.option_map);
         std::swap(this->next_positional_index, rhs.next_positional_index);
@@ -1436,13 +1494,13 @@ struct match_context_t {
     /* Note: these are stored references. Match context objects are expected to be transient and stack-allocated. */
     const positional_argument_list_t &positionals;
     const resolved_option_list_t &resolved_options;
-    const option_list_t options_section;
-    
+    const option_list_t &shortcut_options;
+
     bool has_more_positionals(const match_state_t *state) const {
         assert(state->next_positional_index <= positionals.size());
         return state->next_positional_index < positionals.size();
     }
-    
+
     bool has_unconsumed_options(const match_state_t *state, const string_t &src) const {
         /* An unconsumed option means an option from resolved_options that was not matched during tree descent, i.e. is not in option_map. This can be derived from option_map. */
         string_t name;
@@ -1450,40 +1508,41 @@ struct match_context_t {
             const range_t &opt_range = resolved_options.at(i).option.name;
             name.assign(src, opt_range.start, opt_range.length);
             if (state->option_map.find(name) == state->option_map.end()) {
+                fprintf(stderr, "unconsumed: %ls\n", widen(name).c_str());
                 return true;
             }
         }
         return false;
     }
-    
+
     const positional_argument_t &next_positional(match_state_t *state) const {
         assert(state->next_positional_index < positionals.size());
         return positionals.at(state->next_positional_index);
     }
-    
+
     const positional_argument_t &acquire_next_positional(match_state_t *state) const {
         assert(state->next_positional_index < positionals.size());
         return positionals.at(state->next_positional_index++);
     }
-    
-    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r) : positionals(p), resolved_options(r)
+
+    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const option_list_t &sco) : positionals(p), resolved_options(r), shortcut_options(sco)
     {}
 };
 
 static void state_list_destructive_append_to(match_state_list_t *source, match_state_list_t *dest) {
     size_t src_count = source->size();
     size_t dst_init_count = dest->size();
-    
+
     // Add a bunch of empty maps to the destination
     dest->resize(dst_init_count + src_count);
-    
+
     // Swap corresponding empty maps
     for (size_t i=0; i < src_count; i++) {
         match_state_t &src_state = source->at(i);
         match_state_t &dst_state = dest->at(i + dst_init_count);
         dst_state.swap(src_state);
     }
-    
+
     // Clean up source since it's now useless
     source->clear();
 }
@@ -1550,7 +1609,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
     match_state_t copied_state = *state;
     match_state_list_t result1 = try_match(node.compound_clause, state, ctx);
     match_state_list_t result2 = try_match(node.or_continuation, &copied_state, ctx);
-    
+
     // Combine the two lists into result1
     state_list_destructive_append_to(&result2, &result1);
     return result1;
@@ -1564,7 +1623,7 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
     match_state_list_t result;
-    
+
     switch (node.production) {
         case 0:
         {
@@ -1586,7 +1645,7 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
             }
             break;
         }
-            
+
         case 1:
         {
             /* This is a parenthesized clause which may have ellipsis, like (foo)...
@@ -1604,7 +1663,7 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
             }
             break;
         }
-            
+
         case 2:
         {
             /* This is a square-bracketed clause which may have ellipsis, like [foo]...
@@ -1624,19 +1683,51 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
             state_destructive_append_to(&not_taken_branch, &result);
             break;
         }
-        
+
         case 3:
         {
             // This is the [options] clause. It does not have ellipsis.
-            
+            result = this->match_options(ctx->shortcut_options, state, ctx);
             break;
         }
-        
+
         default:
             assert(0 && "unknown production");
             return no_match();
     }
-    
+
+    return result;
+}
+
+// Match the options in the options list, updating the state
+match_state_list_t match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx) {
+    match_state_list_t result;
+
+    for (size_t j=0; j < options_in_doc.size(); j++) {
+        const option_t opt_in_doc = options_in_doc.at(j);
+
+        // Find the matching option from the option list
+        const resolved_option_t *resolved_opt = NULL;
+        for (size_t i=0; i < ctx->resolved_options.size(); i++) {
+            const resolved_option_t *opt_in_argv = &ctx->resolved_options.at(i);
+            if (opt_in_argv->option == opt_in_doc) {
+                resolved_opt = opt_in_argv;
+                break;
+            }
+        }
+
+        if (resolved_opt != NULL) {
+            // woo hoo
+            const string_t name = this->string_for_range(opt_in_doc.name);
+            arg_t *arg = &state->option_map[name];
+            arg->key.assign(name);
+            if (! resolved_opt->value.missing()) {
+                arg->values.push_back(resolved_opt->value.value());
+            }
+            arg->count += 1;
+        }
+    }
+    state_destructive_append_to(state, &result);
     return result;
 }
 
@@ -1645,7 +1736,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
     match_state_list_t result;
     const range_t &range = node.word.range;
     char_t first_char = this->source.at(range.start);
-    
+
     if (first_char == char_t('<')) {
         if (ctx->has_more_positionals(state)) {
             // Variable argument. Modify the state.
@@ -1658,30 +1749,9 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
         }
     } else if (first_char == char_t('-')) {
         // Option
-        const option_t opt_in_doc = parse_option_from_string(this->source, range, NULL);
-        
-        // Find the matching option from the option list
-        const resolved_option_t *resolved_opt = NULL;
-        for (size_t i=0; i < ctx->resolved_options.size(); i++) {
-            const resolved_option_t *opt_in_argv = &ctx->resolved_options.at(i);
-            if (opt_in_argv->option == opt_in_doc) {
-                resolved_opt = opt_in_argv;
-                break;
-            }
-        }
-        
-        if (resolved_opt != NULL) {
-            // woo hoo
-            const string_t name = this->string_for_range(opt_in_doc.name);
-            arg_t *arg = &state->option_map[name];
-            arg->key.assign(name);
-            if (! resolved_opt->value.missing()) {
-                arg->values.push_back(resolved_opt->value.value());
-            }
-            arg->count += 1;
-            state_destructive_append_to(state, &result);
-        }
-        
+        option_list_t options_in_doc;
+        options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
+        result = this->match_options(options_in_doc, state, ctx);
     } else {
         // Fixed argument
         if (ctx->has_more_positionals(state)) {
@@ -1701,12 +1771,11 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
 }
 
 /* Matches argv */
-void match_argv(const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const usage_t &tree) {
-    match_context_t ctx(positionals, resolved_options);
+option_map_t match_argv(const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options,  const usage_t &tree) {
+    match_context_t ctx(positionals, resolved_options, shortcut_options);
     match_state_t init_state;
     match_state_list_t result = match(tree, &init_state, &ctx);
-    
-    std::cerr << "Result count: " << result.size() << "\n";
+
     for (size_t i=0; i < result.size(); i++) {
         const match_state_t &state = result.at(i);
         bool is_incomplete = ctx.has_more_positionals(&state) || ctx.has_unconsumed_options(&state, this->source);
@@ -1714,78 +1783,168 @@ void match_argv(const positional_argument_list_t &positionals, const resolved_op
         for (typename option_map_t::const_iterator iter = state.option_map.begin(); iter != state.option_map.end(); ++iter) {
             const string_t &name = iter->first;
             const arg_t &arg = iter->second;
-            std::cerr << "\t" << name << ": ";
+            fprintf(stderr, "\t%ls: ", widen(name).c_str());
             for (size_t j=0; j < arg.values.size(); j++) {
                 if (j > 0) {
-                    std::cerr << ", ";
+                    fprintf(stderr, ", ");
                 }
-                std::cerr << arg.values.at(j);
+                fprintf(stderr, "%ls", widen(arg.values.at(j)).c_str());
             }
             std::cerr << '\n';
         }
     }
-}
-
-CLOSE_DOCOPT_IMPL;
-
-#if 0
-std::map<std::string, argument_t> docopt_parse(const std::string &doc, const std::vector<std::string> &argv) {
     
-}
-
-std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const std::vector<std::wstring> &argv) {
-    
-}
-#endif
-
-int main(void) {
-    using namespace docopt_fish;
-    const std::string usage =
-        "Usage: \n"
-        "  naval_fate ship new <name>...\n"
-        "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
-        "  naval_fate.py ship shoot <x> <y>\n"
-        "  naval_fate.py stuff [options]\n"
-        "Options:\n"
-        "  -h --help  Show this screen\n"
-        "  -a, --all  List everything\n"
-        "  -h, --human-readable  Display in human-readable format\n"
-        "  -i <file>, --input <file>  Set input file\n";
-    
-    docopt_impl<std::string> impl(usage);
-    token_list_t tokens = impl.tokenize_usage();
-    fprintf(stderr, "%s\n", usage.c_str());
-    for (size_t i=0; i < tokens.size(); i++) {
-        const token_t &tok = tokens.at(i);
-        fprintf(stderr, "%lu: '%c' [%lu, %lu]\n", i, (char)tok.type, tok.range.start, tok.range.length);
+    // Return the first non-incomplete one
+    for (size_t i=0; i < result.size(); i++) {
+        const match_state_t &state = result.at(i);
+        bool is_incomplete = ctx.has_more_positionals(&state) || ctx.has_unconsumed_options(&state, this->source);
+        if (! is_incomplete) {
+            return state.option_map;
+        }
     }
     
+    // Return the first one
+    if (! result.empty()) {
+        const match_state_t &state = result.at(0);
+        return state.option_map;
+    }
+    
+    return option_map_t();
+}
+
+option_map_t best_assignment(const string_list_t &argv) {
+    bool log_stuff = false;
+    
+    token_list_t tokens = this->tokenize_usage();
     parse_context_t ctx(tokens);
     usage_t *tree = usage_t::parse(&ctx);
-    
+
     // Extract options from the usage sections
-    option_list_t usage_options = impl.collect_options(*tree);
-    
+    option_list_t usage_options = this->collect_options(*tree);
+
     // Extract options from the options section
-    option_list_t shortcut_options = impl.parse_options_spec(&impl.errors);
-    
+    option_list_t shortcut_options = this->parse_options_spec(&this->errors);
+
     // Combine these into a single list
     option_list_t all_options;
     all_options.reserve(usage_options.size() + shortcut_options.size());
     all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
     all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
-    
+
     // Dump them
-    for (size_t i=0; i < all_options.size(); i++) {
-        fprintf(stderr, "Option %lu: %s\n", i, all_options.at(i).describe(usage).c_str());
+    if (log_stuff) {
+        for (size_t i=0; i < all_options.size(); i++) {
+            fprintf(stderr, "Option %lu: %ls\n", i, widen(all_options.at(i).describe(this->source)).c_str());
+        }
     }
+
+    if (log_stuff) {
+        std::cerr << node_dumper_t<string_t>::dump_tree(*tree, this->source) << "\n";
+    }
+
+    positional_argument_list_t positionals;
+    resolved_option_list_t resolved_options;
+    this->separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
+
+    if (log_stuff) {
+        for (size_t i=0; i < positionals.size(); i++) {
+            fprintf(stderr, "positional %lu: %ls\n", i, widen(positionals.at(i).value).c_str());
+        }
+    }
+
+    for (size_t i=0; i < resolved_options.size(); i++) {
+        resolved_option_t &opt = resolved_options.at(i);
+        range_t range = opt.option.name;
+        const string_t name = string_t(this->source, range.start, range.length);
+        if (log_stuff) {
+            std::wstring value_str;
+            if (! opt.value.missing()) {
+                value_str = widen(opt.value.value());
+            }
+            fprintf(stderr, "Resolved %lu: %ls (%ls) <%lu, %lu>\n", i, widen(name).c_str(), value_str.c_str(), opt.option.name.start, opt.option.name.length);
+        }
+    }
+
+    option_map_t result = this->match_argv(positionals, resolved_options, shortcut_options, *tree);
+    delete tree;
+    return result;
+}
+
+CLOSE_DOCOPT_IMPL;
+
+std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv) {
+    docopt_impl<std::string> impl(usage_doc);
+    return impl.best_assignment(argv);
+}
+
+std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv) {
+    docopt_impl<std::wstring> impl(usage_doc);
+    return impl.best_assignment(argv);
+}
+
+int main(void) {
+    using namespace docopt_fish;
+    bool log_stuff = false;
+    const std::string usage =
+        "Usage: \n"
+        "  naval_fate ship new <name>...\n"
+        "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
+        "  naval_fate.py ship shoot <x> <y>\n"
+        "  naval_fate.py stuff [options] <name>...\n"
+        "Options:\n"
+        "  -h --help  Show this screen\n"
+        "  -a, --all  List everything\n"
+        "  -h, --human-readable  Display in human-readable format\n"
+        "  -i <file>, --input <file>  Set input file\n";
+
+    docopt_impl<std::string> impl(usage);
+    token_list_t tokens = impl.tokenize_usage();
     
-    std::string dumped = node_dumper_t::dump_tree(*tree, usage);
-    fprintf(stderr, "%s\n", dumped.c_str());
-    
+    if (log_stuff) {
+        fprintf(stderr, "%s\n", usage.c_str());
+        for (size_t i=0; i < tokens.size(); i++) {
+            const token_t &tok = tokens.at(i);
+            fprintf(stderr, "%lu: '%c' [%lu, %lu]\n", i, (char)tok.type, tok.range.start, tok.range.length);
+        }
+    }
+
+    parse_context_t ctx(tokens);
+    usage_t *tree = usage_t::parse(&ctx);
+
+    // Extract options from the usage sections
+    option_list_t usage_options = impl.collect_options(*tree);
+
+    // Extract options from the options section
+    option_list_t shortcut_options = impl.parse_options_spec(&impl.errors);
+
+    // Combine these into a single list
+    option_list_t all_options;
+    all_options.reserve(usage_options.size() + shortcut_options.size());
+    all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
+    all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
+
+    // Dump them
+    if (log_stuff) {
+        for (size_t i=0; i < all_options.size(); i++) {
+            fprintf(stderr, "Option %lu: %s\n", i, all_options.at(i).describe(usage).c_str());
+        }
+    }
+
+    if (log_stuff) {
+        std::string dumped = node_dumper_t<std::string>::dump_tree(*tree, usage);
+        fprintf(stderr, "%s\n", dumped.c_str());
+    }
+
     std::vector<std::string> argv;
     argv.push_back("naval_fate");
 #if 1
+    argv.push_back("stuff");
+    argv.push_back("--human-readable");
+    argv.push_back("--input");
+    argv.push_back("some_file");
+    argv.push_back("some_name");
+    argv.push_back("another_name");
+#elif 0
     argv.push_back("ship");
     argv.push_back("new");
     argv.push_back("alpha");
@@ -1803,25 +1962,25 @@ int main(void) {
     argv.push_back("3");
     argv.push_back("5");
 #endif
-    
+
     docopt_impl<std::string>::positional_argument_list_t positionals;
     docopt_impl<std::string>::resolved_option_list_t resolved_options;
     impl.separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
-    
+
     for (size_t i=0; i < positionals.size(); i++) {
-        fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
+        //fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
     }
-    
+
     for (size_t i=0; i < resolved_options.size(); i++) {
         const docopt_impl<std::string>::resolved_option_t &opt = resolved_options.at(i);
         range_t range = opt.option.name;
         const std::string name = std::string(usage, range.start, range.length);
-        fprintf(stderr, "%lu: %s (%s)\n", i, name.c_str(), opt.value.c_str_or_empty());
+        //fprintf(stderr, "Resolved %lu: %s (%s) <%lu, %lu>\n", i, name.c_str(), opt.value.c_str_or_empty(), opt.option.name.start, opt.option.name.length);
     }
 
-    impl.match_argv(positionals, resolved_options, *tree);
-    
+    impl.match_argv(positionals, resolved_options, shortcut_options, *tree);
+
     delete tree;
-    
+
     return 0;
 }
