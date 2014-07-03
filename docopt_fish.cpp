@@ -7,7 +7,13 @@
 
 #define UNUSED __attribute__((unused))
 
-using namespace docopt_fish;
+
+/* Hide open and close brackets to avoid an annoying leading indent inside our class */
+#define OPEN_DOCOPT_IMPL {
+#define CLOSE_DOCOPT_IMPL }
+
+namespace docopt_fish
+OPEN_DOCOPT_IMPL
 
 using std::auto_ptr;
 
@@ -246,10 +252,6 @@ struct option_t {
 };
 typedef std::vector<option_t> option_list_t;
 
-/* Hide open and close brackets to avoid an annoying leading indent inside our class */
-#define OPEN_DOCOPT_IMPL {
-#define CLOSE_DOCOPT_IMPL }
-
 
 #pragma mark -
 #pragma mark Usage Grammar
@@ -258,7 +260,7 @@ typedef std::vector<option_t> option_list_t;
 /* Usage grammar:
 
     usage = <empty> |
-            WORD expression_list usage
+            WORD opt_expression_list usage
 
     expression_list = expression opt_expression_list
 
@@ -515,16 +517,34 @@ struct expression_list_t : public base_t {
 };
 
 
+struct opt_expression_list_t : public base_t {
+    auto_ptr<expression_list_t> expression_list;
+
+    // opt_expression_list = empty
+    opt_expression_list_t() {}
+
+    // opt_expression_list = expression_list
+    opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
+    static opt_expression_list_t *parse(parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
+    std::string name() const { return "opt_expression_list"; }
+    unsigned unindent() const { return 1*0; }
+
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(expression_list);
+    }
+};
+
 struct usage_t : public base_t {
     token_t prog_name;
-    auto_ptr<expression_list_t> expression_list;
+    auto_ptr<opt_expression_list_t> opt_expression_list;
     auto_ptr<usage_t> next_usage;
 
     // usage = <empty>
     usage_t() : base_t(0) {}
 
     // usage = word expression_list usage
-    usage_t(token_t t, auto_ptr<expression_list_t> c, auto_ptr<usage_t> next) : base_t(1), prog_name(t), expression_list(c), next_usage(next) {}
+    usage_t(token_t t, auto_ptr<opt_expression_list_t> c, auto_ptr<usage_t> next) : base_t(1), prog_name(t), opt_expression_list(c), next_usage(next) {}
 
     static usage_t *parse(parse_context_t *ctx) {
         // If we reach the end, we return an empty usage
@@ -537,7 +557,7 @@ struct usage_t : public base_t {
         // TODO: generate error for missing word name
         if (ctx->next_token_has_type(token_t::word)) {
             token_t p = ctx->acquire_token();
-            auto_ptr<expression_list_t> el(expression_list_t::parse(ctx));
+            auto_ptr<opt_expression_list_t> el(opt_expression_list_t::parse(ctx));
             if (el.get()) {
                 // Consume as many newlines as we can, and then try to generate the tail
                 while (ctx->next_token_has_type(token_t::newline)) {
@@ -556,26 +576,8 @@ struct usage_t : public base_t {
     template<typename T>
     void visit_children(T *v) const {
         v->visit(prog_name);
-        v->visit(expression_list);
+        v->visit(opt_expression_list);
         v->visit(next_usage);
-    }
-};
-
-struct opt_expression_list_t : public base_t {
-    auto_ptr<expression_list_t> expression_list;
-
-    // opt_expression_list = empty
-    opt_expression_list_t() {}
-
-    // opt_expression_list = expression_list
-    opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
-    static opt_expression_list_t *parse(parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
-    std::string name() const { return "opt_expression_list"; }
-    unsigned unindent() const { return 1*0; }
-
-    template<typename T>
-    void visit_children(T *v) const {
-        v->visit(expression_list);
     }
 };
 
@@ -725,7 +727,6 @@ struct compound_clause_t : public base_t {
     static compound_clause_t *parse(parse_context_t * ctx) {
         compound_clause_t *result = NULL;
         if (ctx->is_at_end()) {
-            fprintf(stderr, "At end\n");
             return NULL;
         }
 
@@ -876,36 +877,6 @@ typedef base_argument_t<string_t> arg_t;
 typedef std::vector<string_t> string_list_t;
 typedef typename string_t::value_type char_t;
 
-/* Immutable class representing an optional string */
-class optional_string_t {
-public:
-    bool is_missing;
-    string_t ivalue;
-
-    optional_string_t() : is_missing(true) {}
-    optional_string_t(const string_t &s) : is_missing(false), ivalue(s) {}
-
-    void operator=(const string_t &s) {
-        is_missing = false;
-        ivalue = s;
-    }
-
-    bool missing() const {
-        return is_missing;
-    }
-
-    const string_t &value() const {
-        assert(! this->is_missing);
-        return ivalue;
-    }
-
-    const char_t *c_str_or_empty() const {
-        // A missing optional string has an empty underlying string
-        return ivalue.c_str();
-    }
-};
-
-
 /* A positional argument */
 struct positional_argument_t {
     string_t value;
@@ -915,12 +886,18 @@ struct positional_argument_t {
 };
 typedef std::vector<positional_argument_t> positional_argument_list_t;
 
-/* A resolved option with a name and optionally a value */
+/* A resolved option references an option in argv */
 struct resolved_option_t {
+    // The option referenced by this
     option_t option;
-    optional_string_t value;
+    
+    // The index of the argument where the value was found. npos for none.
+    size_t value_idx_in_argv;
+    
+    // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar)
+    range_t range_in_arg;
 
-    resolved_option_t(const option_t &opt, const optional_string_t &val) : option(opt), value(val)
+    resolved_option_t(const option_t &opt, size_t val_idx, const range_t &val_range) : option(opt), value_idx_in_argv(val_idx), range_in_arg(val_range)
     {}
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
@@ -1325,10 +1302,17 @@ range_list_t source_ranges_for_section(const char *name) const {
             if (in_desired_section) {
                 // Append a new empty range. We will add to it.
                 result.push_back(range_t(0, 0));
+                
+                // Adjust this range to start after the header name
+                size_t line_end = line_range.end();
+                size_t new_start = name_pos + strlen(name);
+                assert(new_start <= line_end);
+                line_range.start = new_start;
+                line_range.length = line_end - new_start;
             }
         }
 
-        if (in_desired_section && ! is_header) {
+        if (in_desired_section) {
             // Extend the last range with this line
             result.back().merge(line_range);
         }
@@ -1412,18 +1396,22 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
         bool errored = false;
         assert(match_count == 1);
         const option_t *match = matches.at(0);
-        optional_string_t value;
 
         /* Ensure the option and argument agree on having a value */
+        range_t value_range(0, 0);
+        size_t arg_index = npos;
         if (match->has_value()) {
             if (arg_as_option.has_value()) {
-                // The arg was specified as --foo=bar
-                value = string_t(arg, arg_as_option.value.start, arg_as_option.value.length);
+                // The arg was specified as --foo=bar. The range is the value portion; the index is the same as our argument.
+                value_range = arg_as_option.value;
+                arg_index = *idx;
             } else {
                 // The arg was (hopefully) specified as --foo bar
+                // The index is of the next argument, and the range is the entire argument
                 if (*idx + 1 < argv.size()) {
-                    value = argv.at(*idx + 1);
                     *idx += 1;
+                    arg_index = *idx;
+                    value_range = range_t(0, argv.at(arg_index).size());
                 } else {
                     append_error(&errors, match->value.start, "Option expects an argument");
                     errored = true;
@@ -1435,7 +1423,7 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
             errored = true;
         }
         if (! errored) {
-            out_result->push_back(resolved_option_t(*match, value));
+            out_result->push_back(resolved_option_t(*match, arg_index, value_range));
             *idx += 1;
         }
         success = true;
@@ -1495,6 +1483,8 @@ struct match_context_t {
     const positional_argument_list_t &positionals;
     const resolved_option_list_t &resolved_options;
     const option_list_t &shortcut_options;
+    const string_list_t &argv;
+    
 
     bool has_more_positionals(const match_state_t *state) const {
         assert(state->next_positional_index <= positionals.size());
@@ -1525,7 +1515,7 @@ struct match_context_t {
         return positionals.at(state->next_positional_index++);
     }
 
-    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const option_list_t &sco) : positionals(p), resolved_options(r), shortcut_options(sco)
+    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const option_list_t &sco, const string_list_t &av) : positionals(p), resolved_options(r), shortcut_options(sco), argv(av)
     {}
 };
 
@@ -1583,7 +1573,7 @@ match_state_list_t match(const usage_t &node, match_state_t *state, const match_
     /* Must duplicate the state for the next usage */
     match_state_t copied_state = *state;
     ctx->acquire_next_positional(state);
-    match_state_list_t main_branch = try_match(node.expression_list, state, ctx);
+    match_state_list_t main_branch = try_match(node.opt_expression_list, state, ctx);
     match_state_list_t next_branch = try_match(node.next_usage, &copied_state, ctx);
     state_list_destructive_append_to(&next_branch, &main_branch);
     return main_branch;
@@ -1721,8 +1711,10 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
             const string_t name = this->string_for_range(opt_in_doc.name);
             arg_t *arg = &state->option_map[name];
             arg->key.assign(name);
-            if (! resolved_opt->value.missing()) {
-                arg->values.push_back(resolved_opt->value.value());
+            if (resolved_opt->value_idx_in_argv != npos) {
+                const string_t &str = ctx->argv.at(resolved_opt->value_idx_in_argv);
+                const range_t range = resolved_opt->range_in_arg;
+                arg->values.push_back(string_t(str, range.start, range.length));
             }
             arg->count += 1;
         }
@@ -1771,8 +1763,8 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
 }
 
 /* Matches argv */
-option_map_t match_argv(const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options,  const usage_t &tree) {
-    match_context_t ctx(positionals, resolved_options, shortcut_options);
+option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options,  const usage_t &tree) {
+    match_context_t ctx(positionals, resolved_options, shortcut_options, argv);
     match_state_t init_state;
     match_state_list_t result = match(tree, &init_state, &ctx);
 
@@ -1818,6 +1810,11 @@ option_map_t best_assignment(const string_list_t &argv) {
     token_list_t tokens = this->tokenize_usage();
     parse_context_t ctx(tokens);
     usage_t *tree = usage_t::parse(&ctx);
+    
+    if (! tree) {
+        fprintf(stderr, "failed to parse!\n");
+        return option_map_t();
+    }
 
     // Extract options from the usage sections
     option_list_t usage_options = this->collect_options(*tree);
@@ -1858,18 +1855,20 @@ option_map_t best_assignment(const string_list_t &argv) {
         const string_t name = string_t(this->source, range.start, range.length);
         if (log_stuff) {
             std::wstring value_str;
-            if (! opt.value.missing()) {
-                value_str = widen(opt.value.value());
+            if (opt.value_idx_in_argv != npos) {
+                const range_t &range = opt.range_in_arg;
+                value_str = widen(string_t(argv.at(opt.value_idx_in_argv), range.start, range.length));
             }
             fprintf(stderr, "Resolved %lu: %ls (%ls) <%lu, %lu>\n", i, widen(name).c_str(), value_str.c_str(), opt.option.name.start, opt.option.name.length);
         }
     }
 
-    option_map_t result = this->match_argv(positionals, resolved_options, shortcut_options, *tree);
+    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, *tree);
     delete tree;
     return result;
 }
 
+// close the class
 CLOSE_DOCOPT_IMPL;
 
 std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv) {
@@ -1882,10 +1881,15 @@ std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc,
     return impl.best_assignment(argv);
 }
 
+// close the namespace
+CLOSE_DOCOPT_IMPL
+
+#if SIMPLE_TEST
 int main(void) {
     using namespace docopt_fish;
     bool log_stuff = false;
     const std::string usage =
+#if 0
         "Usage: \n"
         "  naval_fate ship new <name>...\n"
         "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
@@ -1896,6 +1900,9 @@ int main(void) {
         "  -a, --all  List everything\n"
         "  -h, --human-readable  Display in human-readable format\n"
         "  -i <file>, --input <file>  Set input file\n";
+#else
+        "Usage: prog";
+#endif
 
     docopt_impl<std::string> impl(usage);
     token_list_t tokens = impl.tokenize_usage();
@@ -1936,8 +1943,7 @@ int main(void) {
     }
 
     std::vector<std::string> argv;
-    argv.push_back("naval_fate");
-#if 1
+#if 0
     argv.push_back("stuff");
     argv.push_back("--human-readable");
     argv.push_back("--input");
@@ -1956,11 +1962,13 @@ int main(void) {
     argv.push_back("10");
     argv.push_back("20");
     argv.push_back("--moored");
-#else
+#elif 0
     argv.push_back("ship");
     argv.push_back("shoot");
     argv.push_back("3");
     argv.push_back("5");
+#else
+    argv.push_back("--xxx");
 #endif
 
     docopt_impl<std::string>::positional_argument_list_t positionals;
@@ -1968,7 +1976,7 @@ int main(void) {
     impl.separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
 
     for (size_t i=0; i < positionals.size(); i++) {
-        //fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
+        fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
     }
 
     for (size_t i=0; i < resolved_options.size(); i++) {
@@ -1978,9 +1986,10 @@ int main(void) {
         //fprintf(stderr, "Resolved %lu: %s (%s) <%lu, %lu>\n", i, name.c_str(), opt.value.c_str_or_empty(), opt.option.name.start, opt.option.name.length);
     }
 
-    impl.match_argv(positionals, resolved_options, shortcut_options, *tree);
+    impl.match_argv(argv, positionals, resolved_options, shortcut_options, *tree);
 
     delete tree;
 
     return 0;
 }
+#endif

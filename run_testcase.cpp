@@ -8,8 +8,40 @@
 
 #include "docopt_fish.h"
 
+using namespace docopt_fish;
+
 #include <iostream>
 #include <vector>
+
+static std::string to_string(const argument_t &arg) {
+    std::string result;
+    if (arg.values.size() == 1) {
+        result.push_back('"');
+        result.append(arg.value());
+        result.push_back('"');
+    }
+    else if (arg.values.size() > 1) {
+        result.push_back('[');
+        for (size_t i=0; i < arg.values.size(); i++) {
+            if (i > 0) {
+                result.append(", ");
+            }
+            result.push_back('"');
+            result.append(arg.values.at(i));
+            result.push_back('"');
+        }
+        result.push_back(']');
+    } else if (arg.count > 1) {
+        char buff[64];
+        snprintf(buff, sizeof buff, "%u", arg.count);
+        result.append(buff);
+    } else if (arg.count == 1) {
+        result.append("true");
+    } else {
+        result.append("false");
+    }
+    return result;
+}
 
 int main(int argc, const char** argv)
 {	
@@ -23,19 +55,19 @@ int main(int argc, const char** argv)
         usage.push_back(c);
     }
 	
-	auto result = docopt::docopt(usage, args);
+	std::map<std::string, argument_t> result = docopt_parse(usage, args);
     
 	// print it out in JSON form
 	std::cout << "{ ";
 	bool first = true;
-	for(auto const& arg : result) {
+    for (std::map<std::string, argument_t>::const_iterator iter = result.begin(); iter != result.end(); ++iter) {
 		if (first) {
 			first = false;
 		} else {
 			std::cout << "," << std::endl;
 		}
 		
-		std::cout << '"' << arg.first << '"' << ": " << arg.second;
+		std::cout << '"' << iter->first << '"' << ": " << to_string(iter->second);
 	}
 	std::cout << " }" << std::endl;
 
