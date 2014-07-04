@@ -19,6 +19,8 @@ using std::auto_ptr;
 
 static const size_t npos = (size_t)(-1);
 
+typedef std::vector<size_t> index_list_t;
+
 /* Overloads */
 UNUSED
 static void assign_narrow_string_to_string(const char *s, std::string *result) {
@@ -879,17 +881,21 @@ typedef typename string_t::value_type char_t;
 
 /* A positional argument */
 struct positional_argument_t {
-    string_t value;
+    size_t idx_in_argv;
 
-    positional_argument_t(const string_t &s) : value(s)
+    explicit positional_argument_t(size_t idx) : idx_in_argv(idx)
     {}
 };
 typedef std::vector<positional_argument_t> positional_argument_list_t;
 
 /* A resolved option references an option in argv */
 struct resolved_option_t {
+
     // The option referenced by this
     option_t option;
+    
+    // The index of the name portion of the option, in argv
+    size_t name_idx_in_argv;
     
     // The index of the argument where the value was found. npos for none.
     size_t value_idx_in_argv;
@@ -897,7 +903,7 @@ struct resolved_option_t {
     // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar)
     range_t range_in_arg;
 
-    resolved_option_t(const option_t &opt, size_t val_idx, const range_t &val_range) : option(opt), value_idx_in_argv(val_idx), range_in_arg(val_range)
+    resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const range_t &val_range) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), range_in_arg(val_range)
     {}
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
@@ -1077,7 +1083,11 @@ token_list_t tokenize_usage() {
                         word_start = npos;
                     }
                     if (c == '\n') {
-                        tokens.push_back(token_t(i, 1, token_t::newline));
+                        // Only add a newline after a non-newline token. This keeps the parse tree a little cleaner.
+                        // That is, we swallow leading and consecutive newlines.
+                        if (! tokens.empty() && tokens.back().type != token_t::newline) {
+                            tokens.push_back(token_t(i, 1, token_t::newline));
+                        }
                     }
                     i += 1;
                 } else if (substr_equals("...", sc + i, 3)) {
@@ -1118,6 +1128,11 @@ token_list_t tokenize_usage() {
             tokens.push_back(token_t(word_start, end - word_start, word_type));
             word_start = npos;
         }
+    }
+    
+    /* Trim trailing newlines to clean up the parse tree. Note that we are careful to avoid creating leading newlines. */
+    while (! tokens.empty() && tokens.back().type == token_t::newline) {
+        tokens.resize(tokens.size() - 1); //trailing
     }
     return tokens;
 }
@@ -1399,6 +1414,7 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
 
         /* Ensure the option and argument agree on having a value */
         range_t value_range(0, 0);
+        const size_t name_idx = *idx;
         size_t arg_index = npos;
         if (match->has_value()) {
             if (arg_as_option.has_value()) {
@@ -1423,7 +1439,7 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
             errored = true;
         }
         if (! errored) {
-            out_result->push_back(resolved_option_t(*match, arg_index, value_range));
+            out_result->push_back(resolved_option_t(*match, name_idx, arg_index, value_range));
             *idx += 1;
         }
         success = true;
@@ -1438,20 +1454,23 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
     while (idx < argv.size()) {
         const string_t arg = argv.at(idx);
         if (str_equals("--", arg)) {
-            // Literal --. The remaining arguments are positional. Insert everything left and exit early
-            out_positionals->insert(out_positionals->end(), argv.begin() + idx + 1, argv.end());
+            // Literal --. The remaining arguments are positional. Insert everything remaining and exit early
+            while (++idx < argv.size()) {
+                out_positionals->push_back(positional_argument_t(idx));
+            }
             break;
         } else if (substr_equals("--", arg, 2)) {
             // Leading long option
             if (parse_long(argv, &idx, options, out_resolved_options, &this->errors)) {
                 // parse_long will have updated idx and out_resolved_options
             } else {
+                // This argument is unused
                 // We have to update idx
                 idx += 1;
             }
         } else {
             // TODO: single options
-            out_positionals->push_back(arg);
+            out_positionals->push_back(positional_argument_t(idx));
             idx += 1;
         }
     }
@@ -1487,22 +1506,51 @@ struct match_context_t {
     
 
     bool has_more_positionals(const match_state_t *state) const {
-        assert(state->next_positional_index <= positionals.size());
-        return state->next_positional_index < positionals.size();
+        assert(state->next_positional_index <= this->positionals.size());
+        return state->next_positional_index < this->positionals.size();
     }
-
-    bool has_unconsumed_options(const match_state_t *state, const string_t &src) const {
-        /* An unconsumed option means an option from resolved_options that was not matched during tree descent, i.e. is not in option_map. This can be derived from option_map. */
+    
+    // Returns the indexes in argv of the arguments that were unused
+    index_list_t unused_arguments(const match_state_t *state, const string_t &src) const {
+        /* To find the unused arguments, we walk over the used arguments and take what's left
+           Arguments may be unused for any of three reasons:
+             1. It is an unconsumed positional
+             2. It is an option that we found in the tree, but was not matched during tree descent
+             3. It is an option that was not found in the tree at all
+        */
+        
+        /* Make a vector the same size as argv. As we walk over positionals and options, we will mark the corresponding index as used. At the end, the unset bits are the unused arguments */
+        std::vector<bool> used_indexes(this->argv.size(), false);
+        
+        /* Walk over used positionals. next_positional_index is the first unused one.  */
+        for (size_t i=0; i < state->next_positional_index; i++) {
+            used_indexes.at(this->positionals.at(i).idx_in_argv) = true;
+        }
+        
+        /* Walk over options matched during tree descent */
         string_t name;
         for (size_t i=0; i < resolved_options.size(); i++) {
-            const range_t &opt_range = resolved_options.at(i).option.name;
+            const resolved_option_t &opt = resolved_options.at(i);
+            const range_t &opt_range = opt.option.name;
             name.assign(src, opt_range.start, opt_range.length);
-            if (state->option_map.find(name) == state->option_map.end()) {
-                fprintf(stderr, "unconsumed: %ls\n", widen(name).c_str());
-                return true;
+            if (state->option_map.find(name) != state->option_map.end()) {
+                // This option was used. The name index is definitely used. The value index is also used, if it's not npos (note that it may be the same as the name index, so we can avoid setting the bit twice in that case)
+                used_indexes.at(opt.name_idx_in_argv) = true;
+                if (opt.value_idx_in_argv != npos && opt.value_idx_in_argv != opt.name_idx_in_argv) {
+                    used_indexes.at(opt.value_idx_in_argv) = true;
+                }
             }
         }
-        return false;
+        
+        /* Translate from the set of used arguments to the unused indexes */
+        index_list_t unused_argv_idxs;
+        for (size_t i=0; i < used_indexes.size(); i++) {
+            if (! used_indexes.at(i)) {
+                unused_argv_idxs.push_back(i);
+            }
+        }
+        
+        return unused_argv_idxs;
     }
 
     const positional_argument_t &next_positional(match_state_t *state) const {
@@ -1736,7 +1784,8 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
             const string_t name = string_t(this->source, range.start + 1, range.length - 2);
             arg_t *arg = &state->option_map[name];
             arg->key = name;
-            arg->values.push_back(ctx->acquire_next_positional(state).value);
+            const positional_argument_t &positional = ctx->acquire_next_positional(state);
+            arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
             state_destructive_append_to(state, &result);
         }
     } else if (first_char == char_t('-')) {
@@ -1747,8 +1796,10 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
     } else {
         // Fixed argument
         if (ctx->has_more_positionals(state)) {
-            const string_t &name = ctx->next_positional(state).value;
-            if (this->source.compare(range.start, range.length, name) == 0) {
+            const positional_argument_t &positional = ctx->next_positional(state);
+            const string_t &name = ctx->argv.at(positional.idx_in_argv);
+            string_t tmp = string_t(this->source, range.start, range.length);
+            if (name.size() == range.length && this->source.compare(range.start, range.length, name) == 0) {
                 // The fixed argument matches
                 arg_t *arg = &state->option_map[name];
                 arg->key.assign(name);
@@ -1763,48 +1814,70 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
 }
 
 /* Matches argv */
-option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options,  const usage_t &tree) {
+option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options,  const usage_t &tree, index_list_t *out_unused_arguments) {
     match_context_t ctx(positionals, resolved_options, shortcut_options, argv);
     match_state_t init_state;
     match_state_list_t result = match(tree, &init_state, &ctx);
 
-    for (size_t i=0; i < result.size(); i++) {
-        const match_state_t &state = result.at(i);
-        bool is_incomplete = ctx.has_more_positionals(&state) || ctx.has_unconsumed_options(&state, this->source);
-        std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
-        for (typename option_map_t::const_iterator iter = state.option_map.begin(); iter != state.option_map.end(); ++iter) {
-            const string_t &name = iter->first;
-            const arg_t &arg = iter->second;
-            fprintf(stderr, "\t%ls: ", widen(name).c_str());
-            for (size_t j=0; j < arg.values.size(); j++) {
-                if (j > 0) {
-                    fprintf(stderr, ", ");
+    bool log_it = false;
+    if (log_it) {
+        fprintf(stderr, "Matched %lu way(s)\n", result.size());
+        for (size_t i=0; i < result.size(); i++) {
+            const match_state_t &state = result.at(i);
+            bool is_incomplete = ! ctx.unused_arguments(&state, this->source).empty();
+            std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
+            for (typename option_map_t::const_iterator iter = state.option_map.begin(); iter != state.option_map.end(); ++iter) {
+                const string_t &name = iter->first;
+                const arg_t &arg = iter->second;
+                fprintf(stderr, "\t%ls: ", widen(name).c_str());
+                for (size_t j=0; j < arg.values.size(); j++) {
+                    if (j > 0) {
+                        fprintf(stderr, ", ");
+                    }
+                    fprintf(stderr, "%ls", widen(arg.values.at(j)).c_str());
                 }
-                fprintf(stderr, "%ls", widen(arg.values.at(j)).c_str());
+                std::cerr << '\n';
             }
-            std::cerr << '\n';
         }
     }
     
-    // Return the first non-incomplete one
+    // Return the one with the fewest unused arguments
+    size_t best_state_idx = npos;
+    index_list_t best_unused_args;
     for (size_t i=0; i < result.size(); i++) {
         const match_state_t &state = result.at(i);
-        bool is_incomplete = ctx.has_more_positionals(&state) || ctx.has_unconsumed_options(&state, this->source);
-        if (! is_incomplete) {
-            return state.option_map;
+        index_list_t unused_args = ctx.unused_arguments(&state, this->source);
+        size_t unused_arg_count = unused_args.size();
+        if (i == 0 || unused_arg_count < best_unused_args.size()) {
+            best_state_idx = i;
+            best_unused_args.swap(unused_args);
+            // If we got zero, we're done
+            if (unused_arg_count == 0) {
+                break;
+            }
         }
     }
     
-    // Return the first one
-    if (! result.empty()) {
-        const match_state_t &state = result.at(0);
-        return state.option_map;
+    // Now return the winning state and its unused arguments
+    if (best_state_idx != npos) {
+        // We got a best state
+        if (out_unused_arguments != NULL) {
+            out_unused_arguments->swap(best_unused_args);
+        }
+        return result.at(best_state_idx).option_map;
+    } else {
+        // No states. Every argument is unused.
+        if (out_unused_arguments != NULL) {
+            out_unused_arguments->clear();
+            for (size_t i=0; i < argv.size(); i++) {
+                out_unused_arguments->push_back(i);
+            }
+        }
+        return option_map_t();
     }
-    
-    return option_map_t();
 }
 
-option_map_t best_assignment(const string_list_t &argv) {
+option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused_arguments) {
     bool log_stuff = false;
     
     token_list_t tokens = this->tokenize_usage();
@@ -1845,7 +1918,8 @@ option_map_t best_assignment(const string_list_t &argv) {
 
     if (log_stuff) {
         for (size_t i=0; i < positionals.size(); i++) {
-            fprintf(stderr, "positional %lu: %ls\n", i, widen(positionals.at(i).value).c_str());
+            size_t arg_idx = positionals.at(i).idx_in_argv;
+            fprintf(stderr, "positional %lu: %ls\n", i, widen(argv.at(arg_idx)).c_str());
         }
     }
 
@@ -1863,7 +1937,7 @@ option_map_t best_assignment(const string_list_t &argv) {
         }
     }
 
-    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, *tree);
+    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, *tree, out_unused_arguments);
     delete tree;
     return result;
 }
@@ -1871,14 +1945,14 @@ option_map_t best_assignment(const string_list_t &argv) {
 // close the class
 CLOSE_DOCOPT_IMPL;
 
-std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv) {
+std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv, index_list_t *out_unused_arguments) {
     docopt_impl<std::string> impl(usage_doc);
-    return impl.best_assignment(argv);
+    return impl.best_assignment(argv, out_unused_arguments);
 }
 
-std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv) {
+std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv, index_list_t *out_unused_arguments) {
     docopt_impl<std::wstring> impl(usage_doc);
-    return impl.best_assignment(argv);
+    return impl.best_assignment(argv, out_unused_arguments);
 }
 
 // close the namespace
@@ -1889,7 +1963,7 @@ int main(void) {
     using namespace docopt_fish;
     bool log_stuff = false;
     const std::string usage =
-#if 0
+#if 1
         "Usage: \n"
         "  naval_fate ship new <name>...\n"
         "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
@@ -1918,6 +1992,12 @@ int main(void) {
     parse_context_t ctx(tokens);
     usage_t *tree = usage_t::parse(&ctx);
 
+    if (tree == NULL) {
+        fprintf(stderr, "failed to parse usage\n");
+        return EXIT_FAILURE;
+    }
+
+
     // Extract options from the usage sections
     option_list_t usage_options = impl.collect_options(*tree);
 
@@ -1943,7 +2023,8 @@ int main(void) {
     }
 
     std::vector<std::string> argv;
-#if 0
+#if 1
+    argv.push_back("program_name");
     argv.push_back("stuff");
     argv.push_back("--human-readable");
     argv.push_back("--input");
@@ -1976,7 +2057,7 @@ int main(void) {
     impl.separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
 
     for (size_t i=0; i < positionals.size(); i++) {
-        fprintf(stderr, "positional %lu: %s\n", i, positionals.at(i).value.c_str());
+        fprintf(stderr, "positional %lu: %s\n", i, argv.at(positionals.at(i).idx_in_argv).c_str());
     }
 
     for (size_t i=0; i < resolved_options.size(); i++) {
@@ -1986,7 +2067,13 @@ int main(void) {
         //fprintf(stderr, "Resolved %lu: %s (%s) <%lu, %lu>\n", i, name.c_str(), opt.value.c_str_or_empty(), opt.option.name.start, opt.option.name.length);
     }
 
-    impl.match_argv(argv, positionals, resolved_options, shortcut_options, *tree);
+    index_list_t unused_arguments;
+    impl.match_argv(argv, positionals, resolved_options, shortcut_options, *tree, &unused_arguments);
+    
+    for (size_t i=0; i < unused_arguments.size(); i++) {
+        size_t arg_idx = unused_arguments.at(i);
+        fprintf(stderr, "Unused argument: <%s>\n", argv.at(arg_idx).c_str());
+    }
 
     delete tree;
 

@@ -45,7 +45,7 @@ static std::string to_string(const argument_t &arg) {
 
 int main(int argc, const char** argv)
 {	
-	std::vector<std::string> args(argv+1, argv+argc);
+	std::vector<std::string> args(argv+0, argv+argc);
     
     /* Read usage from stdin */
     std::string usage;
@@ -55,7 +55,16 @@ int main(int argc, const char** argv)
         usage.push_back(c);
     }
 	
-	std::map<std::string, argument_t> result = docopt_parse(usage, args);
+    std::vector<size_t> unused_idxs;
+	std::map<std::string, argument_t> result = docopt_parse(usage, args, &unused_idxs);
+    
+    if (! unused_idxs.empty()) {
+        std::cerr << "Unused arguments:\n";
+        for (size_t i=0; i < unused_idxs.size(); i++) {
+            std::cerr << argv[unused_idxs.at(i)] << '\n';
+        }
+        return EXIT_FAILURE;
+    }
     
 	// print it out in JSON form
 	std::cout << "{ ";

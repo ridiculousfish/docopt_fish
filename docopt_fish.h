@@ -33,9 +33,9 @@ namespace docopt_fish
     typedef base_argument_t<std::wstring> wargument_t;
     
     /* Result of a docopt operation is a map from keys to values */
-    std::map<std::string, argument_t> docopt_parse(const std::string &doc, const std::vector<std::string> &argv);
+    std::map<std::string, argument_t> docopt_parse(const std::string &doc, const std::vector<std::string> &argv, std::vector<size_t> *out_unused_arguments = NULL);
 
     /* Wide variant */
-    std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const std::vector<std::wstring> &argv);
+    std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const std::vector<std::wstring> &argv, std::vector<size_t> *out_unused_arguments = NULL);
     
 };
