@@ -852,7 +852,8 @@ typedef std::vector<error_t> error_list_t;
 /* Constructor takes the source */
 public:
 const string_t source;
-docopt_impl(const string_t &s) : source(s)
+const parse_flags_t parse_flags;
+docopt_impl(const string_t &s, parse_flags_t f) : source(s), parse_flags(f)
 {}
 
 /* Helper function to make a string (narrow or wide) from a C string */
@@ -1758,7 +1759,6 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
             // woo hoo
             const string_t name = this->string_for_range(opt_in_doc.name);
             arg_t *arg = &state->option_map[name];
-            arg->key.assign(name);
             if (resolved_opt->value_idx_in_argv != npos) {
                 const string_t &str = ctx->argv.at(resolved_opt->value_idx_in_argv);
                 const range_t range = resolved_opt->range_in_arg;
@@ -1783,7 +1783,6 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
             assert(range.length >= 2);
             const string_t name = string_t(this->source, range.start + 1, range.length - 2);
             arg_t *arg = &state->option_map[name];
-            arg->key = name;
             const positional_argument_t &positional = ctx->acquire_next_positional(state);
             arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
             state_destructive_append_to(state, &result);
@@ -1802,7 +1801,6 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
             if (name.size() == range.length && this->source.compare(range.start, range.length, name) == 0) {
                 // The fixed argument matches
                 arg_t *arg = &state->option_map[name];
-                arg->key.assign(name);
                 arg->values.push_back(string_t(1, char_t('1')));
                 arg->count += 1;
                 ctx->acquire_next_positional(state);
@@ -1813,8 +1811,28 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
     return result;
 }
 
+option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options) {
+    // If we aren't asked to do empty args, then skip it
+    if (! (this->parse_flags & flag_generate_empty_args)) {
+        return map;
+    }
+    
+    // For each option, fill in the value in the map
+    // This could be made more efficient via a single call to insert()
+    option_map_t result = map;
+    string_t name;
+    for (size_t i=0; i < all_options.size(); i++) {
+        const option_t &opt = all_options.at(i);
+        name.assign(this->source, opt.name.start, opt.name.length);
+        // We merely invoke operator[]; this will do the insertion with a default value if necessary.
+        // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
+        result[name];
+    }
+    return result;
+}
+
 /* Matches argv */
-option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options,  const usage_t &tree, index_list_t *out_unused_arguments) {
+option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options, const option_list_t &all_options, const usage_t &tree, index_list_t *out_unused_arguments) {
     match_context_t ctx(positionals, resolved_options, shortcut_options, argv);
     match_state_t init_state;
     match_state_list_t result = match(tree, &init_state, &ctx);
@@ -1864,7 +1882,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
         if (out_unused_arguments != NULL) {
             out_unused_arguments->swap(best_unused_args);
         }
-        return result.at(best_state_idx).option_map;
+        return finalize_option_map(result.at(best_state_idx).option_map, all_options);
     } else {
         // No states. Every argument is unused.
         if (out_unused_arguments != NULL) {
@@ -1873,7 +1891,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
                 out_unused_arguments->push_back(i);
             }
         }
-        return option_map_t();
+        return finalize_option_map(option_map_t(), all_options);
     }
 }
 
@@ -1937,7 +1955,7 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
         }
     }
 
-    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, *tree, out_unused_arguments);
+    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, all_options, *tree, out_unused_arguments);
     delete tree;
     return result;
 }
@@ -1945,13 +1963,13 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 // close the class
 CLOSE_DOCOPT_IMPL;
 
-std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv, index_list_t *out_unused_arguments) {
-    docopt_impl<std::string> impl(usage_doc);
+std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
+    docopt_impl<std::string> impl(usage_doc, flags);
     return impl.best_assignment(argv, out_unused_arguments);
 }
 
-std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv, index_list_t *out_unused_arguments) {
-    docopt_impl<std::wstring> impl(usage_doc);
+std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
+    docopt_impl<std::wstring> impl(usage_doc, flags);
     return impl.best_assignment(argv, out_unused_arguments);
 }
 
@@ -1978,7 +1996,7 @@ int main(void) {
         "Usage: prog";
 #endif
 
-    docopt_impl<std::string> impl(usage);
+    docopt_impl<std::string> impl(usage, flags_default);
     token_list_t tokens = impl.tokenize_usage();
     
     if (log_stuff) {
@@ -2068,7 +2086,7 @@ int main(void) {
     }
 
     index_list_t unused_arguments;
-    impl.match_argv(argv, positionals, resolved_options, shortcut_options, *tree, &unused_arguments);
+    impl.match_argv(argv, positionals, resolved_options, shortcut_options, all_options, *tree, &unused_arguments);
     
     for (size_t i=0; i < unused_arguments.size(); i++) {
         size_t arg_idx = unused_arguments.at(i);

@@ -65,9 +65,13 @@ for _, doc, cases in parsed_tests:
             error = " ** an error was expected but it appeared to succeed!"
         else:
             # Process returned success as expected
-            json_out = json.loads(out)
-            if expect != json_out:
-                error = " ** JSON does not match expected: %r" % expect
+            try:
+                json_out = json.loads(out)
+                if expect != json_out:
+                    error = " ** JSON does not match expected: %r" % expect
+            except ValueError:
+                print "Could not decode: ", out
+                raise
 
         if not error:
             passes += 1
