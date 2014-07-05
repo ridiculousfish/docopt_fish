@@ -221,13 +221,6 @@ struct option_t {
     }
 
     bool operator==(const option_t &rhs) const {
-        if (this->name.start == 244) {
-            fprintf(stderr, "Me!\n");
-        }
-        if (rhs.name.start == 244) {
-            fprintf(stderr, "RHS!\n");
-        }
-
         return this->type == rhs.type && this->name == rhs.name && this->value == rhs.value;
     }
 
@@ -249,6 +242,25 @@ struct option_t {
         assign_narrow_string_to_string(range, &tmp);
         result.append(tmp);
         
+        return result;
+    }
+    
+    // Modifies the string to the name of the option, by plucking it out of the source. Includes dashes.
+    template<typename string_t>
+    void assign_name_to_string(const string_t &src, string_t *result) const {
+        // Everyone gets at least one dash; doubles get two
+        result->clear();
+        result->push_back('-');
+        if (this->type == double_long) {
+            result->push_back('-');
+        }
+        result->append(src, this->name.start, this->name.length);
+    }
+    
+    template<typename string_t>
+    string_t name_as_string(const string_t &src) const {
+        string_t result;
+        this->assign_name_to_string(src, &result);
         return result;
     }
 };
@@ -425,6 +437,8 @@ class node_dumper_t : public node_visitor_t<node_dumper_t<string_t> > {
     const string_t *src;
 
     std::vector<std::string> lines;
+    
+    node_dumper_t(const string_t *src_ptr) : depth(0), src(src_ptr) {}
 
 public:
     template<typename NODE_TYPE>
@@ -470,8 +484,7 @@ public:
 
     template<typename NODE_TYPE, typename STRING_TYPE>
     static std::string dump_tree(const NODE_TYPE &node, const STRING_TYPE &src) {
-        node_dumper_t<STRING_TYPE> dumper;
-        dumper.src = &src;
+        node_dumper_t<STRING_TYPE> dumper(&src);
         dumper.begin(node);
         std::string result;
         for (size_t i=0; i < dumper.lines.size(); i++) {
@@ -902,9 +915,9 @@ struct resolved_option_t {
     size_t value_idx_in_argv;
     
     // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar)
-    range_t range_in_arg;
+    range_t value_range_in_arg;
 
-    resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const range_t &val_range) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), range_in_arg(val_range)
+    resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const range_t &val_range) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), value_range_in_arg(val_range)
     {}
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
@@ -986,24 +999,6 @@ static bool substr_equals(const char *a, const char_t *b, size_t len) {
 static bool substr_equals(const char *a, const string_t &b, size_t len) {
     return substr_equals(a, b.c_str(), len);
 }
-
-/* Copies out the string of a range */
-string_t string_for_range(const range_t &range) {
-    assert(range.end() < this->source.length());
-    return string_t(this->source, range.start, range.length);
-}
-
-/* Copies out the string of a token */
-string_t string_for_token(const token_t &tok) {
-    return string_for_range(tok.range);
-}
-
-/* Copies out the string of a token */
-void set_string_for_token(const token_t &tok, string_t *result) {
-    assert(tok.range.end() < this->source.length());
-    result->assign(this->source, tok.range.start, tok.range.length);
-}
-
 
 /* Returns true if the given token matches the given narrow string, up to len characters */
 bool token_substr_equals(const token_t &tok, const char *str, size_t len) {
@@ -1378,22 +1373,29 @@ option_list_t parse_options_spec(error_list_t *errors) const {
 }
 
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx. */
-bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
+bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
     const string_t &arg = argv.at(*idx);
-    assert(substr_equals("--", arg, 2));
+    assert(type == option_t::single_long || type == option_t::double_long);
+    assert(substr_equals("--", arg, (type == option_t::double_long ? 2 : 1)));
 
-    /* Parse the argument into an 'option'. Note that this option does not appear in the options list. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
+    /* Parse the argument into an 'option'. Note that this option does not appear in the options list because its range reflects the string in the argument. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
     error_list_t local_errors;
-    const option_t arg_as_option = parse_option_from_string(arg, range_t(0, arg.size()), &local_errors);
+    option_t arg_as_option = parse_option_from_string(arg, range_t(0, arg.size()), &local_errors);
+    
+    // Hacktastic - parse_option_from_string can't distinguish between one-char long options, and short options. So force the issue: if we want a single long option but we get a single short, then stomp it.
+    if (type == option_t::single_long && arg_as_option.type == option_t::single_short) {
+        arg_as_option.type = option_t::single_long;
+    }
+    
     // TODO: What if we get an error, e.g. there's more than two dashes?
-    assert(arg_as_option.type == option_t::double_long);
+    assert(arg_as_option.type == type);
 
     /* Get list of matching long options. These are pointers into our options array */
     std::vector<const option_t *> matches;
     for (size_t i=0; i < options.size(); i++) {
         const option_t &opt = options.at(i);
         // This comparison is terrifying. It's just comparing two substrings: one in source (the given option) and the name portion of the argument
-        if (opt.type == option_t::double_long && this->source.compare(opt.name.start, opt.name.length, arg, arg_as_option.name.start, arg_as_option.name.length) == 0) {
+        if (opt.type == type && this->source.compare(opt.name.start, opt.name.length, arg, arg_as_option.name.start, arg_as_option.name.length) == 0) {
             matches.push_back(&opt);
         }
     }
@@ -1448,6 +1450,96 @@ bool parse_long(const string_list_t &argv, size_t *idx, const option_list_t &opt
     return success;
 }
 
+// Given a list of short options, parse out an argument
+bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
+    const string_t &arg = argv.at(*idx);
+    assert(substr_equals("-", arg, 1));
+    assert(arg.size() > 1); // must not be just a single dash
+    bool errored = false;
+    bool last_option_has_argument = false;
+    
+    // Construct the list of options in-order, corresponding to this argument
+    std::vector<option_t> options_for_argument;
+    
+    std::vector<option_t> matches;
+    for (size_t idx_in_arg=1; idx_in_arg < arg.size() && ! errored; idx_in_arg++) {
+        /* Get list of short options matching this resolved option. These are pointers into our options array */
+        matches.clear();
+        for (size_t i=0; i < options.size(); i++) {
+            const option_t &opt = options.at(i);
+            // This comparison is terrifying. It's just comparing two substrings: one in source (the given option) and the name portion of the argument. We pass 1 because the length of the string i1.
+            if (opt.type == option_t::single_short && this->source.compare(opt.name.start, opt.name.length, arg, idx_in_arg, 1) == 0) {
+                matches.push_back(opt);
+            }
+        }
+        
+        size_t match_count = matches.size();
+        if (match_count > 1) {
+            append_error(out_errors, matches.at(0).name.start, "Option specified too many times");
+            errored = true;
+        } else if (match_count < 1) {
+            append_error(out_errors, -1, "Unknown option");
+            errored = true;
+        } else {
+            // Just one match, add it to the global array
+            options_for_argument.push_back(matches.at(0));
+        }
+    }
+    
+    if (! errored) {
+        // Now we have all of the short options that this argument represents. No option is allowed to have a value, except possibly last one.
+        for (size_t i=0; i < options_for_argument.size(); i++) {
+            const option_t &opt = options_for_argument.at(i);
+            if (opt.has_value()) {
+                if (i + 1 == options_for_argument.size()) {
+                    // This is the last option
+                    last_option_has_argument = true;
+                } else {
+                    // This is not the last option
+                    // TODO: this location (opt.name.start) is the location in the usage doc. It ought to be the location in the argument.
+                    append_error(out_errors, opt.name.start, "Option requires an argument");
+                }
+            }
+        }
+    }
+    
+    // If we have an argument, determine its index
+    range_t val_range_for_last_option(0, 0);
+    const size_t name_idx = *idx;
+    size_t val_idx_for_last_option = npos;
+    if (! errored && last_option_has_argument) {
+        // We don't support -f=bar style. I don't know of any commands that use this.
+        // TODO: support delimiter-free style (gcc -Dmacro=something)
+        if (*idx + 1 < argv.size()) {
+            val_idx_for_last_option = *idx;
+            val_range_for_last_option = range_t(0, argv.at(*idx + 1).size());
+        } else {
+            append_error(&errors, options_for_argument.back().value.start, "Option expects an argument");
+            errored = true;
+        }
+    }
+    
+    if (! errored) {
+        // Construct resolved options
+        for (size_t i=0; i < options_for_argument.size(); i++) {
+            // Most options have no value.
+            size_t val_idx = npos;
+            range_t val_range(0, 0);
+            if (i + 1 == options_for_argument.size() && last_option_has_argument) {
+                // This is the last option
+                val_range = val_range_for_last_option;
+                val_idx = val_idx_for_last_option;
+            }
+            const option_t &opt = options_for_argument.at(i);
+            out_result->push_back(resolved_option_t(opt, name_idx, val_idx, val_range));
+        }
+        
+        // Update the index
+        *idx += (last_option_has_argument ? 2 : 1);
+    }
+    return ! errored;
+}
+
 /* The Python implementation calls this "parse_argv" */
 void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first UNUSED = false) {
 
@@ -1462,15 +1554,28 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
             break;
         } else if (substr_equals("--", arg, 2)) {
             // Leading long option
-            if (parse_long(argv, &idx, options, out_resolved_options, &this->errors)) {
+            if (parse_long(argv, option_t::double_long, &idx, options, out_resolved_options, &this->errors)) {
                 // parse_long will have updated idx and out_resolved_options
             } else {
                 // This argument is unused
                 // We have to update idx
                 idx += 1;
             }
+        } else if (substr_equals("-", arg, 1) && arg.size() > 1) {
+            // An option with a single dash, like -foo
+            // This may be either a combined short option (tar -cf ...) or a long option with a single dash (-std=c++)
+            // Try to parse it as a long option; if that fails try to parse it as a short option
+            if (parse_long(argv, option_t::single_long, &idx, options, out_resolved_options, &this->errors)) {
+                // parse_long succeeded. TODO: implement this.
+            } else if (parse_short(argv, &idx, options, out_resolved_options, &this->errors)) {
+                // parse_short succeeded.
+            } else {
+                // Unparseable argument
+                idx += 1;
+            }
         } else {
-            // TODO: single options
+            // Positional argument
+            // Note this includes just single-dash arguments, which are often a stand-in for stdin
             out_positionals->push_back(positional_argument_t(idx));
             idx += 1;
         }
@@ -1532,8 +1637,7 @@ struct match_context_t {
         string_t name;
         for (size_t i=0; i < resolved_options.size(); i++) {
             const resolved_option_t &opt = resolved_options.at(i);
-            const range_t &opt_range = opt.option.name;
-            name.assign(src, opt_range.start, opt_range.length);
+            opt.option.assign_name_to_string(src, &name);
             if (state->option_map.find(name) != state->option_map.end()) {
                 // This option was used. The name index is definitely used. The value index is also used, if it's not npos (note that it may be the same as the name index, so we can avoid setting the bit twice in that case)
                 used_indexes.at(opt.name_idx_in_argv) = true;
@@ -1543,7 +1647,7 @@ struct match_context_t {
             }
         }
         
-        /* Translate from the set of used arguments to the unused indexes */
+        /* Extract the unused indexes from the bitmap of used arguments */
         index_list_t unused_argv_idxs;
         for (size_t i=0; i < used_indexes.size(); i++) {
             if (! used_indexes.at(i)) {
@@ -1757,12 +1861,12 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
 
         if (resolved_opt != NULL) {
             // woo hoo
-            const string_t name = this->string_for_range(opt_in_doc.name);
+            const string_t name = opt_in_doc.name_as_string(this->source);
             arg_t *arg = &state->option_map[name];
             if (resolved_opt->value_idx_in_argv != npos) {
                 const string_t &str = ctx->argv.at(resolved_opt->value_idx_in_argv);
-                const range_t range = resolved_opt->range_in_arg;
-                arg->values.push_back(string_t(str, range.start, range.length));
+                const range_t value_range = resolved_opt->value_range_in_arg;
+                arg->values.push_back(string_t(str, value_range.start, value_range.length));
             }
             arg->count += 1;
         }
@@ -1822,8 +1926,7 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     option_map_t result = map;
     string_t name;
     for (size_t i=0; i < all_options.size(); i++) {
-        const option_t &opt = all_options.at(i);
-        name.assign(this->source, opt.name.start, opt.name.length);
+        all_options.at(i).assign_name_to_string(this->source, &name);
         // We merely invoke operator[]; this will do the insertion with a default value if necessary.
         // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
         result[name];
@@ -1837,8 +1940,8 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
     match_state_t init_state;
     match_state_list_t result = match(tree, &init_state, &ctx);
 
-    bool log_it = false;
-    if (log_it) {
+    bool log_stuff = false;
+    if (log_stuff) {
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
         for (size_t i=0; i < result.size(); i++) {
             const match_state_t &state = result.at(i);
@@ -1948,8 +2051,8 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
         if (log_stuff) {
             std::wstring value_str;
             if (opt.value_idx_in_argv != npos) {
-                const range_t &range = opt.range_in_arg;
-                value_str = widen(string_t(argv.at(opt.value_idx_in_argv), range.start, range.length));
+                const range_t &value_range = opt.value_range_in_arg;
+                value_str = widen(string_t(argv.at(opt.value_idx_in_argv), value_range.start, value_range.length));
             }
             fprintf(stderr, "Resolved %lu: %ls (%ls) <%lu, %lu>\n", i, widen(name).c_str(), value_str.c_str(), opt.option.name.start, opt.option.name.length);
         }
@@ -1979,9 +2082,9 @@ CLOSE_DOCOPT_IMPL
 #if SIMPLE_TEST
 int main(void) {
     using namespace docopt_fish;
-    bool log_stuff = false;
+    bool log_stuff = true;
     const std::string usage =
-#if 1
+#if 0
         "Usage: \n"
         "  naval_fate ship new <name>...\n"
         "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
@@ -1993,7 +2096,8 @@ int main(void) {
         "  -h, --human-readable  Display in human-readable format\n"
         "  -i <file>, --input <file>  Set input file\n";
 #else
-        "Usage: prog";
+        "Usage: prog [options]\n"
+        "Options: -a  All.";
 #endif
 
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2041,7 +2145,7 @@ int main(void) {
     }
 
     std::vector<std::string> argv;
-#if 1
+#if 0
     argv.push_back("program_name");
     argv.push_back("stuff");
     argv.push_back("--human-readable");
@@ -2067,7 +2171,8 @@ int main(void) {
     argv.push_back("3");
     argv.push_back("5");
 #else
-    argv.push_back("--xxx");
+    argv.push_back("prog");
+    argv.push_back("-a");
 #endif
 
     docopt_impl<std::string>::positional_argument_list_t positionals;
