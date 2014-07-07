@@ -92,10 +92,8 @@ static size_t find_case_insensitive(const std::wstring &haystack, const char *ne
 struct range_t {
     size_t start;
     size_t length;
-    range_t() : start(0), length(0)
-    {}
-    range_t(size_t s, size_t l) : start(s), length(l)
-    {}
+    range_t() : start(0), length(0) {}
+    range_t(size_t s, size_t l) : start(s), length(l) {}
 
     size_t end() const {
         size_t result = start + length;
@@ -191,20 +189,29 @@ struct option_t {
         single_long, // '-foo'
         double_long // '--foo'
     } type;
+    
+    enum separator_t {
+        sep_space, // curl -o file
+        sep_equals, // -std=c++98
+        sep_none // -DNDEBUG
+    };
 
     // name of the option, like '--foo'
     range_t name;
 
     // value of the option, i.e. variable name. Empty for no value.
     range_t value;
+    
+    // key name of the option, e.g. if we have both -v and --verbose, this will be 'verbose' for the -v option. Empty for none.
+    range_t key_range;
 
     // Range of the description. Empty for none.
     range_t description_range;
 
-    // Whether we require an = sign to match
-    bool require_equals;
+    // How we separate the name from the value. We may make this a bitmap some day.
+    separator_t separator;
 
-    option_t(const range_t &n, const range_t &v, size_t leading_dash_count, bool requals = false) : name(n), value(v), description_range(0, 0), require_equals(requals) {
+    option_t(const range_t &n, const range_t &v, size_t leading_dash_count, separator_t sep) : name(n), value(v), description_range(0, 0), separator(sep) {
         // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
         if (leading_dash_count > 1) {
             this->type = option_t::double_long;
@@ -221,7 +228,10 @@ struct option_t {
     }
 
     bool operator==(const option_t &rhs) const {
-        return this->type == rhs.type && this->name == rhs.name && this->value == rhs.value;
+        return this->type == rhs.type &&
+               this->separator == rhs.separator &&
+               this->name == rhs.name &&
+               this->value == rhs.value;
     }
 
     /* Helper function for dumping */
@@ -247,20 +257,22 @@ struct option_t {
     
     // Modifies the string to the name of the option, by plucking it out of the source. Includes dashes.
     template<typename string_t>
-    void assign_name_to_string(const string_t &src, string_t *result) const {
+    void assign_key_to_string(const string_t &src, string_t *result) const {
         // Everyone gets at least one dash; doubles get two
         result->clear();
+        bool use_key_range = ! this->key_range.empty();
         result->push_back('-');
-        if (this->type == double_long) {
+        if (use_key_range || this->type == double_long) {
             result->push_back('-');
         }
-        result->append(src, this->name.start, this->name.length);
+        const range_t &effective_range = use_key_range ? this->key_range : this->name;
+        result->append(src, effective_range.start, effective_range.length);
     }
     
     template<typename string_t>
-    string_t name_as_string(const string_t &src) const {
+    string_t key_as_string(const string_t &src) const {
         string_t result;
-        this->assign_name_to_string(src, &result);
+        this->assign_key_to_string(src, &result);
         return result;
     }
 };
@@ -914,7 +926,7 @@ struct resolved_option_t {
     // The index of the argument where the value was found. npos for none.
     size_t value_idx_in_argv;
     
-    // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar)
+    // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar, -Dfoo)
     range_t value_range_in_arg;
 
     resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const range_t &val_range) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), value_range_in_arg(val_range)
@@ -1208,7 +1220,12 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
         scan_while(str, remaining, it_equals<','>);
         scan_while(str, remaining, isspace);
     }
-    return option_t(name_range, variable_range, leading_dash_range.length, ! equals_range.empty());
+    
+    // Determine the separator type
+    option_t::separator_t seperator = equals_range.empty() ? option_t::sep_space : option_t::sep_equals;
+    
+    // Create and return the option
+    return option_t(name_range, variable_range, leading_dash_range.length, seperator);
 }
 
 
@@ -1249,14 +1266,16 @@ option_t parse_option_from_string(const string_t &str, const range_t &range, err
         value = range_t(equals_pos + 1, end - equals_pos - 1);
     }
 
-    return option_t(name, value, leading_dash_count);
+    return option_t(name, value, leading_dash_count, equals_pos == string_t::npos ? option_t::sep_space : option_t::sep_equals);
 }
 
 /* Given an option spec in the given range, that extends from the initial - to the end of the description, parse out a list of options */
-void parse_option_spec(const range_t &range, option_list_t *out_result, error_list_t *errors) const {
+option_list_t parse_option_spec(const range_t &range, error_list_t *errors) const {
     assert(! range.empty());
     assert(this->source.at(range.start) == char_t('-'));
     const size_t end = range.end();
+
+    option_list_t result;
 
     // Look for two spaces. Those separate the description.
     // This is a two-space "C-string"
@@ -1274,6 +1293,7 @@ void parse_option_spec(const range_t &range, option_list_t *out_result, error_li
     assert(options_end >= range.start);
     range_t remaining(range.start, options_end - range.start);
     scan_while(this->source, &remaining, isspace);
+    range_t name_range_of_last_long_option;
     while (! remaining.empty()) {
         // Skip whitespace
         option_t opt = parse_option_from_string(this->source, &remaining, true, errors);
@@ -1282,8 +1302,21 @@ void parse_option_spec(const range_t &range, option_list_t *out_result, error_li
             break;
         }
         opt.description_range = description_range;
-        out_result->push_back(opt);
+        result.push_back(opt);
+        
+        // Keep track of the last long option
+        if (opt.type == option_t::double_long) {
+            name_range_of_last_long_option = opt.name;
+        }
     }
+    
+    // Set the key range to the name range of every option
+    if (! name_range_of_last_long_option.empty()) {
+        for (size_t i=0; i < result.size(); i++) {
+            result.at(i).key_range = name_range_of_last_long_option;
+        }
+    }
+    return result;
 }
 
 // Returns true if the source line contains an option spec, that is, has at least one leading space, and then a dash
@@ -1365,7 +1398,8 @@ option_list_t parse_options_spec(error_list_t *errors) const {
 
                 // Got the description. Skip leading whitespace and then parse out an option.
                 scan_while(this->source, &option_spec_range, isspace);
-                parse_option_spec(option_spec_range, &result, errors);
+                option_list_t tmp = parse_option_spec(option_spec_range, errors);
+                result.insert(result.end(), tmp.begin(), tmp.end());
             }
         }
     }
@@ -1511,7 +1545,7 @@ bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &op
         // We don't support -f=bar style. I don't know of any commands that use this.
         // TODO: support delimiter-free style (gcc -Dmacro=something)
         if (*idx + 1 < argv.size()) {
-            val_idx_for_last_option = *idx;
+            val_idx_for_last_option = *idx + 1;
             val_range_for_last_option = range_t(0, argv.at(*idx + 1).size());
         } else {
             append_error(&errors, options_for_argument.back().value.start, "Option expects an argument");
@@ -1637,7 +1671,7 @@ struct match_context_t {
         string_t name;
         for (size_t i=0; i < resolved_options.size(); i++) {
             const resolved_option_t &opt = resolved_options.at(i);
-            opt.option.assign_name_to_string(src, &name);
+            opt.option.assign_key_to_string(src, &name);
             if (state->option_map.find(name) != state->option_map.end()) {
                 // This option was used. The name index is definitely used. The value index is also used, if it's not npos (note that it may be the same as the name index, so we can avoid setting the bit twice in that case)
                 used_indexes.at(opt.name_idx_in_argv) = true;
@@ -1861,7 +1895,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
 
         if (resolved_opt != NULL) {
             // woo hoo
-            const string_t name = opt_in_doc.name_as_string(this->source);
+            const string_t name = opt_in_doc.key_as_string(this->source);
             arg_t *arg = &state->option_map[name];
             if (resolved_opt->value_idx_in_argv != npos) {
                 const string_t &str = ctx->argv.at(resolved_opt->value_idx_in_argv);
@@ -1926,7 +1960,7 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     option_map_t result = map;
     string_t name;
     for (size_t i=0; i < all_options.size(); i++) {
-        all_options.at(i).assign_name_to_string(this->source, &name);
+        all_options.at(i).assign_key_to_string(this->source, &name);
         // We merely invoke operator[]; this will do the insertion with a default value if necessary.
         // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
         result[name];
@@ -2097,7 +2131,7 @@ int main(void) {
         "  -i <file>, --input <file>  Set input file\n";
 #else
         "Usage: prog [options]\n"
-        "Options: -a  All.";
+        "Options: -p <PATH>";
 #endif
 
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2172,7 +2206,8 @@ int main(void) {
     argv.push_back("5");
 #else
     argv.push_back("prog");
-    argv.push_back("-a");
+    argv.push_back("-p");
+    argv.push_back("home/");
 #endif
 
     docopt_impl<std::string>::positional_argument_list_t positionals;
