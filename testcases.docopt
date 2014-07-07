@@ -150,7 +150,7 @@ $ prog -a -r -m Hello
  "-r": true,
  "-m": "Hello"}
 
-$ prog -armyourass
+$ prog -arm yourass
 {"-a": true,
  "-r": true,
  "-m": "yourass"}
@@ -158,7 +158,7 @@ $ prog -armyourass
 $ prog -a -r
 {"-a": true,
  "-r": true,
- "-m": null}
+ "-m": false}
 
 
 r"""Usage: prog [options]
@@ -191,13 +191,13 @@ options:
  -m <msg>  Message
 
 """
-$ prog -armyourass
+$ prog -arm yourass
 {"-a": true,
  "-r": true,
  "-m": "yourass"}
 
 
-r"""usage: prog [-armmsg]
+r"""usage: prog [-arm <msg>]
 
 options: -a        Add
          -r        Remote
