@@ -207,11 +207,14 @@ struct option_t {
 
     // Range of the description. Empty for none.
     range_t description_range;
+    
+    // Range of the default value. Empty for none.
+    range_t default_value_range;
 
     // How we separate the name from the value. We may make this a bitmap some day.
     separator_t separator;
 
-    option_t(const range_t &n, const range_t &v, size_t leading_dash_count, separator_t sep) : name(n), value(v), description_range(0, 0), separator(sep) {
+    option_t(const range_t &n, const range_t &v, size_t leading_dash_count, separator_t sep) : name(n), value(v), separator(sep) {
         // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
         if (leading_dash_count > 1) {
             this->type = option_t::double_long;
@@ -1319,6 +1322,32 @@ option_list_t parse_option_spec(const range_t &range, error_list_t *errors) cons
     // Determine the description range. Skip over its leading whitespace
     range_t description_range = range_t(options_end, end - options_end);
     scan_while(this->source, &description_range, isspace);
+    
+    // Parse out a "default:" value.
+    range_t default_value_range;
+    if (! description_range.empty()) {
+        // TODO: handle the case where there's more than one
+        const char *default_prefix = "[default:";
+        size_t default_prefix_loc = find_case_insensitive(this->source, default_prefix, description_range.start);
+        if (default_prefix_loc < description_range.end()) {
+            // Note: the above check handles npos too
+            size_t default_value_start = default_prefix_loc + strlen(default_prefix);
+            // Skip over spaces
+            while (default_value_start < description_range.end() && isspace(this->source.at(default_value_start))) {
+                default_value_start++;
+            }
+            
+            // Find the closing ']'
+            size_t default_value_end = this->source.find(char_t(']'), default_value_start);
+            if (default_value_end >= description_range.end()) {
+                // Note: The above check covers npos too
+                append_error(errors, default_prefix_loc, "Missing ']'");
+            } else {
+                default_value_range.start = default_value_start;
+                default_value_range.length = default_value_end - default_value_start;
+            }
+        }
+    }
 
     // Parse the options portion
     assert(options_end >= range.start);
@@ -1333,6 +1362,7 @@ option_list_t parse_option_spec(const range_t &range, error_list_t *errors) cons
             break;
         }
         opt.description_range = description_range;
+        opt.default_value_range = default_value_range;
         result.push_back(opt);
         
         // Keep track of the last long option
@@ -1347,6 +1377,7 @@ option_list_t parse_option_spec(const range_t &range, error_list_t *errors) cons
             result.at(i).key_range = name_range_of_last_long_option;
         }
     }
+    
     return result;
 }
 
@@ -1455,13 +1486,36 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, c
     // TODO: What if we get an error, e.g. there's more than two dashes?
     assert(arg_as_option.type == type);
 
-    /* Get list of matching long options. These are pointers into our options array */
-    std::vector<const option_t *> matches;
+    /* Get list of matching long options. */
+    option_list_t matches;
     for (size_t i=0; i < options.size(); i++) {
         const option_t &opt = options.at(i);
         // This comparison is terrifying. It's just comparing two substrings: one in source (the given option) and the name portion of the argument
         if (opt.type == type && this->source.compare(opt.name.start, opt.name.length, arg, arg_as_option.name.start, arg_as_option.name.length) == 0) {
-            matches.push_back(&opt);
+            matches.push_back(opt);
+        }
+    }
+    
+    if (matches.empty() && (this->parse_flags & flag_resolve_unambiguous_prefixes)) {
+        /* We didn't get any direct matches; look for an unambiguous prefix match */
+        option_list_t prefix_matches;
+        for (size_t i=0; i < options.size(); i++) {
+            const option_t &opt = options.at(i);
+            // Here we confirm that the option's name is longer than the name portion of the argument.
+            // If they are equal; we would have had an exact match above; if the option is shorter, then the argument is not a prefix of it.
+            // If the option is longer, we then do a substring comparison, up to the number of characters determined by the argument
+            if (opt.type == type && opt.name.length > arg_as_option.name.length && this->source.compare(opt.name.start, arg_as_option.name.length, arg, arg_as_option.name.start, arg_as_option.name.length) == 0) {
+                prefix_matches.push_back(opt);
+            }
+        }
+        if (prefix_matches.size() > 1) {
+            // Todo: need to specify the argument index
+            append_error(out_errors, -1, "Option specified too many times");
+        } else if (prefix_matches.size() == 1) {
+            // We have one unambiguous prefix match. Swap it into the true matches array, which is currently empty.
+            matches.swap(prefix_matches);
+        } else {
+            // Empty, no prefix match at all. Continue on.
         }
     }
 
@@ -1472,19 +1526,19 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, c
     bool success = false;
     size_t match_count = matches.size();
     if (match_count > 1) {
-        append_error(out_errors, matches.at(0)->name.start, "Option specified too many times");
+        append_error(out_errors, matches.at(0).name.start, "Option specified too many times");
     } else if (match_count < 1) {
         append_error(out_errors, -1, "Unknown option");
     } else {
         bool errored = false;
         assert(match_count == 1);
-        const option_t *match = matches.at(0);
+        const option_t &match = matches.at(0);
 
         /* Ensure the option and argument agree on having a value */
         range_t value_range(0, 0);
         const size_t name_idx = *idx;
         size_t arg_index = npos;
-        if (match->has_value()) {
+        if (match.has_value()) {
             if (arg_as_option.has_value()) {
                 // The arg was specified as --foo=bar. The range is the value portion; the index is the same as our argument.
                 value_range = arg_as_option.value;
@@ -1497,20 +1551,20 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, c
                     arg_index = *idx;
                     value_range = range_t(0, argv.at(arg_index).size());
                 } else {
-                    append_error(&errors, match->value.start, "Option expects an argument");
+                    append_error(&errors, match.value.start, "Option expects an argument");
                     errored = true;
                 }
             }
         } else if (arg_as_option.has_value()) {
             // A value was specified as --foo=bar, but none was expected
-            append_error(&errors, match->name.start, "Option does not expect an argument");
+            append_error(&errors, match.name.start, "Option does not expect an argument");
             errored = true;
         }
         if (! errored) {
-            out_result->push_back(resolved_option_t(*match, name_idx, arg_index, value_range));
+            out_result->push_back(resolved_option_t(match, name_idx, arg_index, value_range));
             *idx += 1;
+            success = true;
         }
-        success = true;
     }
     return success;
 }
@@ -2046,10 +2100,16 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     option_map_t result = map;
     string_t name;
     for (size_t i=0; i < all_options.size(); i++) {
-        all_options.at(i).assign_key_to_string(this->source, &name);
+        const option_t &opt = all_options.at(i);
+        opt.assign_key_to_string(this->source, &name);
         // We merely invoke operator[]; this will do the insertion with a default value if necessary.
         // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
-        result[name];
+        arg_t *arg = &result[name];
+        
+        if (! opt.default_value_range.empty() && arg->values.empty()) {
+            // Apply the default value
+            arg->values.push_back(string_t(this->source, opt.default_value_range.start, opt.default_value_range.length));
+        }
     }
     return result;
 }

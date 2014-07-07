@@ -56,7 +56,7 @@ int main(int argc, const char** argv)
     }
 	
     std::vector<size_t> unused_idxs;
-	std::map<std::string, argument_t> result = docopt_parse(usage, args, flag_generate_empty_args, &unused_idxs);
+	std::map<std::string, argument_t> result = docopt_parse(usage, args, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &unused_idxs);
     
     if (! unused_idxs.empty()) {
         std::cerr << "Unused arguments:\n";

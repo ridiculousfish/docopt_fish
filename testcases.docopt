@@ -80,9 +80,6 @@ Options: --path <path>
 $ prog --path home/
 {"--path": "home/"}
 
-$ prog --path=home/
-{"--path": "home/"}
-
 $ prog --pa home/
 {"--path": "home/"}
 
@@ -95,7 +92,7 @@ $ prog --path
 
 r"""Usage: prog [options]
 
-Options: -p <PATH>, --path=<path>  Path to files.
+Options: -p<PATH>, --path=<path>  Path to files.
 
 """
 $ prog -proot
@@ -104,7 +101,7 @@ $ prog -proot
 
 r"""Usage: prog [options]
 
-Options:    -p --path PATH  Path to files.
+Options:    -p <PATH>, --path <PATH>  Path to files.
 
 """
 $ prog -p root
