@@ -1435,7 +1435,7 @@ option_list_t parse_options_spec(error_list_t *errors) const {
         const range_t section_range = section_ranges.at(range_idx);
         const size_t section_end = section_range.end();
         range_t line_range(section_range.start, 0);
-        while (get_next_line(source, &line_range, section_end)) {
+        while (get_next_line(this->source, &line_range, section_end)) {
             // These are all valid option specifications:
             // --foo
             // --foo <bar>
@@ -1451,7 +1451,9 @@ option_list_t parse_options_spec(error_list_t *errors) const {
                 range_t option_spec_range = line_range;
                 range_t local_range = line_range;
                 while (get_next_line(this->source, &local_range, section_end)) {
-                    if (! line_contains_option_spec(this->source, local_range)) {
+                    if (line_contains_option_spec(this->source, local_range)) {
+                        break;
+                    } else {
                         option_spec_range.merge(local_range);
                         // Set our outermost lines to this line, so we'll skip past it next iteration
                         line_range = local_range;
@@ -2276,8 +2278,11 @@ int main(void) {
         "  -h, --human-readable  Display in human-readable format\n"
         "  -i <file>, --input <file>  Set input file\n";
 #else
-        "Usage: prog [options]\n"
-        "Options: -p<PATH>";
+        "usage: prog [options]\n"
+        "options:\n"
+        "    -a        Add\n"
+        "    -r        Remote\n"
+        "    -m <msg>  Message\n";
 #endif
 
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2352,7 +2357,10 @@ int main(void) {
     argv.push_back("5");
 #else
     argv.push_back("prog");
-    argv.push_back("-phome/");
+    argv.push_back("-a");
+    argv.push_back("-r");
+    argv.push_back("-m");
+    argv.push_back("Hello");
 #endif
 
     docopt_impl<std::string>::positional_argument_list_t positionals;
