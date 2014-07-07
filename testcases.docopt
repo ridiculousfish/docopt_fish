@@ -58,12 +58,19 @@ Options: -p <PATH>
 $ prog -p home/
 {"-p": "home/"}
 
+$ prog -p
+"user-error"
+
+r"""Usage: prog [options]
+
+Options: -p<PATH>
+
+"""
 $ prog -phome/
 {"-p": "home/"}
 
 $ prog -p
 "user-error"
-
 
 r"""Usage: prog [options]
 

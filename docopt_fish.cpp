@@ -193,7 +193,7 @@ struct option_t {
     enum separator_t {
         sep_space, // curl -o file
         sep_equals, // -std=c++98
-        sep_none // -DNDEBUG
+        sep_none // -DNDEBUG. Must be a single_short option.
     };
 
     // name of the option, like '--foo'
@@ -238,6 +238,8 @@ struct option_t {
     template<typename string_t>
     string_t describe(const string_t &src) const {
         string_t result;
+        string_t tmp;
+        
         result.append(src, name.start, name.length);
         if (! value.empty()) {
             result.push_back(':');
@@ -248,9 +250,17 @@ struct option_t {
         
         char range[64];
         snprintf(range, sizeof range, "<%lu, %lu>", name.start, name.length);
-        string_t tmp;
         assign_narrow_string_to_string(range, &tmp);
         result.append(tmp);
+        
+        if (this->separator == sep_none) {
+            assign_narrow_string_to_string(" (no sep)", &tmp);
+            result.append(tmp);
+        } else if (this->separator == sep_none) {
+            assign_narrow_string_to_string(" (= sep)", &tmp);
+            result.append(tmp);
+        }
+
         
         return result;
     }
@@ -1198,8 +1208,11 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
 
     // Walk over characters valid in a name
     range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter);
+    
+    // Check to see if there's a space
+    range_t space_separator(0, 0);
     if (within_options_spec) {
-        scan_while(str, remaining, isspace);
+        space_separator = scan_while(str, remaining, isspace);
     }
 
     // Check to see if there's an = sign
@@ -1209,6 +1222,7 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
     }
 
     // Try to scan a variable
+    // TODO: If we have a naked equals sign (foo = ) generate an error
     if (within_options_spec) {
         scan_while(str, remaining, isspace);
     }
@@ -1222,10 +1236,27 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
     }
     
     // Determine the separator type
-    option_t::separator_t seperator = equals_range.empty() ? option_t::sep_space : option_t::sep_equals;
+    // If we got an equals range, it's something like 'foo = <bar>' or 'foo=<bar>'. The separator is equals and the space is ignored.
+    // Otherwise, the space matters: 'foo <bar>' is space-separated, and 'foo<bar>' has no separator
+    // Hackish: store sep_space for options without a separator
+    option_t::separator_t separator;
+    if (variable_range.empty()) {
+        separator = option_t::sep_space;
+    } else if (! equals_range.empty()) {
+        separator = option_t::sep_equals;
+    } else if (! space_separator.empty()) {
+        separator = option_t::sep_space;
+    } else {
+        separator = option_t::sep_none;
+    }
+    
+    // TODO: generate an error on long options with no separators (--foo<bar>). Only short options support these.
+    if (separator == option_t::sep_none && (leading_dash_range.length > 1 || name_range.length > 1)) {
+        append_error(errors, name_range.start, "Long options must use a space or equals separator");
+    }
     
     // Create and return the option
-    return option_t(name_range, variable_range, leading_dash_range.length, seperator);
+    return option_t(name_range, variable_range, leading_dash_range.length, separator);
 }
 
 
@@ -1484,6 +1515,55 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, c
     return success;
 }
 
+// Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator.
+bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
+    const string_t &arg = argv.at(*idx);
+    assert(substr_equals("-", arg, 1));
+    assert(arg.size() > 1); // must not be just a single dash
+    bool success = false;
+    
+    // Construct the list of options in-order, corresponding to this argument
+    std::vector<option_t> matches;
+    
+    for (size_t i=0; i < options.size(); i++) {
+        const option_t &opt = options.at(i);
+        if (opt.type == option_t::single_short && opt.separator == option_t::sep_none) {
+            // Candidate short option.
+            // This looks something like -DNDEBUG. We want to see if the D matches.
+            // Compare the character at offset 1 (to account for the dash) and length 1 (since it's a short option)
+            if (this->source.compare(opt.name.start, opt.name.length, arg, 1, 1) == 0) {
+                // Expect to always want a value here
+                assert(opt.has_value());
+                matches.push_back(opt);
+            }
+        }
+    }
+
+    if (matches.size() > 1) {
+        // This is an error in the usage - should catch this earlier?
+        append_error(out_errors, matches.at(0).name.start, "Option specified too many times");
+    } else if (matches.size() == 1) {
+        // Try to extract the value. This is very simple: it starts at index 2 and goes to the end of the arg.
+        const option_t &match = matches.at(0);
+        if (arg.size() <= 2) {
+            append_error(out_errors, match.name.start, "Option expects an argument");
+        } else {
+            // Got one
+            size_t name_idx = *idx;
+            size_t value_idx = *idx;
+            range_t value_range = range_t(2, arg.size() - 2);
+            out_result->push_back(resolved_option_t(match, name_idx, value_idx, value_range));
+            *idx += 1;
+            success = true;
+        }
+    } else {
+        // Common case: Match count is 0, so we didn't get any.
+        assert(matches.empty());
+    }
+    return success;
+}
+
+
 // Given a list of short options, parse out an argument
 bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
     const string_t &arg = argv.at(*idx);
@@ -1596,11 +1676,17 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
                 idx += 1;
             }
         } else if (substr_equals("-", arg, 1) && arg.size() > 1) {
-            // An option with a single dash, like -foo
-            // This may be either a combined short option (tar -cf ...) or a long option with a single dash (-std=c++)
-            // Try to parse it as a long option; if that fails try to parse it as a short option
+            /* An option with a leading dash, like -foo
+             This can be a lot of different things:
+               1. A combined short option: tar -cf ...
+               2. A long option with a single dash: -std=c++
+               3. A short option with a value: -DNDEBUG
+             Try to parse it as a long option; if that fails try to parse it as a short option
+             */
             if (parse_long(argv, option_t::single_long, &idx, options, out_resolved_options, &this->errors)) {
                 // parse_long succeeded. TODO: implement this.
+            } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, &this->errors)) {
+                // parse_unseparated_short will have updated idx and out_resolved_options
             } else if (parse_short(argv, &idx, options, out_resolved_options, &this->errors)) {
                 // parse_short succeeded.
             } else {
@@ -2131,7 +2217,7 @@ int main(void) {
         "  -i <file>, --input <file>  Set input file\n";
 #else
         "Usage: prog [options]\n"
-        "Options: -p <PATH>";
+        "Options: -p<PATH>";
 #endif
 
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2206,8 +2292,7 @@ int main(void) {
     argv.push_back("5");
 #else
     argv.push_back("prog");
-    argv.push_back("-p");
-    argv.push_back("home/");
+    argv.push_back("-phome/");
 #endif
 
     docopt_impl<std::string>::positional_argument_list_t positionals;
