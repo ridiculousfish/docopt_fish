@@ -1173,7 +1173,7 @@ option_list_t collect_options(const ENTRY_TYPE &entry) {
 }
 
 static bool char_is_valid_in_parameter(char_t c) {
-    const char *invalid = "|<>,= \t";
+    const char *invalid = "|<>,= \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
@@ -1319,7 +1319,7 @@ option_list_t parse_option_spec(const range_t &range, error_list_t *errors) cons
         options_end = end; // no description
     }
 
-    // Determine the description range. Skip over its leading whitespace
+    // Determine the description range (possibly empty). Skip over its leading whitespace
     range_t description_range = range_t(options_end, end - options_end);
     scan_while(this->source, &description_range, isspace);
     
