@@ -262,7 +262,6 @@ typedef typename string_t::value_type char_t;
 #pragma mark Scanning
 #pragma mark -
 
-
 static bool char_is_valid_in_parameter(char_t c) {
     const char *invalid = "|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
@@ -270,7 +269,7 @@ static bool char_is_valid_in_parameter(char_t c) {
 }
 
 static bool char_is_valid_in_variable(char_t c) {
-    const char *invalid = "-|,=()[] \t\n";
+    const char *invalid = "|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
@@ -419,6 +418,14 @@ struct parse_context_t {
         this->consume_leading_whitespace();
         tok->range = scan_while(*source, &remaining_range, char_is_valid_in_word);
         return ! tok->range.empty();
+    }
+    
+    token_t peek_word() {
+        this->consume_leading_whitespace();
+        token_t tok;
+        range_t local_range = remaining_range;
+        tok.range = scan_while(*source, &local_range, char_is_valid_in_word);
+        return tok;
     }
 };
 
@@ -789,11 +796,53 @@ struct simple_clause_t : public base_t {
     {}
     
     static simple_clause_t *parse(parse_context_t *ctx) {
+        simple_clause_t *result = NULL;
         token_t word;
-        if (! ctx->scan_word(&word)) {
-            return NULL;
+        if (ctx->scan_word(&word)) {
+            result = new simple_clause_t(word);
+            
+            /* Hack to support specifying parameter names inline.
+             
+             Consider usage like this:
+               "usage: prog [-m <msg>]"
+             
+            There's two ways we can interpret this:
+             1. An optional -m flag, followed by a positional parameter
+             2. An -m option whose value is <msg>
+            
+            The Python reference docopt resolves this ambiguity by looking at the Options: section. If it finds a declaration of -m with a variable, then <msg> is assumed to be the value (interpretation #2); otherwise it's a positional (interpretation #1).
+             
+            But requiring a required positional after a flag seems very unlikely, so in this version we always use interpretation #2. We do this by treating it as one token (that contains a space).
+             
+             The exception is if a delimeter is found, e.g.:
+             
+             "usage: prog [-m=<foo> <msg>]"
+             
+             Now <foo> is the value of the option m, and <msg> is positional.
+             
+             Also, if you really want interpretation #1, you can write:
+             
+               "usage: prog [-m (<msg>)]"
+            */
+            const string_t &src = *ctx->source;
+            range_t range = word.range;
+            if (range.length > 2 && src.at(range.start) == '-' && src.at(range.start + 1) == '-') {
+                // Two dashes, followed by something
+                option_t opt = parse_option_from_string(src, &range, NULL);
+                if (opt.name.length > 0 && opt.separator == option_t::sep_space) {
+                    // Looks like an option without a separator. See if the next token is a variable
+                    range_t next = ctx->peek_word().range;
+                    if (next.length > 2 && src.at(next.start) == '<' && src.at(next.end() - 1) == '>') {
+                        // It's a variable
+                        token_t variable;
+                        bool scanned = ctx->scan_word(&variable);
+                        assert(scanned); // Should always succeed, since we peeked at the word
+                        word.range.merge(variable.range);
+                    }
+                }
+            }
         }
-        return new simple_clause_t(word);
+        return result;
     }
     
     std::string name() const { return "simple_clause"; }
@@ -1074,7 +1123,38 @@ option_list_t collect_options(const ENTRY_TYPE &entry) {
     return resulting_options;
 }
 
-static option_t parse_option_from_string(const string_t &str, range_t *remaining, bool within_options_spec, error_list_t *errors) {
+/* Like parse_option_from_string, but parses an argument */
+static option_t parse_option_from_argument(const string_t &str, error_list_t *errors UNUSED) {
+    assert(! str.empty());
+    assert(str.at(0) == char_t('-'));
+
+    range_t remaining_storage(0, str.size());
+    range_t * const remaining = &remaining_storage;
+    
+    // Count how many leading dashes
+    range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
+    
+    // Walk over characters valid in a name
+    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter);
+    
+    // Check to see if there's an = sign
+    const range_t equals_range = scan_1_char(str, remaining, char_t('='));
+    
+    // If we got an equals sign, the rest is the value
+    // Note that this is of a very different nature than char_is_valid_in_variable
+    // It can have any character at all, since it's coming from the argument, not from the usage spec
+    range_t value_range;
+    if (! equals_range.empty()) {
+        value_range = *remaining;
+        remaining->start = remaining->end();
+        remaining->length = 0;
+    }
+    
+    // Return the option
+    return option_t(name_range, value_range, leading_dash_range.length, equals_range.empty() ? option_t::sep_space : option_t::sep_equals);
+}
+
+static option_t parse_option_from_string(const string_t &str, range_t *remaining, error_list_t *errors UNUSED) {
     assert(remaining->length > 0);
 
     // Count how many leading dashes
@@ -1089,10 +1169,7 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
     range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter);
     
     // Check to see if there's a space
-    range_t space_separator(0, 0);
-    if (within_options_spec) {
-        space_separator = scan_while(str, remaining, isspace);
-    }
+    range_t space_separator = scan_while(str, remaining, isspace);
 
     // Check to see if there's an = sign
     const range_t equals_range = scan_while(str, remaining, it_equals<'='>);
@@ -1102,17 +1179,20 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
 
     // Try to scan a variable
     // TODO: If we have a naked equals sign (foo = ) generate an error
-    if (within_options_spec) {
-        scan_while(str, remaining, isspace);
+    scan_while(str, remaining, isspace);
+    
+    range_t variable_range;
+    range_t open_sign = scan_1_char(str, remaining, '<');
+    if (! open_sign.empty()) {
+        range_t variable_name_range = scan_while(str, remaining, char_is_valid_in_variable);
+        range_t close_sign = scan_1_char(str, remaining, '>');
+        if (! variable_name_range.empty() && ! close_sign.empty()) {
+            variable_range.merge(open_sign);
+            variable_range.merge(variable_name_range);
+            variable_range.merge(close_sign);
+        }
     }
-    range_t variable_range = scan_while(str, remaining, char_is_valid_in_variable);
-
-    // Skip over commas and whitespace for the next range
-    if (within_options_spec) {
-        scan_while(str, remaining, isspace);
-        scan_while(str, remaining, it_equals<','>);
-        scan_while(str, remaining, isspace);
-    }
+    // TODO: generate error for wrong-looking variables
     
     // Determine the separator type
     // If we got an equals range, it's something like 'foo = <bar>' or 'foo=<bar>'. The separator is equals and the space is ignored.
@@ -1138,49 +1218,13 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
     return option_t(name_range, variable_range, leading_dash_range.length, separator);
 }
 
-
-/* Separates a substring of str into name and value ranges about an = sign. String must start with - */
-option_t parse_option_from_string(const string_t &str, const range_t &range, error_list_t *errors) const {
-    assert(range.length > 0);
-    size_t start = range.start;
-    size_t len = range.length;
-    size_t end = range.end();
-
-    // Count how many leading dashes
-    size_t leading_dash_count = 0;
-    while (leading_dash_count < len && str.at(start + leading_dash_count) == char_t('-')) {
-        leading_dash_count++;
-    }
-    assert(leading_dash_count > 0);
-    if (leading_dash_count > 2) {
-        append_error(errors, start, "Too many dashes");
-    }
-
-    // find an =. We ignore any = signs after the first
-    size_t equals_pos = str.find(char_t('='), start);
-    if (equals_pos >= end) {
-        // Ignore any = sign at or past the end of our substring
-        equals_pos = string_t::npos;
-    }
-
-    // Construct ranges
-    range_t name, value;
-    if (equals_pos == string_t::npos) {
-        // No value, name only
-        name = range_t(start + leading_dash_count, len - leading_dash_count);
-        value = range_t(len, 0);
-    } else {
-        // Has a value. The value starts just after the = sign
-        assert(equals_pos > leading_dash_count);
-        name = range_t(start + leading_dash_count, equals_pos - leading_dash_count - start);
-        value = range_t(equals_pos + 1, end - equals_pos - 1);
-    }
-
-    return option_t(name, value, leading_dash_count, equals_pos == string_t::npos ? option_t::sep_space : option_t::sep_equals);
+/* Variant for the non-options-spec case */
+option_t parse_option_from_string(const string_t &str, range_t range, error_list_t *errors) const {
+    return parse_option_from_string(str, &range, errors);
 }
 
 /* Given an option spec in the given range, that extends from the initial - to the end of the description, parse out a list of options */
-option_list_t parse_option_spec(const range_t &range, error_list_t *errors) const {
+option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) const {
     assert(! range.empty());
     assert(this->source.at(range.start) == char_t('-'));
     const size_t end = range.end();
@@ -1231,8 +1275,7 @@ option_list_t parse_option_spec(const range_t &range, error_list_t *errors) cons
     scan_while(this->source, &remaining, isspace);
     range_t name_range_of_last_long_option;
     while (! remaining.empty()) {
-        // Skip whitespace
-        option_t opt = parse_option_from_string(this->source, &remaining, true, errors);
+        option_t opt = parse_option_from_string(this->source, &remaining, errors);
         if (opt.name.empty()) {
             // Failed to get an option, give up
             break;
@@ -1245,6 +1288,12 @@ option_list_t parse_option_spec(const range_t &range, error_list_t *errors) cons
         if (opt.type == option_t::double_long) {
             name_range_of_last_long_option = opt.name;
         }
+        
+        // Skip over commas, which separate arguments
+        scan_while(this->source, &remaining, isspace);
+        scan_while(this->source, &remaining, it_equals<','>);
+        scan_while(this->source, &remaining, isspace);
+
     }
     
     // Set the key range to the name range of every option
@@ -1320,7 +1369,6 @@ option_list_t parse_options_spec(error_list_t *errors) const {
             // There may also be a description after two spaces
             // The description may span multiple lines.
 
-
             // Check to see if this line starts with a -
             if (line_contains_option_spec(this->source, line_range)) {
                 // It's a new option. Determine how long its description goes.
@@ -1338,7 +1386,7 @@ option_list_t parse_options_spec(error_list_t *errors) const {
 
                 // Got the description. Skip leading whitespace and then parse out an option.
                 scan_while(this->source, &option_spec_range, isspace);
-                option_list_t tmp = parse_option_spec(option_spec_range, errors);
+                option_list_t tmp = parse_one_option_spec(option_spec_range, errors);
                 result.insert(result.end(), tmp.begin(), tmp.end());
             }
         }
@@ -1354,7 +1402,7 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, c
 
     /* Parse the argument into an 'option'. Note that this option does not appear in the options list because its range reflects the string in the argument. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
     error_list_t local_errors;
-    option_t arg_as_option = parse_option_from_string(arg, range_t(0, arg.size()), &local_errors);
+    option_t arg_as_option = parse_option_from_argument(arg, &local_errors);
     
     // Hacktastic - parse_option_from_string can't distinguish between one-char long options, and short options. So force the issue: if we want a single long option but we get a single short, then stomp it.
     if (type == option_t::single_long && arg_as_option.type == option_t::single_short) {
@@ -2147,7 +2195,7 @@ static int simple_test() {
 #else
     "usage: prog [options]\n"
     "options:\n"
-    "    -a        All\n";
+    "    -p <PATH>\n";
 #endif
     
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2214,6 +2262,8 @@ static int simple_test() {
     argv.push_back("5");
 #else
     argv.push_back("prog");
+    argv.push_back("-p");
+    argv.push_back("home/");
 #endif
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
