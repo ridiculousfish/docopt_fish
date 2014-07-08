@@ -264,19 +264,19 @@ typedef typename string_t::value_type char_t;
 
 
 static bool char_is_valid_in_parameter(char_t c) {
-    const char *invalid = "|<>,= \t\n";
+    const char *invalid = "|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
 static bool char_is_valid_in_variable(char_t c) {
-    const char *invalid = "-|,= \t";
+    const char *invalid = "-|,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
 static bool char_is_valid_in_word(char_t c) {
-    const char *invalid = "|,= \t";
+    const char *invalid = "|()[],= \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
@@ -863,7 +863,7 @@ struct compound_clause_t : public base_t {
         } else if (ctx->scan("...", &token) || ctx->scan('|', &token)) {
             // Indicates leading ellipsis / bar
             // TODO: generate error
-        } else if (ctx->scan_word(&token)) {
+        } else {
             auto_ptr<simple_clause_t> simple_clause(simple_clause_t::parse(ctx));
             if (simple_clause.get()) {
                 auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
@@ -2214,7 +2214,6 @@ static int simple_test() {
     argv.push_back("5");
 #else
     argv.push_back("prog");
-    argv.push_back("-a");
 #endif
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
