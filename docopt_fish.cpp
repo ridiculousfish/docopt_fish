@@ -812,7 +812,7 @@ struct simple_clause_t : public base_t {
             
             The Python reference docopt resolves this ambiguity by looking at the Options: section. If it finds a declaration of -m with a variable, then <msg> is assumed to be the value (interpretation #2); otherwise it's a positional (interpretation #1).
              
-            But requiring a required positional after a flag seems very unlikely, so in this version we always use interpretation #2. We do this by treating it as one token (that contains a space).
+            But requiring a required positional after a flag seems very unlikely, so in this version we always use interpretation #2. We do this by treating it as one token '-m <msg>'. Note this token contains a space.
              
              The exception is if a delimeter is found, e.g.:
              
@@ -826,8 +826,8 @@ struct simple_clause_t : public base_t {
             */
             const string_t &src = *ctx->source;
             range_t range = word.range;
-            if (range.length > 2 && src.at(range.start) == '-' && src.at(range.start + 1) == '-') {
-                // Two dashes, followed by something
+            if (range.length > 1 && src.at(range.start) == '-') {
+                // It's an option
                 option_t opt = parse_option_from_string(src, &range, NULL);
                 if (opt.name.length > 0 && opt.separator == option_t::sep_space) {
                     // Looks like an option without a separator. See if the next token is a variable
@@ -1394,6 +1394,65 @@ option_list_t parse_options_spec(error_list_t *errors) const {
     return result;
 }
 
+/* Returns true if the two options have the same name */
+bool options_have_same_name(const option_t &opt1, const option_t &opt2) const {
+    bool result = false;
+    if (opt1.name.length == opt2.name.length) {
+        // Name lengths must be the same
+        if (opt1.name == opt2.name) {
+            // Identical ranges
+            result = true;
+        } else {
+            result = (0 == this->source.compare(opt1.name.start, opt1.name.length, this->source, opt2.name.start, opt2.name.length));
+        }
+    }
+    return result;
+}
+
+/* Given a list of options, verify that any duplicate options are in agreement, and remove all but one. TODO: make this not N^2. */
+void uniqueize_options(option_list_t *options, error_list_t *errors UNUSED) const {
+    std::vector<size_t> matching_indexes;
+    for (size_t cursor=0; cursor < options->size(); cursor++) {
+        // Determine the set of matches
+        // Two options are called a match if they have the same name
+        matching_indexes.push_back(cursor);
+        // We have a "best option cursor". If we find two matching options, pick the one with the better (longer) description.
+        size_t best_match_idx = cursor;
+        for (size_t match_cursor = cursor + 1; match_cursor < options->size(); match_cursor++) {
+            const option_t &current_match = options->at(best_match_idx);
+            const option_t &maybe_match = options->at(match_cursor);
+            if (this->options_have_same_name(current_match, maybe_match)) {
+                // This index matched
+                matching_indexes.push_back(match_cursor);
+                
+                // This argument matches.
+                // TODO: verify agreement in the parameters, etc.
+                if (maybe_match.description_range.length > current_match.description_range.length) {
+                    // The second one has a better description. Keep it.
+                    best_match_idx = match_cursor;
+                }
+            }
+        }
+        
+        // Now we have the set of matching indexes
+        // Erase all, except for the best match
+        // These are in ascending order, so we can just work backwards
+        while (! matching_indexes.empty()) {
+            size_t idx_to_remove = matching_indexes.back();
+            assert(idx_to_remove >= cursor); //should only remove at or after cursor
+            matching_indexes.pop_back();
+            if (idx_to_remove != best_match_idx) {
+                options->erase(options->begin() + idx_to_remove);
+                
+                // If we removed the cursor, step back one so we go to the next element next time
+                if (idx_to_remove == cursor) {
+                    cursor -= 1;
+                }
+            }
+        }
+    }
+}
+
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx. */
 bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
     const string_t &arg = argv.at(*idx);
@@ -1953,7 +2012,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
         const resolved_option_t *resolved_opt = NULL;
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
             const resolved_option_t *opt_in_argv = &ctx->resolved_options.at(i);
-            if (opt_in_argv->option == opt_in_doc) {
+            if (options_have_same_name(opt_in_argv->option, opt_in_doc)) {
                 resolved_opt = opt_in_argv;
                 break;
             }
@@ -2129,12 +2188,14 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 
     // Extract options from the options section
     option_list_t shortcut_options = this->parse_options_spec(&this->errors);
+    this->uniqueize_options(&shortcut_options, &this->errors);
 
     // Combine these into a single list
     option_list_t all_options;
     all_options.reserve(usage_options.size() + shortcut_options.size());
     all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
     all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
+    this->uniqueize_options(&all_options, &this->errors);
 
     // Dump them
     if (log_stuff) {
@@ -2193,9 +2254,11 @@ static int simple_test() {
     "  -h, --human-readable  Display in human-readable format\n"
     "  -i <file>, --input <file>  Set input file\n";
 #else
-    "usage: prog [options]\n"
+    "usage: prog [-a -r -m <msg>]\n"
     "options:\n"
-    "    -p <PATH>\n";
+    "    -a        Add:\n"
+    "    -r        Remote:\n"
+    "    -m <msg>  Message:\n";
 #endif
     
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2215,12 +2278,14 @@ static int simple_test() {
     
     // Extract options from the options section
     option_list_t shortcut_options = impl.parse_options_spec(&impl.errors);
+    impl.uniqueize_options(&shortcut_options, &impl.errors);
     
     // Combine these into a single list
     option_list_t all_options;
     all_options.reserve(usage_options.size() + shortcut_options.size());
     all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
     all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
+    impl.uniqueize_options(&all_options, &impl.errors);
     
     // Dump them
     if (log_stuff) {
@@ -2262,8 +2327,8 @@ static int simple_test() {
     argv.push_back("5");
 #else
     argv.push_back("prog");
-    argv.push_back("-p");
-    argv.push_back("home/");
+    argv.push_back("-arm");
+    argv.push_back("yourass");
 #endif
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
