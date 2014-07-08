@@ -131,53 +131,12 @@ typedef std::vector<range_t> range_list_t;
 
 /* A token is just a range of some string, with a type */
 struct token_t {
-    enum type_t {
-        none = '_',
-        open_paren = '(',
-        close_paren = ')',
-        open_square = '[',
-        close_square = ']',
-        ellipsis = '.', // represents three dots ...
-        bar = '|',
-        newline = 'n', //newline,
-        options = 'o', //represents [options]
-        word='X' // represents a word, possibly with angle brackets <foo>
-    };
-
     range_t range;
-    type_t type;
-
-    /* Constructor */
-    token_t(size_t a, size_t b, char type_char) : range(a, b)
-    {
-        assert(strchr("()[]|.noX", type_char));
-        this->type = static_cast<type_t>(type_char);
-    }
-
-    token_t(size_t a, size_t b, type_t t) : range(a, b), type(t)
-    {
-    }
-
-    token_t() : range(0, 0), type(none)
-    {}
+    token_t(const range_t &r) : range(r) {}
+    token_t() {}
 
     bool empty() const {
-        return range.length == 0;
-    }
-
-    // For debugging
-    const char *name() const {
-        switch (this->type) {
-            case none: return "<NONE>";
-            case open_paren: return "(";
-            case close_paren: return ")";
-            case open_square: return "[";
-            case close_square: return "]";
-            case bar: return "|";
-            case options: return "[options]";
-            case word: return "<word>";
-            default: return NULL;
-        }
+        return range.empty();
     }
 };
 typedef std::vector<token_t> token_list_t;
@@ -296,6 +255,70 @@ typedef std::vector<option_t> option_list_t;
 template<typename string_t>
 class docopt_impl OPEN_DOCOPT_IMPL
 
+/* A character in string_t; likely either char or wchar_t */
+typedef typename string_t::value_type char_t;
+
+#pragma mark -
+#pragma mark Scanning
+#pragma mark -
+
+
+static bool char_is_valid_in_parameter(char_t c) {
+    const char *invalid = "|<>,= \t\n";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+static bool char_is_valid_in_variable(char_t c) {
+    const char *invalid = "-|,= \t";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+static bool char_is_valid_in_word(char_t c) {
+    const char *invalid = "|,= \t";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+static bool char_is_space_or_tab(char_t c) {
+    return c == ' ' || c == '\t';
+}
+
+template<char T>
+static bool it_equals(char_t c) { return c == T; }
+
+template<typename T>
+static range_t scan_1(const string_t &str, range_t *remaining, T func) {
+    range_t result(remaining->start, 0);
+    if (result.end() < remaining->end() && func(str.at(result.end()))) {
+        result.length += 1;
+        remaining->start += 1;
+        remaining->length -= 1;
+    }
+    return result;
+}
+
+static range_t scan_1_char(const string_t &str, range_t *remaining, char_t c) {
+    range_t result(remaining->start, 0);
+    if (result.end() < remaining->end() && str.at(result.end()) == c) {
+        result.length += 1;
+        remaining->start += 1;
+        remaining->length -= 1;
+    }
+    return result;
+}
+
+template<typename T>
+static range_t scan_while(const string_t &str, range_t *remaining, T func) {
+    range_t result(remaining->start, 0);
+    while (result.end() < remaining->end() && func(str.at(result.end()))) {
+        result.length += 1;
+        remaining->start += 1;
+        remaining->length -= 1;
+    }
+    return result;
+}
 
 #pragma mark -
 #pragma mark Usage Grammar
@@ -340,41 +363,62 @@ struct opt_ellipsis_t;
 
 /* Context passed around in our recursive descent parser */
 struct parse_context_t {
-    const token_list_t tokens;
+     // Note unowned pointer reference. A parse context is stack allocated and transient.
+    const string_t *source;
     range_t remaining_range;
     
-    parse_context_t(token_list_t &lst) : tokens(lst), remaining_range(0, lst.size())
+    parse_context_t(const string_t &src, const range_t &usage_range) : source(&src), remaining_range(usage_range)
     {}
+    
+    /* Consume leading whitespace, except newlines, which are meaningful and therefore tokens in their own right */
+    void consume_leading_whitespace() {
+        scan_while(*source, &remaining_range, char_is_space_or_tab);
+    }
     
     /* Returns true if there are no more next tokens */
     bool is_at_end() const {
         return remaining_range.length == 0;
     }
     
-    /* Returns true if there is a next token, and it has the given type */
-    bool next_token_has_type(token_t::type_t t) const {
-        bool result = false;
-        if (! this->is_at_end()) {
-            result = tokens.at(remaining_range.start).type == t;
+    bool scan(char_t c, token_t *tok = NULL) {
+        this->consume_leading_whitespace();
+        token_t storage;
+        storage.range = scan_1_char(*source, &remaining_range, c);
+        if (tok) {
+            *tok = storage;
         }
-        return result;
+        return ! storage.range.empty();
     }
     
-    token_t::type_t next_token_type() const {
-        if (this->is_at_end()) {
-            return token_t::none;
-        } else {
-            return tokens.at(remaining_range.start).type;
+    bool scan(const char *c, token_t *tok) {
+        this->consume_leading_whitespace();
+        bool success = true;
+        token_t string_tok;
+        const range_t saved_remaining = this->remaining_range;
+        for (size_t i=0; c[i] != '\0'; i++) {
+            token_t char_tok;
+            if (! this->scan(c[i], &char_tok)) {
+                success = false;
+                break;
+            }
+            string_tok.range.merge(char_tok.range);
         }
+        
+        // If we did not scan all the characters, restore our initial state
+        if (! success) {
+            this->remaining_range = saved_remaining;
+            string_tok.range = range_t(0, 0);
+        }
+        if (tok) {
+            *tok = string_tok;
+        }
+        return success;
     }
     
-    /* Returns the next token, decreasing the remaining range. Requires that there be a next token */
-    token_t acquire_token() {
-        assert(! this->is_at_end());
-        size_t idx = remaining_range.start;
-        remaining_range.start += 1;
-        remaining_range.length -= 1;
-        return tokens.at(idx);
+    bool scan_word(token_t *tok) {
+        this->consume_leading_whitespace();
+        tok->range = scan_while(*source, &remaining_range, char_is_valid_in_word);
+        return ! tok->range.empty();
     }
 };
 
@@ -489,15 +533,13 @@ public:
     
     
     void accept(const token_t &t1) {
-        if (t1.type != token_t::none) {
+        if (! t1.empty()) {
             std::string result(2 * depth, ' ');
             char buff[32];
             
-            if (t1.type == token_t::word && src != NULL) {
+            if (src != NULL) {
                 const string_t word(*src, t1.range.start, t1.range.length);
                 snprintf(buff, sizeof buff, "'%ls' ", widen(word).c_str());
-            } else {
-                snprintf(buff, sizeof buff, "'%s' ", t1.name());
             }
             result.append(buff);
             
@@ -626,17 +668,16 @@ struct usage_t : public base_t {
         usage_t *result = NULL;
         
         // TODO: generate error for missing word name
-        if (ctx->next_token_has_type(token_t::word)) {
-            token_t p = ctx->acquire_token();
+        token_t word;
+        if (ctx->scan_word(&word)) {
             auto_ptr<opt_expression_list_t> el(opt_expression_list_t::parse(ctx));
             if (el.get()) {
                 // Consume as many newlines as we can, and then try to generate the tail
-                while (ctx->next_token_has_type(token_t::newline)) {
-                    ctx->acquire_token();
+                while (ctx->scan('\n')) {
+                    continue;
                 }
-                
                 auto_ptr<usage_t> next(usage_t::parse(ctx));
-                result = new usage_t(p, el, next);
+                result = new usage_t(word, el, next);
             }
         }
         return result;
@@ -680,11 +721,11 @@ struct or_continuation_t : public base_t {
     
     static or_continuation_t *parse(parse_context_t *ctx) {
         or_continuation_t *result = NULL;
-        if (ctx->next_token_has_type(token_t::bar)) {
-            token_t token = ctx->acquire_token();
+        token_t bar;
+        if (ctx->scan('|', &bar)) {
             auto_ptr<expression_t> c(expression_t::parse(ctx));
             if (c.get()) {
-                result = new or_continuation_t(token, c);
+                result = new or_continuation_t(bar, c);
             } else {
                 // TODO: generate an error about trailing bar
                 fprintf(stderr, "Trailing bar\n");
@@ -706,21 +747,15 @@ struct or_continuation_t : public base_t {
 
 struct opt_ellipsis_t : public base_t {
     token_t ellipsis;
-    
+
     // opt_ellipsis = <empty>
-    opt_ellipsis_t() {}
-    
     // opt_ellipsis = ELLIPSIS
-    opt_ellipsis_t(token_t t) : base_t(1), ellipsis(t) {}
+    opt_ellipsis_t(token_t t) : base_t(t.empty() ? 0 : 1), ellipsis(t) {}
     
     static opt_ellipsis_t *parse(parse_context_t *ctx) {
-        opt_ellipsis_t *result = NULL;
-        if (ctx->next_token_has_type(token_t::ellipsis)) {
-            result = new opt_ellipsis_t(ctx->acquire_token());
-        } else {
-            result = new opt_ellipsis_t();
-        }
-        return result;
+        token_t ellipsis;
+        ctx->scan("...", &ellipsis);
+        return new opt_ellipsis_t(ellipsis);
     }
     
     std::string name() const { return "opt_ellipsis"; }
@@ -735,10 +770,11 @@ struct options_shortcut_t : public base_t {
     options_shortcut_t(const token_t &t1 UNUSED) : base_t() {}
     
     static options_shortcut_t *parse(parse_context_t *ctx) {
-        if (! ctx->next_token_has_type(token_t::options)) {
+        token_t opt;
+        if (ctx->scan("[options]", &opt)) {
             return NULL;
         }
-        return new options_shortcut_t(ctx->acquire_token());
+        return new options_shortcut_t(opt);
     }
     
     std::string name() const { return "options_shortcut"; }
@@ -753,10 +789,10 @@ struct simple_clause_t : public base_t {
     {}
     
     static simple_clause_t *parse(parse_context_t *ctx) {
-        if (! ctx->next_token_has_type(token_t::word)) {
+        token_t word;
+        if (! ctx->scan_word(&word)) {
             return NULL;
         }
-        token_t word = ctx->acquire_token();
         return new simple_clause_t(word);
     }
     
@@ -787,8 +823,8 @@ struct compound_clause_t : public base_t {
     
     //compound_clause = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
     //compound_clause = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
-    compound_clause_t(token_t a, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
-    : base_t(a.type == token_t::open_paren ? 1  : 2), open_token(a), expression_list(el), close_token(b), opt_ellipsis(e)
+    compound_clause_t(token_t a, bool is_paren, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
+    : base_t(is_paren ? 1  : 2), open_token(a), expression_list(el), close_token(b), opt_ellipsis(e)
     {}
     
     //compound_clause = options_shortcut
@@ -801,63 +837,41 @@ struct compound_clause_t : public base_t {
             return NULL;
         }
         
-        switch (ctx->next_token_type()) {
-            case token_t::open_square:
-            case token_t::open_paren:
-            {
-                token_t init_token = ctx->acquire_token();
-                auto_ptr<expression_list_t> contents(expression_list_t::parse(ctx));
-                if (contents.get()) {
-                    bool is_paren = (init_token.type == token_t::open_paren);
-                    token_t::type_t close_type = (is_paren ? token_t::close_paren : token_t::close_square);
-                    if (ctx->next_token_has_type(close_type)) {
-                        token_t close_token = ctx->acquire_token();
-                        auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
-                        assert(ellipsis.get() != NULL); // should never fail
-                        result = new compound_clause_t(init_token, contents, close_token, ellipsis);
-                    } else {
-                        // TODO: generate error of unclosed paren
-                    }
-                }
-                break;
+        token_t token;
+        // Note that options must come before trying to parse it as a list
+        
+        if (ctx->scan("[options]", &token)) {
+            auto_ptr<options_shortcut_t> shortcut(options_shortcut_t::parse(ctx));
+            if (shortcut.get()) {
+                result = new compound_clause_t(shortcut);
             }
-                
-            case token_t::options:
-            {
-                auto_ptr<options_shortcut_t> shortcut(options_shortcut_t::parse(ctx));
-                if (shortcut.get()) {
-                    result = new compound_clause_t(shortcut);
-                }
-                break;
-            }
-                
-            case token_t::close_paren:
-            case token_t::close_square:
-            case token_t::newline:
-                result = NULL;
-                break;
-                
-            case token_t::ellipsis:
-            case token_t::bar:
-                // Indicates leading ellipsis / bar
-                // TODO: generate error
-                break;
-                
-            case token_t::word:
-            {
-                auto_ptr<simple_clause_t> simple_clause(simple_clause_t::parse(ctx));
-                if (simple_clause.get()) {
+        } else if (ctx->scan('(', &token) || ctx->scan('[', &token)) {
+            auto_ptr<expression_list_t> contents(expression_list_t::parse(ctx));
+            if (contents.get()) {
+                char_t c = ctx->source->at(token.range.start);
+                assert(c == char_t('(') || c == char_t('['));
+                bool is_paren = (c == char_t('('));
+                token_t close_token;
+                if (ctx->scan(char_t(is_paren ? ')' : ']'), &close_token)) {
                     auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
                     assert(ellipsis.get() != NULL); // should never fail
-                    result = new compound_clause_t(simple_clause, ellipsis);
+                    result = new compound_clause_t(token, is_paren, contents, close_token, ellipsis);
+                } else {
+                    // TODO: generate error of unclosed paren
                 }
-                break;
             }
-                
-            case token_t::none:
-                assert(0 && "none-type token returned from next_token_type when not at end of token stream");
-                break;
+        } else if (ctx->scan("...", &token) || ctx->scan('|', &token)) {
+            // Indicates leading ellipsis / bar
+            // TODO: generate error
+        } else if (ctx->scan_word(&token)) {
+            auto_ptr<simple_clause_t> simple_clause(simple_clause_t::parse(ctx));
+            if (simple_clause.get()) {
+                auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
+                assert(ellipsis.get() != NULL); // should never fail
+                result = new compound_clause_t(simple_clause, ellipsis);
+            }
         }
+        
         return result;
     }
     
@@ -916,7 +930,6 @@ static void append_error(error_list_t *errors, size_t where, const char *txt) {
 /* Helper typedefs */
 typedef base_argument_t<string_t> arg_t;
 typedef std::vector<string_t> string_list_t;
-typedef typename string_t::value_type char_t;
 
 /* A positional argument */
 struct positional_argument_t {
@@ -1047,117 +1060,6 @@ bool token_equals(const token_t &tok, const string_t &str) {
     }
 }
 
-/* Tokenize usage specifications from 'source' */
-token_list_t tokenize_usage() {
-    token_list_t tokens;
-    const range_list_t usage_sections = this->source_ranges_for_section("Usage:");
-    for (size_t usage_idx = 0; usage_idx < usage_sections.size(); usage_idx++) {
-        const range_t &usage_range = usage_sections.at(usage_idx);
-        if (usage_range.empty()) {
-            continue;
-        }
-
-        /* The following are tokens:
-             [, ], (, ), |, ..., strings_without_spaces, <stuff in brackets>, newlines
-             A string_without_spaces abutting <stuff_in_brackets> like so:
-                foo<bar baz>
-             counts as only a single token.
-        */
-        const size_t start = usage_range.start, end = usage_range.end();
-        assert(end >= start);
-        bool within_brackets = false;
-        size_t bracket_start = npos;
-        size_t word_start = npos;
-
-        const token_t::type_t word_type = token_t::word;
-
-        const char_t *sc = source.c_str();
-
-        const char *options_shortcut = "[options]";
-        const size_t options_shortcut_len = strlen(options_shortcut);
-
-        for (size_t i=start; i < end;)
-        {
-            const char_t c = sc[i];
-            if (! within_brackets)
-            {
-                if (substr_equals(options_shortcut, sc + i, options_shortcut_len)) {
-                    // Some sort of parenthesis
-                    if (word_start != npos) {
-                        tokens.push_back(token_t(word_start, i - word_start, word_type));
-                        word_start = npos;
-                    }
-                    tokens.push_back(token_t(i, 1, token_t::options));
-                    i += options_shortcut_len;
-                } else if (contains("()[]|", c)) {
-                    // Some sort of parenthesis
-                    if (word_start != npos) {
-                        tokens.push_back(token_t(word_start, i - word_start, word_type));
-                        word_start = npos;
-                    }
-                    tokens.push_back(token_t(i, 1, c));
-                    i += 1;
-                } else if (contains(" \t\n", c)) {
-                    // Whitespace
-                    if (word_start != npos) {
-                        tokens.push_back(token_t(word_start, i - word_start, word_type));
-                        word_start = npos;
-                    }
-                    if (c == '\n') {
-                        // Only add a newline after a non-newline token. This keeps the parse tree a little cleaner.
-                        // That is, we swallow leading and consecutive newlines.
-                        if (! tokens.empty() && tokens.back().type != token_t::newline) {
-                            tokens.push_back(token_t(i, 1, token_t::newline));
-                        }
-                    }
-                    i += 1;
-                } else if (substr_equals("...", sc + i, 3)) {
-                    // Ellipsis
-                    if (word_start != npos) {
-                        tokens.push_back(token_t(word_start, i - word_start, word_type));
-                        word_start = npos;
-                    }
-                    tokens.push_back(token_t(i, 3, '.'));
-                    i += 3;
-                } else {
-                    // Normal char, or possibly bracket
-                    if (word_start == npos) {
-                        word_start = i;
-                    }
-                    if (c == '<') {
-                        within_brackets = true;
-                        bracket_start = i;
-                    }
-                    i += 1;
-                }
-            } else {
-                // Within brackets
-                if (c == '>') {
-                    within_brackets = false;
-                    bracket_start = npos;
-                }
-                i += 1;
-            }
-        }
-
-        if (within_brackets) {
-            append_error(&this->errors, bracket_start, "Unclosed bracket");
-        }
-
-        // grab trailing word
-        if (word_start != npos) {
-            tokens.push_back(token_t(word_start, end - word_start, word_type));
-            word_start = npos;
-        }
-    }
-    
-    /* Trim trailing newlines to clean up the parse tree. Note that we are careful to avoid creating leading newlines. */
-    while (! tokens.empty() && tokens.back().type == token_t::newline) {
-        tokens.resize(tokens.size() - 1); //trailing
-    }
-    return tokens;
-}
-
 /* Collects options, i.e. tokens of the form --foo */
 template<typename ENTRY_TYPE>
 option_list_t collect_options(const ENTRY_TYPE &entry) {
@@ -1170,32 +1072,6 @@ option_list_t collect_options(const ENTRY_TYPE &entry) {
         }
     }
     return resulting_options;
-}
-
-static bool char_is_valid_in_parameter(char_t c) {
-    const char *invalid = "|<>,= \t\n";
-    const char *end = invalid + strlen(invalid);
-    return std::find(invalid, end, c) == end;
-}
-
-static bool char_is_valid_in_variable(char_t c) {
-    const char *invalid = "-|,= \t";
-    const char *end = invalid + strlen(invalid);
-    return std::find(invalid, end, c) == end;
-}
-
-template<char T>
-static bool it_equals(char_t c) { return c == T; }
-
-template<typename T>
-static range_t scan_while(const string_t &str, range_t *remaining, T func) {
-    range_t result(remaining->start, 0);
-    while (result.end() < remaining->end() && func(str.at(result.end()))) {
-        result.length += 1;
-        remaining->start += 1;
-        remaining->length -= 1;
-    }
-    return result;
 }
 
 static option_t parse_option_from_string(const string_t &str, range_t *remaining, bool within_options_spec, error_list_t *errors) {
@@ -2183,8 +2059,16 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
 option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused_arguments) {
     bool log_stuff = false;
     
-    token_list_t tokens = this->tokenize_usage();
-    parse_context_t ctx(tokens);
+    const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
+    if (usage_ranges.empty()) {
+        append_error(&this->errors, npos, "Unable to find Usage: section");
+        return option_map_t();
+    } else if (usage_ranges.size() > 1) {
+        append_error(&this->errors, npos, "More than one Usage: section");
+        return option_map_t();
+    }
+    
+    parse_context_t ctx(this->source, usage_ranges.at(0));
     usage_t *tree = usage_t::parse(&ctx);
     
     if (! tree) {
@@ -2245,90 +2129,63 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
     return result;
 }
 
-// close the class
-CLOSE_DOCOPT_IMPL;
-
-std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
-    docopt_impl<std::string> impl(usage_doc, flags);
-    return impl.best_assignment(argv, out_unused_arguments);
-}
-
-std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
-    docopt_impl<std::wstring> impl(usage_doc, flags);
-    return impl.best_assignment(argv, out_unused_arguments);
-}
-
-// close the namespace
-CLOSE_DOCOPT_IMPL
-
 #if SIMPLE_TEST
-int main(void) {
-    using namespace docopt_fish;
+static int simple_test() {
     bool log_stuff = true;
     const std::string usage =
 #if 0
-        "Usage: \n"
-        "  naval_fate ship new <name>...\n"
-        "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
-        "  naval_fate.py ship shoot <x> <y>\n"
-        "  naval_fate.py stuff [options] <name>...\n"
-        "Options:\n"
-        "  -h --help  Show this screen\n"
-        "  -a, --all  List everything\n"
-        "  -h, --human-readable  Display in human-readable format\n"
-        "  -i <file>, --input <file>  Set input file\n";
+    "Usage: \n"
+    "  naval_fate ship new <name>...\n"
+    "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
+    "  naval_fate.py ship shoot <x> <y>\n"
+    "  naval_fate.py stuff [options] <name>...\n"
+    "Options:\n"
+    "  -h --help  Show this screen\n"
+    "  -a, --all  List everything\n"
+    "  -h, --human-readable  Display in human-readable format\n"
+    "  -i <file>, --input <file>  Set input file\n";
 #else
-        "usage: prog [options]\n"
-        "options:\n"
-        "    -a        Add\n"
-        "    -r        Remote\n"
-        "    -m <msg>  Message\n";
+    "usage: prog [options]\n"
+    "options:\n"
+    "    -a        All\n";
 #endif
-
-    docopt_impl<std::string> impl(usage, flags_default);
-    token_list_t tokens = impl.tokenize_usage();
     
-    if (log_stuff) {
-        fprintf(stderr, "%s\n", usage.c_str());
-        for (size_t i=0; i < tokens.size(); i++) {
-            const token_t &tok = tokens.at(i);
-            fprintf(stderr, "%lu: '%c' [%lu, %lu]\n", i, (char)tok.type, tok.range.start, tok.range.length);
-        }
-    }
-
-    parse_context_t ctx(tokens);
-    usage_t *tree = usage_t::parse(&ctx);
-
+    docopt_impl<std::string> impl(usage, flags_default);
+    
+    const range_list_t usage_ranges = impl.source_ranges_for_section("Usage:");
+    docopt_impl<std::string>::parse_context_t ctx(usage, usage_ranges.at(0));
+    docopt_impl<std::string>::usage_t *tree = usage_t::parse(&ctx);
+    
     if (tree == NULL) {
         fprintf(stderr, "failed to parse usage\n");
         return EXIT_FAILURE;
     }
-
-
+    
+    
     // Extract options from the usage sections
     option_list_t usage_options = impl.collect_options(*tree);
-
+    
     // Extract options from the options section
     option_list_t shortcut_options = impl.parse_options_spec(&impl.errors);
-
+    
     // Combine these into a single list
     option_list_t all_options;
     all_options.reserve(usage_options.size() + shortcut_options.size());
     all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
     all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
-
+    
     // Dump them
     if (log_stuff) {
         for (size_t i=0; i < all_options.size(); i++) {
             fprintf(stderr, "Option %lu: %s\n", i, all_options.at(i).describe(usage).c_str());
         }
     }
-
+    
     if (log_stuff) {
-        std::string dumped = node_dumper_t<std::string>::dump_tree(*tree, usage);
+        std::string dumped = node_dumper_t::dump_tree(*tree, usage);
         fprintf(stderr, "%s\n", dumped.c_str());
     }
-
+    
     std::vector<std::string> argv;
 #if 0
     argv.push_back("program_name");
@@ -2358,26 +2215,23 @@ int main(void) {
 #else
     argv.push_back("prog");
     argv.push_back("-a");
-    argv.push_back("-r");
-    argv.push_back("-m");
-    argv.push_back("Hello");
 #endif
-
+    
     docopt_impl<std::string>::positional_argument_list_t positionals;
     docopt_impl<std::string>::resolved_option_list_t resolved_options;
     impl.separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
-
+    
     for (size_t i=0; i < positionals.size(); i++) {
         fprintf(stderr, "positional %lu: %s\n", i, argv.at(positionals.at(i).idx_in_argv).c_str());
     }
-
+    
     for (size_t i=0; i < resolved_options.size(); i++) {
         const docopt_impl<std::string>::resolved_option_t &opt = resolved_options.at(i);
         range_t range = opt.option.name;
         const std::string name = std::string(usage, range.start, range.length);
         //fprintf(stderr, "Resolved %lu: %s (%s) <%lu, %lu>\n", i, name.c_str(), opt.value.c_str_or_empty(), opt.option.name.start, opt.option.name.length);
     }
-
+    
     index_list_t unused_arguments;
     impl.match_argv(argv, positionals, resolved_options, shortcut_options, all_options, *tree, &unused_arguments);
     
@@ -2385,9 +2239,32 @@ int main(void) {
         size_t arg_idx = unused_arguments.at(i);
         fprintf(stderr, "Unused argument: <%s>\n", argv.at(arg_idx).c_str());
     }
-
+    
     delete tree;
-
     return 0;
+}
+#endif
+
+// close the class
+CLOSE_DOCOPT_IMPL;
+
+std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
+    docopt_impl<std::string> impl(usage_doc, flags);
+    return impl.best_assignment(argv, out_unused_arguments);
+}
+
+std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
+    docopt_impl<std::wstring> impl(usage_doc, flags);
+    return impl.best_assignment(argv, out_unused_arguments);
+}
+
+// close the namespace
+CLOSE_DOCOPT_IMPL
+
+#if SIMPLE_TEST
+int main(void) {
+    using namespace docopt_fish;
+    docopt_impl<std::string>::simple_test();
+    
 }
 #endif
