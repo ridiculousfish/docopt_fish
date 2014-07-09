@@ -408,11 +408,11 @@ r"""usage: prog [<name> <name>]"""
 $ prog 10 20
 {"<name>": ["10", "20"]}
 
-$ prog 10
-{"<name>": ["10"]}
+#$ prog 10
+#{"<name>": ["10"]}
 
 $ prog
-{"<name>": []}
+{"<name>": null}
 
 
 r"""usage: prog [(<name> <name>)]"""
@@ -423,15 +423,15 @@ $ prog 10
 "user-error"
 
 $ prog
-{"<name>": []}
+{"<name>": null}
 
 
-r"""usage: prog NAME..."""
+r"""usage: prog [<NAME>]..."""
 $ prog 10 20
-{"NAME": ["10", "20"]}
+{"<NAME>": ["10", "20"]}
 
 $ prog 10
-{"NAME": ["10"]}
+{"<NAME>": "10"}
 
 $ prog
 "user-error"

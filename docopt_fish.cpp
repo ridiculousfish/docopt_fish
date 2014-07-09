@@ -263,19 +263,19 @@ typedef typename string_t::value_type char_t;
 #pragma mark -
 
 static bool char_is_valid_in_parameter(char_t c) {
-    const char *invalid = "|<>,=()[] \t\n";
+    const char *invalid = ".|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
 static bool char_is_valid_in_variable(char_t c) {
-    const char *invalid = "|<>,=()[] \t\n";
+    const char *invalid = ".|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
 static bool char_is_valid_in_word(char_t c) {
-    const char *invalid = "|()[],= \t\n";
+    const char *invalid = ".|()[],= \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
@@ -326,22 +326,23 @@ static range_t scan_while(const string_t &str, range_t *remaining, T func) {
 /* Usage grammar:
  
  usage = <empty> |
- WORD opt_expression_list usage
+         WORD usage |
+         WORD alternation_list usage
+ 
+ alternation_list = expression_list or_continuation
+ 
+ or_continuation = <empty> |
+                   VERT_BAR alternation_list
  
  expression_list = expression opt_expression_list
  
  opt_expression_list = <empty> |
- expression_list
+                       expression_list
  
- expression = compound_clause or_continuation
- 
- or_continuation = <empty> |
- VERT_BAR expression
- 
- compound_clause = simple_clause opt_ellipsis |
- OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
- OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
- options_shortcut
+ expression = simple_clause opt_ellipsis |
+              OPEN_PAREN alternation_list CLOSE_PAREN opt_ellipsis |
+              OPEN_SQUARE alternation_list CLOSE_SQUARE opt_ellipsis
+              options_shortcut
  
  simple_clause = WORD
  
@@ -352,11 +353,11 @@ static range_t scan_while(const string_t &str, range_t *remaining, T func) {
  
  */
 
+struct alternation_list;
 struct expression_list_t;
 struct opt_expression_list_t;
 struct expression_t;
 struct or_continuation_t;
-struct compound_clause_t;
 struct simple_clause_t;
 struct opt_ellipsis_t;
 
@@ -636,6 +637,22 @@ struct expression_list_t : public base_t {
     unsigned unindent() const { return 1*0; }
 };
 
+struct alternation_list_t : public base_t {
+    auto_ptr<expression_list_t> expression_list;
+    auto_ptr<or_continuation_t> or_continuation;
+    
+    alternation_list_t(auto_ptr<expression_list_t> el, auto_ptr<or_continuation_t> o) : expression_list(el), or_continuation(o) {}
+    static alternation_list_t *parse(parse_context_t *ctx) { return parse_2<alternation_list_t, expression_list_t, or_continuation_t>(ctx); }
+    std::string name() const { return "alternation_list"; }
+    unsigned unindent() const { return 1*0; }
+    
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(expression_list);
+        v->visit(or_continuation);
+    }
+
+};
 
 struct opt_expression_list_t : public base_t {
     auto_ptr<expression_list_t> expression_list;
@@ -657,14 +674,17 @@ struct opt_expression_list_t : public base_t {
 
 struct usage_t : public base_t {
     token_t prog_name;
-    auto_ptr<opt_expression_list_t> opt_expression_list;
+    auto_ptr<alternation_list_t> alternation_list;
     auto_ptr<usage_t> next_usage;
     
     // usage = <empty>
     usage_t() : base_t(0) {}
+
+    // usage = word usage
+    usage_t(const token_t name, auto_ptr<usage_t> next) : base_t(1), prog_name(name), next_usage(next) {}
     
-    // usage = word expression_list usage
-    usage_t(token_t t, auto_ptr<opt_expression_list_t> c, auto_ptr<usage_t> next) : base_t(1), prog_name(t), opt_expression_list(c), next_usage(next) {}
+    // usage = word alternation_list usage
+    usage_t(token_t t, auto_ptr<alternation_list_t> c, auto_ptr<usage_t> next) : base_t(2), prog_name(t), alternation_list(c), next_usage(next) {}
     
     static usage_t *parse(parse_context_t *ctx) {
         // If we reach the end, we return an empty usage
@@ -677,15 +697,19 @@ struct usage_t : public base_t {
         // TODO: generate error for missing word name
         token_t word;
         if (ctx->scan_word(&word)) {
-            auto_ptr<opt_expression_list_t> el(opt_expression_list_t::parse(ctx));
-            if (el.get()) {
-                // Consume as many newlines as we can, and then try to generate the tail
-                while (ctx->scan('\n')) {
-                    continue;
-                }
-                auto_ptr<usage_t> next(usage_t::parse(ctx));
-                result = new usage_t(word, el, next);
+            auto_ptr<alternation_list_t> el(alternation_list_t::parse(ctx));
+            // Consume as many newlines as we can, and then try to generate the tail
+            while (ctx->scan('\n')) {
+                continue;
             }
+            auto_ptr<usage_t> next(usage_t::parse(ctx));
+            
+            if (el.get()) {
+                result = new usage_t(word, el, next);
+            } else {
+                result = new usage_t(word, next);
+            }
+
         }
         return result;
     }
@@ -695,44 +719,28 @@ struct usage_t : public base_t {
     template<typename T>
     void visit_children(T *v) const {
         v->visit(prog_name);
-        v->visit(opt_expression_list);
+        v->visit(alternation_list);
         v->visit(next_usage);
-    }
-};
-
-struct expression_t : public base_t {
-    auto_ptr<compound_clause_t> compound_clause;
-    auto_ptr<or_continuation_t> or_continuation;
-    
-    // expression = compound_clause or_continuation
-    expression_t(auto_ptr<compound_clause_t> c, auto_ptr<or_continuation_t> oc) : compound_clause(c), or_continuation(oc) {}
-    static expression_t *parse(parse_context_t *ctx) { return parse_2<expression_t, compound_clause_t, or_continuation_t>(ctx); }
-    std::string name() const { return "expression"; }
-    
-    template<typename T>
-    void visit_children(T *v) const {
-        v->visit(compound_clause);
-        v->visit(or_continuation);
     }
 };
 
 struct or_continuation_t : public base_t {
     token_t vertical_bar;
-    auto_ptr<expression_t> expression;
+    auto_ptr<alternation_list_t> alternation_list;
     
     // or_continuation = <empty>
     or_continuation_t() {}
     
     // or_continuation =  VERT_BAR or_clause
-    or_continuation_t(token_t b, auto_ptr<expression_t> c) : base_t(1), vertical_bar(b), expression(c) {}
+    or_continuation_t(token_t b, auto_ptr<alternation_list_t> al) : base_t(1), vertical_bar(b), alternation_list(al) {}
     
     static or_continuation_t *parse(parse_context_t *ctx) {
         or_continuation_t *result = NULL;
         token_t bar;
         if (ctx->scan('|', &bar)) {
-            auto_ptr<expression_t> c(expression_t::parse(ctx));
-            if (c.get()) {
-                result = new or_continuation_t(bar, c);
+            auto_ptr<alternation_list_t> al(alternation_list_t::parse(ctx));
+            if (al.get()) {
+                result = new or_continuation_t(bar, al);
             } else {
                 // TODO: generate an error about trailing bar
                 fprintf(stderr, "Trailing bar\n");
@@ -748,7 +756,7 @@ struct or_continuation_t : public base_t {
     template<typename T>
     void visit_children(T *v) const {
         v->visit(vertical_bar);
-        v->visit(expression);
+        v->visit(alternation_list);
     }
 };
 
@@ -853,13 +861,13 @@ struct simple_clause_t : public base_t {
     
 };
 
-struct compound_clause_t : public base_t {
+struct expression_t : public base_t {
     // production 0
     auto_ptr<simple_clause_t> simple_clause;
     
     // Collapsed for productions 1 and 2
     token_t open_token;
-    auto_ptr<expression_list_t> expression_list;
+    auto_ptr<alternation_list_t> alternation_list;
     token_t close_token;
     
     // Collapsed for all
@@ -867,21 +875,21 @@ struct compound_clause_t : public base_t {
     
     auto_ptr<options_shortcut_t> options_shortcut;
     
-    //compound_clause = simple_clause
-    compound_clause_t(auto_ptr<simple_clause_t> c, auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
+    //expression = simple_clause
+    expression_t(auto_ptr<simple_clause_t> c, auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
     
-    //compound_clause = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
-    //compound_clause = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
-    compound_clause_t(token_t a, bool is_paren, auto_ptr<expression_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
-    : base_t(is_paren ? 1  : 2), open_token(a), expression_list(el), close_token(b), opt_ellipsis(e)
+    //expression = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
+    //expression = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
+    expression_t(token_t a, bool is_paren, auto_ptr<alternation_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
+    : base_t(is_paren ? 1  : 2), open_token(a), alternation_list(el), close_token(b), opt_ellipsis(e)
     {}
     
-    //compound_clause = options_shortcut
-    compound_clause_t(auto_ptr<options_shortcut_t> os) : base_t(3), options_shortcut(os)
+    //expression = options_shortcut
+    expression_t(auto_ptr<options_shortcut_t> os) : base_t(3), options_shortcut(os)
     {}
     
-    static compound_clause_t *parse(parse_context_t * ctx) {
-        compound_clause_t *result = NULL;
+    static expression_t *parse(parse_context_t * ctx) {
+        expression_t *result = NULL;
         if (ctx->is_at_end()) {
             return NULL;
         }
@@ -892,10 +900,10 @@ struct compound_clause_t : public base_t {
         if (ctx->scan("[options]", &token)) {
             auto_ptr<options_shortcut_t> shortcut(options_shortcut_t::parse(ctx));
             if (shortcut.get()) {
-                result = new compound_clause_t(shortcut);
+                result = new expression_t(shortcut);
             }
         } else if (ctx->scan('(', &token) || ctx->scan('[', &token)) {
-            auto_ptr<expression_list_t> contents(expression_list_t::parse(ctx));
+            auto_ptr<alternation_list_t> contents(alternation_list_t::parse(ctx));
             if (contents.get()) {
                 char_t c = ctx->source->at(token.range.start);
                 assert(c == char_t('(') || c == char_t('['));
@@ -904,32 +912,32 @@ struct compound_clause_t : public base_t {
                 if (ctx->scan(char_t(is_paren ? ')' : ']'), &close_token)) {
                     auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
                     assert(ellipsis.get() != NULL); // should never fail
-                    result = new compound_clause_t(token, is_paren, contents, close_token, ellipsis);
+                    result = new expression_t(token, is_paren, contents, close_token, ellipsis);
                 } else {
                     // TODO: generate error of unclosed paren
                 }
             }
-        } else if (ctx->scan("...", &token) || ctx->scan('|', &token)) {
-            // Indicates leading ellipsis / bar
+        } else if (ctx->scan("...", &token)) {
+            // Indicates leading ellipsis
             // TODO: generate error
         } else {
             auto_ptr<simple_clause_t> simple_clause(simple_clause_t::parse(ctx));
             if (simple_clause.get()) {
                 auto_ptr<opt_ellipsis_t> ellipsis(opt_ellipsis_t::parse(ctx));
                 assert(ellipsis.get() != NULL); // should never fail
-                result = new compound_clause_t(simple_clause, ellipsis);
+                result = new expression_t(simple_clause, ellipsis);
             }
         }
         
         return result;
     }
     
-    std::string name() const { return "compound_clause"; }
+    std::string name() const { return "expression"; }
     template<typename T>
     void visit_children(T *v) const {
         v->visit(simple_clause);
         v->visit(open_token);
-        v->visit(expression_list);
+        v->visit(alternation_list);
         v->visit(close_token);
         v->visit(opt_ellipsis);
         v->visit(options_shortcut);
@@ -1882,10 +1890,27 @@ match_state_list_t match(const usage_t &node, match_state_t *state, const match_
         // todo: error handling
         return no_match();
     }
+    
+    if (node.prog_name.empty()) {
+        // This is the final terminating usage. It does not match anything.
+        return no_match();
+    }
+    
     /* Must duplicate the state for the next usage */
     match_state_t copied_state = *state;
+    
+    // Program name
     ctx->acquire_next_positional(state);
-    match_state_list_t main_branch = try_match(node.opt_expression_list, state, ctx);
+    
+    match_state_list_t main_branch;
+    if (node.alternation_list.get()) {
+        // Match against our contents
+        main_branch = try_match(node.alternation_list, state, ctx);
+    } else {
+        // Usage is just the program name
+        // Merely append this state
+        state_destructive_append_to(state, &main_branch);
+    }
     match_state_list_t next_branch = try_match(node.next_usage, &copied_state, ctx);
     state_list_destructive_append_to(&next_branch, &main_branch);
     return main_branch;
@@ -1906,10 +1931,10 @@ match_state_list_t match(const opt_expression_list_t &node, match_state_t *state
     }
 }
 
-match_state_list_t match(const expression_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const alternation_list_t &node, match_state_t *state, const match_context_t *ctx) {
     // Must duplicate the state for the second branch
     match_state_t copied_state = *state;
-    match_state_list_t result1 = try_match(node.compound_clause, state, ctx);
+    match_state_list_t result1 = try_match(node.expression_list, state, ctx);
     match_state_list_t result2 = try_match(node.or_continuation, &copied_state, ctx);
 
     // Combine the two lists into result1
@@ -1918,10 +1943,10 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
 }
 
 match_state_list_t match(const or_continuation_t &node, match_state_t *state, const match_context_t *ctx) {
-    return try_match(node.expression, state, ctx);
+    return try_match(node.alternation_list, state, ctx);
 }
 
-match_state_list_t match(const compound_clause_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const expression_t &node, match_state_t *state, const match_context_t *ctx) {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
     match_state_list_t result;
@@ -1954,11 +1979,11 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
                Same algorithm as the simple clause above.
                TODO: this may loop forever with states that do not consume any values, e.g. ([foo])...
             */
-            result = try_match(node.expression_list, state, ctx);
+            result = try_match(node.alternation_list, state, ctx);
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
                 while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.expression_list, intermediate_states, ctx);
+                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx);
                     result.insert(result.end(), next_states.begin(), next_states.end());
                     intermediate_states.swap(next_states);
                 }
@@ -1972,7 +1997,7 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
                Same algorithm as the simple clause above, except that we also append the initial state as a not-taken branch.
             */
             match_state_t not_taken_branch = *state;
-            result = try_match(node.expression_list, state, ctx);
+            result = try_match(node.alternation_list, state, ctx);
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
                 while (! intermediate_states.empty()) {
@@ -2258,20 +2283,8 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 static int simple_test() {
     bool log_stuff = true;
     const std::string usage =
-#if 0
-    "Usage: \n"
-    "  naval_fate ship new <name>...\n"
-    "  naval_fate mine (set|remove) <x> <y> [--moored|--drifting]\n"
-    "  naval_fate.py ship shoot <x> <y>\n"
-    "  naval_fate.py stuff [options] <name>...\n"
-    "Options:\n"
-    "  -h --help  Show this screen\n"
-    "  -a, --all  List everything\n"
-    "  -h, --human-readable  Display in human-readable format\n"
-    "  -i <file>, --input <file>  Set input file\n";
-#else
-    "usage: prog <kind> [<name> <type>]\n";
-#endif
+    "usage: prog [<NAME>]..."
+    ;
     
     docopt_impl<std::string> impl(usage, flags_default);
     
@@ -2314,36 +2327,10 @@ static int simple_test() {
     }
     
     std::vector<std::string> argv;
-#if 0
-    argv.push_back("program_name");
-    argv.push_back("stuff");
-    argv.push_back("--human-readable");
-    argv.push_back("--input");
-    argv.push_back("some_file");
-    argv.push_back("some_name");
-    argv.push_back("another_name");
-#elif 0
-    argv.push_back("ship");
-    argv.push_back("new");
-    argv.push_back("alpha");
-    argv.push_back("beta");
-    argv.push_back("gamma");
-#elif 0
-    argv.push_back("mine");
-    argv.push_back("set");
-    argv.push_back("10");
-    argv.push_back("20");
-    argv.push_back("--moored");
-#elif 0
-    argv.push_back("ship");
-    argv.push_back("shoot");
-    argv.push_back("3");
-    argv.push_back("5");
-#else
     argv.push_back("prog");
     argv.push_back("10");
     argv.push_back("20");
-#endif
+
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
     docopt_impl<std::string>::resolved_option_list_t resolved_options;
