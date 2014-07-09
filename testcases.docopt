@@ -492,13 +492,13 @@ options: --bar
 
 """
 $ prog 10
-{"<NAME>": ["10"], "--foo": false, "--bar": false}
+{"<NAME>": "10", "--foo": false, "--bar": false}
 
 $ prog 10 20
 {"<NAME>": ["10", "20"], "--foo": false, "--bar": false}
 
 $ prog --foo --bar
-{"<NAME>": [], "--foo": true, "--bar": true}
+{"<NAME>": null, "--foo": true, "--bar": true}
 
 
 r"""Naval Fate.

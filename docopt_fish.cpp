@@ -189,6 +189,23 @@ struct option_t {
         return ! value.empty();
     }
 
+    // Returns true if the options have the same name, as determined by their respective ranges in src.
+    template<typename string_t>
+    bool has_same_name(const option_t &opt2, const string_t &src) const {
+        bool result = false;
+        if (this->name.length == opt2.name.length) {
+            // Name lengths must be the same
+            if (this->name == opt2.name) {
+                // Identical ranges
+                result = true;
+            } else {
+                result = (0 == src.compare(this->name.start, this->name.length, src, opt2.name.start, opt2.name.length));
+            }
+        }
+    return result;
+
+    }
+
     bool operator==(const option_t &rhs) const {
         return this->type == rhs.type &&
                this->separator == rhs.separator &&
@@ -275,7 +292,7 @@ static bool char_is_valid_in_variable(char_t c) {
 }
 
 static bool char_is_valid_in_word(char_t c) {
-    const char *invalid = ".|()[],= \t\n";
+    const char *invalid = ".|()[], \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
@@ -365,9 +382,10 @@ struct opt_ellipsis_t;
 struct parse_context_t {
      // Note unowned pointer reference. A parse context is stack allocated and transient.
     const string_t *source;
+    const option_list_t *shortcut_options;
     range_t remaining_range;
     
-    parse_context_t(const string_t &src, const range_t &usage_range) : source(&src), remaining_range(usage_range)
+    parse_context_t(const string_t &src, const option_list_t &shortcuts, const range_t &usage_range) : source(&src), shortcut_options(&shortcuts), remaining_range(usage_range)
     {}
     
     /* Consume leading whitespace, except newlines, which are meaningful and therefore tokens in their own right */
@@ -687,6 +705,11 @@ struct usage_t : public base_t {
     usage_t(token_t t, auto_ptr<alternation_list_t> c, auto_ptr<usage_t> next) : base_t(2), prog_name(t), alternation_list(c), next_usage(next) {}
     
     static usage_t *parse(parse_context_t *ctx) {
+        // Suck up leading newlines
+        while (ctx->scan('\n')) {
+            ;
+        }
+        
         // If we reach the end, we return an empty usage
         if (ctx->is_at_end()) {
             return new usage_t();
@@ -822,13 +845,20 @@ struct simple_clause_t : public base_t {
              
             But requiring a required positional after a flag seems very unlikely, so in this version we always use interpretation #2. We do this by treating it as one token '-m <msg>'. Note this token contains a space.
              
-             The exception is if a delimeter is found, e.g.:
+             One exception is if a delimeter is found, e.g.:
              
              "usage: prog [-m=<foo> <msg>]"
              
              Now <foo> is the value of the option m, and <msg> is positional.
              
-             Also, if you really want interpretation #1, you can write:
+             The second exception is if the option is also found in the Options: section without a variable:
+             
+                usage: prog -m <msg>
+                options: -m
+            
+            Then we ignore the option.
+             
+            Also, if you really want interpretation #1, you can use parens:
              
                "usage: prog [-m (<msg>)]"
             */
@@ -841,11 +871,23 @@ struct simple_clause_t : public base_t {
                     // Looks like an option without a separator. See if the next token is a variable
                     range_t next = ctx->peek_word().range;
                     if (next.length > 2 && src.at(next.start) == '<' && src.at(next.end() - 1) == '>') {
-                        // It's a variable
-                        token_t variable;
-                        bool scanned = ctx->scan_word(&variable);
-                        assert(scanned); // Should always succeed, since we peeked at the word
-                        word.range.merge(variable.range);
+                        // It's a variable. See if we have a presence in options.
+                        const option_t *opt_from_options_section = NULL;
+                        for (size_t i=0; i < ctx->shortcut_options->size(); i++) {
+                            const option_t &test_op = ctx->shortcut_options->at(i);
+                            if (opt.has_same_name(test_op, src)) {
+                                opt_from_options_section = &test_op;
+                                break;
+                            }
+                        }
+                        bool options_section_implies_no_value = (opt_from_options_section && opt_from_options_section->value.empty());
+                        
+                        if (! options_section_implies_no_value) {
+                            token_t variable;
+                            bool scanned = ctx->scan_word(&variable);
+                            assert(scanned); // Should always succeed, since we peeked at the word
+                            word.range.merge(variable.range);
+                        }
                     }
                 }
             }
@@ -962,8 +1004,24 @@ typedef std::vector<error_t> error_list_t;
 public:
 const string_t source;
 const parse_flags_t parse_flags;
-docopt_impl(const string_t &s, parse_flags_t f) : source(s), parse_flags(f)
-{}
+docopt_impl(const string_t &s, parse_flags_t f) : source(s), parse_flags(f){}
+
+#pragma mark -
+#pragma mark Instance Variables
+#pragma mark -
+
+/* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
+option_list_t shortcut_options;
+
+/* The list of options parsed from the "Options:" section and "Usage:" sections.  */
+option_list_t all_options;
+
+/* All of the variables that appear (like <kn>) from the "Usage:" sections */
+range_list_t all_variables;
+
+/* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
+range_list_t all_commands;
+
 
 /* Helper function to make a string (narrow or wide) from a C string */
 static string_t string_from_narrow_string(const char *s) {
@@ -1124,8 +1182,10 @@ void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_o
     for (size_t i=0; i < nodes.size(); i++) {
         const token_t &tok = nodes.at(i)->word;
         if (this->token_substr_equals(tok, "-", 1)) {
+            // It's an option
             out_options->push_back(parse_option_from_string(this->source, tok.range, &this->errors));
         } else if (this->token_substr_equals(tok, "<", 1)) {
+            // It's a variable
             out_variables->push_back(tok.range);
         }
     }
@@ -1404,17 +1464,7 @@ option_list_t parse_options_spec(error_list_t *errors) const {
 
 /* Returns true if the two options have the same name */
 bool options_have_same_name(const option_t &opt1, const option_t &opt2) const {
-    bool result = false;
-    if (opt1.name.length == opt2.name.length) {
-        // Name lengths must be the same
-        if (opt1.name == opt2.name) {
-            // Identical ranges
-            result = true;
-        } else {
-            result = (0 == this->source.compare(opt1.name.start, opt1.name.length, this->source, opt2.name.start, opt2.name.length));
-        }
-    }
-    return result;
+    return opt1.has_same_name(opt2, this->source);
 }
 
 /* Given a list of options, verify that any duplicate options are in agreement, and remove all but one. TODO: make this not N^2. */
@@ -1774,7 +1824,6 @@ struct match_context_t {
     /* Note: these are stored references. Match context objects are expected to be transient and stack-allocated. */
     const positional_argument_list_t &positionals;
     const resolved_option_list_t &resolved_options;
-    const option_list_t &shortcut_options;
     const string_list_t &argv;
     
 
@@ -1835,7 +1884,7 @@ struct match_context_t {
         return positionals.at(state->next_positional_index++);
     }
 
-    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const option_list_t &sco, const string_list_t &av) : positionals(p), resolved_options(r), shortcut_options(sco), argv(av)
+    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : positionals(p), resolved_options(r), argv(av)
     {}
 };
 
@@ -2014,7 +2063,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
         case 3:
         {
             // This is the [options] clause. It does not have ellipsis.
-            result = this->match_options(ctx->shortcut_options, false /* don't require match */, state, ctx);
+            result = this->match_options(this->shortcut_options, false /* don't require match */, state, ctx);
             break;
         }
 
@@ -2034,7 +2083,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, bool requi
     for (size_t j=0; j < options_in_doc.size(); j++) {
         const option_t opt_in_doc = options_in_doc.at(j);
 
-        // Find the matching option from the option list
+        // Find the matching option from the resolved option list
         const resolved_option_t *resolved_opt = NULL;
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
             const resolved_option_t *opt_in_argv = &ctx->resolved_options.at(i);
@@ -2081,7 +2130,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
             state_destructive_append_to(state, &result);
         }
     } else if (first_char == char_t('-')) {
-        // Option
+        // Option. Use match_options() on an array of 1.
         option_list_t options_in_doc;
         options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
         result = this->match_options(options_in_doc, true /* require_match */, state, ctx);
@@ -2139,8 +2188,8 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
 }
 
 /* Matches argv */
-option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options, const option_list_t &all_options, const range_list_t &all_variables, const usage_t &tree, index_list_t *out_unused_arguments) {
-    match_context_t ctx(positionals, resolved_options, shortcut_options, argv);
+option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const range_list_t &all_variables, const usage_t &tree, index_list_t *out_unused_arguments) {
+    match_context_t ctx(positionals, resolved_options, argv);
     match_state_t init_state;
     match_state_list_t result = match(tree, &init_state, &ctx);
 
@@ -2202,9 +2251,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
     }
 }
 
-option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused_arguments) {
-    bool log_stuff = false;
-    
+option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused_arguments, bool log_stuff = false) {
     const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
     if (usage_ranges.empty()) {
         append_error(&this->errors, npos, "Unable to find Usage: section");
@@ -2213,8 +2260,12 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
         append_error(&this->errors, npos, "More than one Usage: section");
         return option_map_t();
     }
+
+    // Extract options from the options section
+    this->shortcut_options = this->parse_options_spec(&this->errors);
+    this->uniqueize_options(&this->shortcut_options, &this->errors);
     
-    parse_context_t ctx(this->source, usage_ranges.at(0));
+    parse_context_t ctx(this->source, this->shortcut_options, usage_ranges.at(0));
     usage_t *tree = usage_t::parse(&ctx);
     
     if (! tree) {
@@ -2227,15 +2278,11 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
     range_list_t all_variables;
     this->collect_options_and_variables(*tree, &usage_options, &all_variables);
 
-    // Extract options from the options section
-    option_list_t shortcut_options = this->parse_options_spec(&this->errors);
-    this->uniqueize_options(&shortcut_options, &this->errors);
-
     // Combine these into a single list
     option_list_t all_options;
-    all_options.reserve(usage_options.size() + shortcut_options.size());
+    all_options.reserve(usage_options.size() + this->shortcut_options.size());
     all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
-    all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
+    all_options.insert(all_options.end(), this->shortcut_options.begin(), this->shortcut_options.end());
     this->uniqueize_options(&all_options, &this->errors);
 
     // Dump them
@@ -2274,89 +2321,58 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
         }
     }
 
-    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, all_options, all_variables, *tree, out_unused_arguments);
+    option_map_t result = this->match_argv(argv, positionals, resolved_options, all_options, all_variables, *tree, out_unused_arguments);
     delete tree;
     return result;
 }
 
 #if SIMPLE_TEST
 static int simple_test() {
-    bool log_stuff = true;
     const std::string usage =
-    "usage: prog (<NAME> | --foo <NAME>)\n"
-    "options: --foo \n"
+#if 0
+    "Usage:\n"
+    "  prog --speed=<kn>\n"
+    ;
+#else
+    "Naval Fate.\n"
+    "\n"
+    "Usage:\n"
+    "  prog ship new <name>...\n"
+    "  prog ship [<name>] move <x> <y> [--speed=<kn>]\n"
+    "  prog ship shoot <x> <y>\n"
+    "  prog mine (set|remove) <x> <y> [--moored|--drifting]\n"
+    "  prog -h | --help\n"
+    "  prog --version\n"
+    "\n"
+    "Options:\n"
+    "  -h --help     Show this screen.\n"
+    "  --version     Show version.\n"
+    "  --speed=<kn>  Speed in knots [default: 10].\n"
+    "  --moored      Mored (anchored) mine.\n"
+    "  --drifting    Drifting mine.\n"
+#endif
     ;
     
+    const char *args[] = {
+#if 0
+        "prog", "--speed=5"
+#else
+        "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
+#endif
+    };
+    
+    size_t arg_count = sizeof args / sizeof *args;
+    std::vector<std::string> argv(args, args + arg_count);
+    
     docopt_impl<std::string> impl(usage, flags_default);
-    
-    const range_list_t usage_ranges = impl.source_ranges_for_section("Usage:");
-    docopt_impl<std::string>::parse_context_t ctx(usage, usage_ranges.at(0));
-    docopt_impl<std::string>::usage_t *tree = usage_t::parse(&ctx);
-    
-    if (tree == NULL) {
-        fprintf(stderr, "failed to parse usage\n");
-        return EXIT_FAILURE;
-    }
-    
-    
-    // Extract options from the usage sections
-    option_list_t usage_options;
-    range_list_t all_variables;
-    impl.collect_options_and_variables(*tree, &usage_options, &all_variables);
-    
-    // Extract options from the options section
-    option_list_t shortcut_options = impl.parse_options_spec(&impl.errors);
-    impl.uniqueize_options(&shortcut_options, &impl.errors);
-    
-    // Combine these into a single list
-    option_list_t all_options;
-    all_options.reserve(usage_options.size() + shortcut_options.size());
-    all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
-    all_options.insert(all_options.end(), shortcut_options.begin(), shortcut_options.end());
-    impl.uniqueize_options(&all_options, &impl.errors);
-    
-    // Dump them
-    if (log_stuff) {
-        for (size_t i=0; i < all_options.size(); i++) {
-            fprintf(stderr, "Option %lu: %s\n", i, all_options.at(i).describe(usage).c_str());
-        }
-    }
-    
-    if (log_stuff) {
-        std::string dumped = node_dumper_t::dump_tree(*tree, usage);
-        fprintf(stderr, "%s\n", dumped.c_str());
-    }
-    
-    std::vector<std::string> argv;
-    argv.push_back("prog");
-    argv.push_back("--foo");
-    argv.push_back("10");
-
-    
-    docopt_impl<std::string>::positional_argument_list_t positionals;
-    docopt_impl<std::string>::resolved_option_list_t resolved_options;
-    impl.separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
-    
-    for (size_t i=0; i < positionals.size(); i++) {
-        fprintf(stderr, "positional %lu: %s\n", i, argv.at(positionals.at(i).idx_in_argv).c_str());
-    }
-    
-    for (size_t i=0; i < resolved_options.size(); i++) {
-        const docopt_impl<std::string>::resolved_option_t &opt = resolved_options.at(i);
-        range_t range = opt.option.name;
-        const std::string name = std::string(usage, range.start, range.length);
-        //fprintf(stderr, "Resolved %lu: %s (%s) <%lu, %lu>\n", i, name.c_str(), opt.value.c_str_or_empty(), opt.option.name.start, opt.option.name.length);
-    }
-    
-    index_list_t unused_arguments;
-    impl.match_argv(argv, positionals, resolved_options, shortcut_options, all_options, all_variables, *tree, &unused_arguments);
+    std::vector<size_t> unused_arguments;
+    option_map_t match = impl.best_assignment(argv, &unused_arguments, true);
     
     for (size_t i=0; i < unused_arguments.size(); i++) {
         size_t arg_idx = unused_arguments.at(i);
         fprintf(stderr, "Unused argument: <%s>\n", argv.at(arg_idx).c_str());
     }
     
-    delete tree;
     return 0;
 }
 #endif
