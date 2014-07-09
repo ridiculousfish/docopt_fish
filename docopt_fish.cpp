@@ -1809,12 +1809,13 @@ typedef std::vector<option_map_t> option_map_list_t;
 struct match_state_t {
     option_map_t option_map;
     size_t next_positional_index;
+    std::vector<bool> consumed_options;
 
-    match_state_t() : next_positional_index(0)
-    {}
+    match_state_t() : next_positional_index(0) {}
 
     void swap(match_state_t &rhs) {
         this->option_map.swap(rhs.option_map);
+        this->consumed_options.swap(rhs.consumed_options);
         std::swap(this->next_positional_index, rhs.next_positional_index);
     }
 };
@@ -2095,26 +2096,30 @@ match_state_list_t match_options(const option_list_t &options_in_doc, bool requi
         const option_t opt_in_doc = options_in_doc.at(j);
 
         // Find the matching option from the resolved option list (i.e. argv)
-        const resolved_option_t *resolved_opt = NULL;
+        size_t resolved_opt_idx = npos;
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
-            const resolved_option_t *opt_in_argv = &ctx->resolved_options.at(i);
-            if (options_have_same_name(opt_in_argv->option, opt_in_doc)) {
-                resolved_opt = opt_in_argv;
-                break;
+            // Skip ones that have already been consumed
+            if (! state->consumed_options.at(i)) {
+                if (options_have_same_name(ctx->resolved_options.at(i).option, opt_in_doc)) {
+                    resolved_opt_idx = i;
+                    break;
+                }
             }
         }
 
-        if (resolved_opt != NULL) {
-            // We found a matching option in argv. Set it in the option_map for this state
+        if (resolved_opt_idx != npos) {
+            // We found a matching option in argv. Set it in the option_map for this state and mark its index as used
+            const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
             const string_t name = opt_in_doc.key_as_string(this->source);
             arg_t *arg = &state->option_map[name];
-            if (resolved_opt->value_idx_in_argv != npos) {
-                const string_t &str = ctx->argv.at(resolved_opt->value_idx_in_argv);
-                const range_t value_range = resolved_opt->value_range_in_arg;
+            if (resolved_opt.value_idx_in_argv != npos) {
+                const string_t &str = ctx->argv.at(resolved_opt.value_idx_in_argv);
+                const range_t value_range = resolved_opt.value_range_in_arg;
                 arg->values.push_back(string_t(str, value_range.start, value_range.length));
             }
             arg->count += 1;
             successful_match = true;
+            state->consumed_options.at(resolved_opt_idx) = true;
         }
     }
     
@@ -2211,6 +2216,7 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
 option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const range_list_t &all_variables, const usage_t &tree, index_list_t *out_unused_arguments) {
     match_context_t ctx(positionals, resolved_options, argv);
     match_state_t init_state;
+    init_state.consumed_options.resize(resolved_options.size(), false);
     match_state_list_t result = match(tree, &init_state, &ctx);
 
     bool log_stuff = false;
