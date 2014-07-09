@@ -1839,7 +1839,7 @@ struct match_context_t {
     }
     
     // Returns the indexes in argv of the arguments that were unused
-    index_list_t unused_arguments(const match_state_t *state, const string_t &src) const {
+    index_list_t unused_arguments(const match_state_t *state) const {
         /* To find the unused arguments, we walk over the used arguments and take what's left
            Arguments may be unused for any of three reasons:
              1. It is an unconsumed positional
@@ -1855,20 +1855,19 @@ struct match_context_t {
             used_indexes.at(this->positionals.at(i).idx_in_argv) = true;
         }
         
-        /* Walk over options matched during tree descent */
-        string_t name;
-        for (size_t i=0; i < resolved_options.size(); i++) {
-            const resolved_option_t &opt = resolved_options.at(i);
-            opt.option.assign_key_to_string(src, &name);
-            if (state->option_map.find(name) != state->option_map.end()) {
-                // This option was used. The name index is definitely used. The value index is also used, if it's not npos (note that it may be the same as the name index, so we can avoid setting the bit twice in that case)
+        /* Walk over options matched during tree descent. We should have one bit per option */
+        assert(state->consumed_options.size() == this->resolved_options.size());
+        for (size_t i=0; i < state->consumed_options.size(); i++) {
+            if (state->consumed_options.at(i)) {
+                // This option was used. The name index is definitely used. The value index is also used, if it's not npos (note that it may be the same as the name index)
+                const resolved_option_t &opt = this->resolved_options.at(i);
                 used_indexes.at(opt.name_idx_in_argv) = true;
-                if (opt.value_idx_in_argv != npos && opt.value_idx_in_argv != opt.name_idx_in_argv) {
+                if (opt.value_idx_in_argv != npos) {
                     used_indexes.at(opt.value_idx_in_argv) = true;
                 }
             }
         }
-        
+
         /* Extract the unused indexes from the bitmap of used arguments */
         index_list_t unused_argv_idxs;
         for (size_t i=0; i < used_indexes.size(); i++) {
@@ -1876,7 +1875,6 @@ struct match_context_t {
                 unused_argv_idxs.push_back(i);
             }
         }
-        
         return unused_argv_idxs;
     }
 
@@ -2224,7 +2222,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
         for (size_t i=0; i < result.size(); i++) {
             const match_state_t &state = result.at(i);
-            bool is_incomplete = ! ctx.unused_arguments(&state, this->source).empty();
+            bool is_incomplete = ! ctx.unused_arguments(&state).empty();
             std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
             for (typename option_map_t::const_iterator iter = state.option_map.begin(); iter != state.option_map.end(); ++iter) {
                 const string_t &name = iter->first;
@@ -2246,7 +2244,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
     index_list_t best_unused_args;
     for (size_t i=0; i < result.size(); i++) {
         const match_state_t &state = result.at(i);
-        index_list_t unused_args = ctx.unused_arguments(&state, this->source);
+        index_list_t unused_args = ctx.unused_arguments(&state);
         size_t unused_arg_count = unused_args.size();
         if (i == 0 || unused_arg_count < best_unused_args.size()) {
             best_state_idx = i;
@@ -2355,8 +2353,7 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 static int simple_test() {
     const std::string usage =
 #if 1
-    "Usage:\n"
-    "  prog [-o -p -r]\n"
+    "Usage: prog -v ..."
     ;
 #else
     "Naval Fate.\n"
@@ -2380,7 +2377,7 @@ static int simple_test() {
     
     const char *args[] = {
 #if 1
-        "prog", "-op"
+        "prog", "-vv"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif
