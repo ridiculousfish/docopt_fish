@@ -2001,7 +2001,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
                 while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.simple_clause, intermediate_states, ctx);
+                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx);
                     result.insert(result.end(), next_states.begin(), next_states.end());
                     intermediate_states.swap(next_states);
                 }
@@ -2283,7 +2283,8 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 static int simple_test() {
     bool log_stuff = true;
     const std::string usage =
-    "usage: prog [<NAME>]..."
+    "usage: prog (<NAME> | --foo <NAME>)\n"
+    "options: --foo \n"
     ;
     
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2328,8 +2329,8 @@ static int simple_test() {
     
     std::vector<std::string> argv;
     argv.push_back("prog");
+    argv.push_back("--foo");
     argv.push_back("10");
-    argv.push_back("20");
 
     
     docopt_impl<std::string>::positional_argument_list_t positionals;

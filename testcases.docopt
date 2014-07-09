@@ -426,7 +426,7 @@ $ prog
 {"<name>": null}
 
 
-r"""usage: prog [<NAME>]..."""
+r"""usage: prog <NAME>..."""
 $ prog 10 20
 {"<NAME>": ["10", "20"]}
 
@@ -437,68 +437,68 @@ $ prog
 "user-error"
 
 
-r"""usage: prog [NAME]..."""
+r"""usage: prog [<NAME>]..."""
 $ prog 10 20
-{"NAME": ["10", "20"]}
+{"<NAME>": ["10", "20"]}
 
 $ prog 10
-{"NAME": ["10"]}
+{"<NAME>": "10"}
 
 $ prog
-{"NAME": []}
+{"<NAME>": null}
 
 
-r"""usage: prog [NAME...]"""
+r"""usage: prog [<NAME>...]"""
 $ prog 10 20
-{"NAME": ["10", "20"]}
+{"<NAME>": ["10", "20"]}
 
 $ prog 10
-{"NAME": ["10"]}
+{"<NAME>": "10"}
 
 $ prog
-{"NAME": []}
+{"<NAME>": null}
 
 
-r"""usage: prog [NAME [NAME ...]]"""
+r"""usage: prog [<NAME> [<NAME> ...]]"""
 $ prog 10 20
-{"NAME": ["10", "20"]}
+{"<NAME>": ["10", "20"]}
 
 $ prog 10
-{"NAME": ["10"]}
+{"<NAME>": "10"}
 
 $ prog
-{"NAME": []}
+{"<NAME>": null}
 
 
-r"""usage: prog (NAME | --foo NAME)
+r"""usage: prog (<NAME> | --foo <NAME>)
 
 options: --foo
 
 """
 $ prog 10
-{"NAME": "10", "--foo": false}
+{"<NAME>": "10", "--foo": false}
 
 $ prog --foo 10
-{"NAME": "10", "--foo": true}
+{"<NAME>": "10", "--foo": true}
 
 $ prog --foo=10
 "user-error"
 
 
-r"""usage: prog (NAME | --foo) [--bar | NAME]
+r"""usage: prog (<NAME> | --foo) [--bar | <NAME>]
 
 options: --foo
 options: --bar
 
 """
 $ prog 10
-{"NAME": ["10"], "--foo": false, "--bar": false}
+{"<NAME>": ["10"], "--foo": false, "--bar": false}
 
 $ prog 10 20
-{"NAME": ["10", "20"], "--foo": false, "--bar": false}
+{"<NAME>": ["10", "20"], "--foo": false, "--bar": false}
 
 $ prog --foo --bar
-{"NAME": [], "--foo": true, "--bar": true}
+{"<NAME>": [], "--foo": true, "--bar": true}
 
 
 r"""Naval Fate.
