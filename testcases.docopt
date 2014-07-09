@@ -525,7 +525,7 @@ $ prog ship Guardian move 150 300 --speed=20
  "--moored": false,
  "--speed": "20",
  "--version": false,
- "<name>": ["Guardian"],
+ "<name>": "Guardian",
  "<x>": "150",
  "<y>": "300",
  "mine": false,
@@ -544,7 +544,7 @@ $ prog --hello
 
 r"""usage: prog [--hello=<world>]"""
 $ prog
-{"--hello": null}
+{"--hello": false}
 
 $ prog --hello wrld
 {"--hello": "wrld"}
@@ -558,7 +558,7 @@ $ prog -o
 {"-o": true}
 
 
-r"""usage: prog [-opr]"""
+r"""usage: prog [-o -p -r]"""
 $ prog -op
 {"-o": true, "-p": true, "-r": false}
 

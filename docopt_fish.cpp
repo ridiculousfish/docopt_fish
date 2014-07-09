@@ -612,7 +612,7 @@ struct node_collector_t : public node_visitor_t<node_collector_t<NODE_TYPE> > {
 
 /* Helper class for collecting all nodes of a given type */
 template<typename ENTRY_TYPE, typename TYPE_TO_COLLECT>
-std::vector<const TYPE_TO_COLLECT *> collect_nodes(const ENTRY_TYPE &entry) {
+std::vector<const TYPE_TO_COLLECT *> collect_nodes(const ENTRY_TYPE &entry) const {
     node_collector_t<TYPE_TO_COLLECT> collector;
     collector.begin(entry);
     std::vector<const TYPE_TO_COLLECT *> result;
@@ -1020,7 +1020,7 @@ option_list_t all_options;
 range_list_t all_variables;
 
 /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
-range_list_t all_commands;
+range_list_t all_static_arguments;
 
 
 /* Helper function to make a string (narrow or wide) from a C string */
@@ -1154,7 +1154,7 @@ static bool substr_equals(const char *a, const string_t &b, size_t len) {
 }
 
 /* Returns true if the given token matches the given narrow string, up to len characters */
-bool token_substr_equals(const token_t &tok, const char *str, size_t len) {
+bool token_substr_equals(const token_t &tok, const char *str, size_t len) const {
     assert(tok.range.end() <= this->source.length());
     if (len > tok.range.length) {
         /* If our token is too short, then it doesn't match */
@@ -1165,7 +1165,7 @@ bool token_substr_equals(const token_t &tok, const char *str, size_t len) {
 }
 
 /* Returns true if the given token matches the given string */
-bool token_equals(const token_t &tok, const string_t &str) {
+bool token_equals(const token_t &tok, const string_t &str) const {
     assert(tok.range.end() < this->source.length());
     if (str.size() != tok.range.length) {
         /* If our token is too short, then it doesn't match */
@@ -1177,16 +1177,19 @@ bool token_equals(const token_t &tok, const string_t &str) {
 
 /* Collects options, i.e. tokens of the form --foo */
 template<typename ENTRY_TYPE>
-void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_options, range_list_t *out_variables) {
+void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_options, range_list_t *out_variables, range_list_t *out_static_arguments) const {
     std::vector<const simple_clause_t *> nodes = collect_nodes<ENTRY_TYPE, simple_clause_t>(entry);
     for (size_t i=0; i < nodes.size(); i++) {
         const token_t &tok = nodes.at(i)->word;
         if (this->token_substr_equals(tok, "-", 1)) {
             // It's an option
-            out_options->push_back(parse_option_from_string(this->source, tok.range, &this->errors));
+            out_options->push_back(parse_option_from_string(this->source, tok.range, NULL));
         } else if (this->token_substr_equals(tok, "<", 1)) {
             // It's a variable
             out_variables->push_back(tok.range);
+        } else {
+            // It's a static arg
+            out_static_arguments->push_back(tok.range);
         }
     }
 }
@@ -2079,11 +2082,11 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
 // This returns success (i.e. a non-empty state list) if we match at least one
 match_state_list_t match_options(const option_list_t &options_in_doc, bool require__match, match_state_t *state, const match_context_t *ctx) {
     match_state_list_t result;
-    size_t successful_matches = 0;
+    bool successful_match = false;
     for (size_t j=0; j < options_in_doc.size(); j++) {
         const option_t opt_in_doc = options_in_doc.at(j);
 
-        // Find the matching option from the resolved option list
+        // Find the matching option from the resolved option list (i.e. argv)
         const resolved_option_t *resolved_opt = NULL;
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
             const resolved_option_t *opt_in_argv = &ctx->resolved_options.at(i);
@@ -2094,7 +2097,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, bool requi
         }
 
         if (resolved_opt != NULL) {
-            // woo hoo
+            // We found a matching option in argv. Set it in the option_map for this state
             const string_t name = opt_in_doc.key_as_string(this->source);
             arg_t *arg = &state->option_map[name];
             if (resolved_opt->value_idx_in_argv != npos) {
@@ -2103,11 +2106,12 @@ match_state_list_t match_options(const option_list_t &options_in_doc, bool requi
                 arg->values.push_back(string_t(str, value_range.start, value_range.length));
             }
             arg->count += 1;
-            successful_matches += 1;
+            successful_match = true;
         }
     }
     
-    if (! require__match || successful_matches > 0) {
+    // We return a state if either we don't require a match, or we do require a match but we found one.
+    if (! require__match || successful_match) {
         state_destructive_append_to(state, &result);
     }
     return result;
@@ -2130,20 +2134,19 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
             state_destructive_append_to(state, &result);
         }
     } else if (first_char == char_t('-')) {
-        // Option. Use match_options() on an array of 1.
+        // Option. Use match_options() on an array containing exactly this option.
         option_list_t options_in_doc;
         options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
         result = this->match_options(options_in_doc, true /* require_match */, state, ctx);
     } else {
         // Fixed argument
+        // Compare the next positional to this static argument
         if (ctx->has_more_positionals(state)) {
             const positional_argument_t &positional = ctx->next_positional(state);
             const string_t &name = ctx->argv.at(positional.idx_in_argv);
-            string_t tmp = string_t(this->source, range.start, range.length);
             if (name.size() == range.length && this->source.compare(range.start, range.length, name) == 0) {
-                // The fixed argument matches
+                // The static argument matches
                 arg_t *arg = &state->option_map[name];
-                arg->values.push_back(string_t(1, char_t('1')));
                 arg->count += 1;
                 ctx->acquire_next_positional(state);
                 state_destructive_append_to(state, &result);
@@ -2180,6 +2183,14 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     for (size_t i=0; i < all_variables.size(); i++) {
         const range_t &var_range = all_variables.at(i);
         name.assign(this->source, var_range.start, var_range.length);
+        // As above, we merely invoke operator[]
+        result[name];
+    }
+    
+    // Fill in static arguments
+    for (size_t i=0; i < all_static_arguments.size(); i++) {
+        const range_t &range = all_static_arguments.at(i);
+        name.assign(this->source, range.start, range.length);
         // As above, we merely invoke operator[]
         result[name];
     }
@@ -2275,15 +2286,14 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 
     // Extract options and variables from the usage sections
     option_list_t usage_options;
-    range_list_t all_variables;
-    this->collect_options_and_variables(*tree, &usage_options, &all_variables);
+    this->collect_options_and_variables(*tree, &usage_options, &this->all_variables, &this->all_static_arguments);
 
     // Combine these into a single list
-    option_list_t all_options;
-    all_options.reserve(usage_options.size() + this->shortcut_options.size());
-    all_options.insert(all_options.end(), usage_options.begin(), usage_options.end());
-    all_options.insert(all_options.end(), this->shortcut_options.begin(), this->shortcut_options.end());
-    this->uniqueize_options(&all_options, &this->errors);
+    this->all_options.clear();
+    this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
+    this->all_options.insert(this->all_options.end(), usage_options.begin(), usage_options.end());
+    this->all_options.insert(this->all_options.end(), this->shortcut_options.begin(), this->shortcut_options.end());
+    this->uniqueize_options(&this->all_options, &this->errors);
 
     // Dump them
     if (log_stuff) {
@@ -2329,9 +2339,9 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 #if SIMPLE_TEST
 static int simple_test() {
     const std::string usage =
-#if 0
+#if 1
     "Usage:\n"
-    "  prog --speed=<kn>\n"
+    "  prog [-o -p -r]\n"
     ;
 #else
     "Naval Fate.\n"
@@ -2354,8 +2364,8 @@ static int simple_test() {
     ;
     
     const char *args[] = {
-#if 0
-        "prog", "--speed=5"
+#if 1
+        "prog", "-op"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif
