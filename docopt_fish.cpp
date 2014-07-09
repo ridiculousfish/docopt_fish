@@ -1829,6 +1829,8 @@ struct match_context_t {
     const resolved_option_list_t &resolved_options;
     const string_list_t &argv;
     
+    /* Hackish - records whether we are within square brackets. This is because a sequence of options becomes non-required when in square brackets. */
+    bool is_in_square_brackets;
 
     bool has_more_positionals(const match_state_t *state) const {
         assert(state->next_positional_index <= this->positionals.size());
@@ -1887,7 +1889,7 @@ struct match_context_t {
         return positionals.at(state->next_positional_index++);
     }
 
-    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : positionals(p), resolved_options(r), argv(av)
+    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : positionals(p), resolved_options(r), argv(av), is_in_square_brackets(false)
     {}
 };
 
@@ -1915,7 +1917,7 @@ static void state_destructive_append_to(match_state_t *state, match_state_list_t
 }
 
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx) {
     match_state_list_t result;
     if (ptr.get()) {
         result = this->match(*ptr, state, ctx);
@@ -1924,7 +1926,7 @@ match_state_list_t try_match(T& ptr, match_state_t *state, const match_context_t
 }
 
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_list_t &state_list, const match_context_t *ctx) {
+match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx) {
     match_state_list_t total_result;
     if (ptr.get()) {
         for (size_t i=0; i < state_list.size(); i++) {
@@ -1937,7 +1939,7 @@ match_state_list_t try_match(T& ptr, match_state_list_t &state_list, const match
 }
 
 /* Match overrides */
-match_state_list_t match(const usage_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const usage_t &node, match_state_t *state, match_context_t *ctx) {
     if (! ctx->has_more_positionals(state)) {
         // todo: error handling
         return no_match();
@@ -1968,12 +1970,12 @@ match_state_list_t match(const usage_t &node, match_state_t *state, const match_
     return main_branch;
 }
 
-match_state_list_t match(const expression_list_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const expression_list_t &node, match_state_t *state, match_context_t *ctx) {
     match_state_list_t intermed_state_list = try_match(node.expression, state, ctx);
     return try_match(node.opt_expression_list, intermed_state_list, ctx);
 }
 
-match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx) {
     match_state_list_t result;
     if (node.expression_list.get()) {
         return match(*node.expression_list, state, ctx);
@@ -1983,7 +1985,7 @@ match_state_list_t match(const opt_expression_list_t &node, match_state_t *state
     }
 }
 
-match_state_list_t match(const alternation_list_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx) {
     // Must duplicate the state for the second branch
     match_state_t copied_state = *state;
     match_state_list_t result1 = try_match(node.expression_list, state, ctx);
@@ -1994,14 +1996,17 @@ match_state_list_t match(const alternation_list_t &node, match_state_t *state, c
     return result1;
 }
 
-match_state_list_t match(const or_continuation_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx) {
     return try_match(node.alternation_list, state, ctx);
 }
 
-match_state_list_t match(const expression_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const expression_t &node, match_state_t *state, match_context_t *ctx) {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
     match_state_list_t result;
+    
+    // We may modify is_in_square_brackets if we represent square brackets (yes) or parens (no). In that case we need to restore the value to what it was on entry. Save off that value here.
+    const bool saved_isb = ctx->is_in_square_brackets;
 
     switch (node.production) {
         case 0:
@@ -2013,6 +2018,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
                match one time, two times, three times...
                We stop when we get no more matches, which usually happens when we run out of positionals.
             */
+            
             result = try_match(node.simple_clause, state, ctx);
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
@@ -2031,6 +2037,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
                Same algorithm as the simple clause above.
                TODO: this may loop forever with states that do not consume any values, e.g. ([foo])...
             */
+            ctx->is_in_square_brackets = false;
             result = try_match(node.alternation_list, state, ctx);
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
@@ -2048,6 +2055,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
             /* This is a square-bracketed clause which may have ellipsis, like [foo]...
                Same algorithm as the simple clause above, except that we also append the initial state as a not-taken branch.
             */
+            ctx->is_in_square_brackets = true;
             match_state_t not_taken_branch = *state;
             result = try_match(node.alternation_list, state, ctx);
             if (has_ellipsis) {
@@ -2074,7 +2082,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, const m
             assert(0 && "unknown production");
             return no_match();
     }
-
+    ctx->is_in_square_brackets = saved_isb;
     return result;
 }
 
@@ -2117,7 +2125,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, bool requi
     return result;
 }
 
-match_state_list_t match(const simple_clause_t &node, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) {
     // Check to see if this is an argument or a variable
     match_state_list_t result;
     const range_t &range = node.word.range;
@@ -2137,7 +2145,8 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
         // Option. Use match_options() on an array containing exactly this option.
         option_list_t options_in_doc;
         options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
-        result = this->match_options(options_in_doc, true /* require_match */, state, ctx);
+        bool require_match = ! ctx->is_in_square_brackets;
+        result = this->match_options(options_in_doc, require_match, state, ctx);
     } else {
         // Fixed argument
         // Compare the next positional to this static argument
