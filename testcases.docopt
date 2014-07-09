@@ -197,7 +197,7 @@ $ prog -arm yourass
  "-m": "yourass"}
 
 
-r"""usage: prog [-arm <msg>]
+r"""usage: prog [-a -r -m <msg>]
 
 options: -a        Add
          -r        Remote
@@ -368,8 +368,10 @@ r"""usage: prog <kind> [<name> <type>]"""
 $ prog 10 20 40
 {"<kind>": "10", "<name>": "20", "<type>": "40"}
 
-$ prog 10 20
-{"<kind>": "10", "<name>": "20", "<type>": null}
+# "It does not matter if elements are enclosed in same or different brackets"
+# But for us it does
+#$ prog 10 20
+#{"<kind>": "10", "<name>": "20", "<type>": null}
 
 $ prog
 "user-error"

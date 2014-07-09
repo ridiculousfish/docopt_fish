@@ -13,7 +13,7 @@ using namespace docopt_fish;
 #include <iostream>
 #include <vector>
 
-static std::string to_string(const argument_t &arg) {
+static std::string to_string(const std::string &name, const argument_t &arg) {
     std::string result;
     if (arg.values.size() == 1) {
         result.push_back('"');
@@ -38,7 +38,12 @@ static std::string to_string(const argument_t &arg) {
     } else if (arg.count == 1) {
         result.append("true");
     } else {
-        result.append("false");
+        // Hackish. The test harness expects "null" if this is a variable, "false" if it's a flag. Look at the key name to decide which.
+        if (! name.empty() && name.at(0) == '<') {
+            result.append("null");
+        } else {
+            result.append("false");
+        }
     }
     return result;
 }
@@ -76,7 +81,7 @@ int main(int argc, const char** argv)
 			std::cout << "," << std::endl;
 		}
 		
-		std::cout << '"' << iter->first << '"' << ": " << to_string(iter->second);
+		std::cout << '"' << iter->first << '"' << ": " << to_string(iter->first, iter->second);
 	}
 	std::cout << " }" << std::endl;
 

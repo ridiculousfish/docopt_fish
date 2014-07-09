@@ -1111,16 +1111,16 @@ bool token_equals(const token_t &tok, const string_t &str) {
 
 /* Collects options, i.e. tokens of the form --foo */
 template<typename ENTRY_TYPE>
-option_list_t collect_options(const ENTRY_TYPE &entry) {
-    option_list_t resulting_options;
+void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_options, range_list_t *out_variables) {
     std::vector<const simple_clause_t *> nodes = collect_nodes<ENTRY_TYPE, simple_clause_t>(entry);
     for (size_t i=0; i < nodes.size(); i++) {
         const token_t &tok = nodes.at(i)->word;
         if (this->token_substr_equals(tok, "-", 1)) {
-            resulting_options.push_back(parse_option_from_string(this->source, tok.range, &this->errors));
+            out_options->push_back(parse_option_from_string(this->source, tok.range, &this->errors));
+        } else if (this->token_substr_equals(tok, "<", 1)) {
+            out_variables->push_back(tok.range);
         }
     }
-    return resulting_options;
 }
 
 /* Like parse_option_from_string, but parses an argument */
@@ -1989,7 +1989,7 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
         case 3:
         {
             // This is the [options] clause. It does not have ellipsis.
-            result = this->match_options(ctx->shortcut_options, state, ctx);
+            result = this->match_options(ctx->shortcut_options, false /* don't require match */, state, ctx);
             break;
         }
 
@@ -2002,9 +2002,10 @@ match_state_list_t match(const compound_clause_t &node, match_state_t *state, co
 }
 
 // Match the options in the options list, updating the state
-match_state_list_t match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx) {
+// This returns success (i.e. a non-empty state list) if we match at least one
+match_state_list_t match_options(const option_list_t &options_in_doc, bool require__match, match_state_t *state, const match_context_t *ctx) {
     match_state_list_t result;
-
+    size_t successful_matches = 0;
     for (size_t j=0; j < options_in_doc.size(); j++) {
         const option_t opt_in_doc = options_in_doc.at(j);
 
@@ -2028,9 +2029,13 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
                 arg->values.push_back(string_t(str, value_range.start, value_range.length));
             }
             arg->count += 1;
+            successful_matches += 1;
         }
     }
-    state_destructive_append_to(state, &result);
+    
+    if (! require__match || successful_matches > 0) {
+        state_destructive_append_to(state, &result);
+    }
     return result;
 }
 
@@ -2043,8 +2048,8 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
     if (first_char == char_t('<')) {
         if (ctx->has_more_positionals(state)) {
             // Variable argument. Modify the state.
-            assert(range.length >= 2);
-            const string_t name = string_t(this->source, range.start + 1, range.length - 2);
+            // Note we retain the brackets <> in the variable name
+            const string_t name = string_t(this->source, range.start, range.length);
             arg_t *arg = &state->option_map[name];
             const positional_argument_t &positional = ctx->acquire_next_positional(state);
             arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
@@ -2054,7 +2059,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
         // Option
         option_list_t options_in_doc;
         options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
-        result = this->match_options(options_in_doc, state, ctx);
+        result = this->match_options(options_in_doc, true /* require_match */, state, ctx);
     } else {
         // Fixed argument
         if (ctx->has_more_positionals(state)) {
@@ -2074,7 +2079,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, cons
     return result;
 }
 
-option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options) {
+option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options, const range_list_t &all_variables) {
     // If we aren't asked to do empty args, then skip it
     if (! (this->parse_flags & flag_generate_empty_args)) {
         return map;
@@ -2096,11 +2101,20 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
             arg->values.push_back(string_t(this->source, opt.default_value_range.start, opt.default_value_range.length));
         }
     }
+    
+    // Fill in variables
+    for (size_t i=0; i < all_variables.size(); i++) {
+        const range_t &var_range = all_variables.at(i);
+        name.assign(this->source, var_range.start, var_range.length);
+        // As above, we merely invoke operator[]
+        result[name];
+    }
+    
     return result;
 }
 
 /* Matches argv */
-option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options, const option_list_t &all_options, const usage_t &tree, index_list_t *out_unused_arguments) {
+option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &shortcut_options, const option_list_t &all_options, const range_list_t &all_variables, const usage_t &tree, index_list_t *out_unused_arguments) {
     match_context_t ctx(positionals, resolved_options, shortcut_options, argv);
     match_state_t init_state;
     match_state_list_t result = match(tree, &init_state, &ctx);
@@ -2150,7 +2164,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
         if (out_unused_arguments != NULL) {
             out_unused_arguments->swap(best_unused_args);
         }
-        return finalize_option_map(result.at(best_state_idx).option_map, all_options);
+        return finalize_option_map(result.at(best_state_idx).option_map, all_options, all_variables);
     } else {
         // No states. Every argument is unused.
         if (out_unused_arguments != NULL) {
@@ -2159,7 +2173,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
                 out_unused_arguments->push_back(i);
             }
         }
-        return finalize_option_map(option_map_t(), all_options);
+        return finalize_option_map(option_map_t(), all_options, all_variables);
     }
 }
 
@@ -2183,8 +2197,10 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
         return option_map_t();
     }
 
-    // Extract options from the usage sections
-    option_list_t usage_options = this->collect_options(*tree);
+    // Extract options and variables from the usage sections
+    option_list_t usage_options;
+    range_list_t all_variables;
+    this->collect_options_and_variables(*tree, &usage_options, &all_variables);
 
     // Extract options from the options section
     option_list_t shortcut_options = this->parse_options_spec(&this->errors);
@@ -2233,7 +2249,7 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
         }
     }
 
-    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, all_options, *tree, out_unused_arguments);
+    option_map_t result = this->match_argv(argv, positionals, resolved_options, shortcut_options, all_options, all_variables, *tree, out_unused_arguments);
     delete tree;
     return result;
 }
@@ -2254,11 +2270,7 @@ static int simple_test() {
     "  -h, --human-readable  Display in human-readable format\n"
     "  -i <file>, --input <file>  Set input file\n";
 #else
-    "usage: prog [-a -r -m <msg>]\n"
-    "options:\n"
-    "    -a        Add:\n"
-    "    -r        Remote:\n"
-    "    -m <msg>  Message:\n";
+    "usage: prog <kind> [<name> <type>]\n";
 #endif
     
     docopt_impl<std::string> impl(usage, flags_default);
@@ -2274,7 +2286,9 @@ static int simple_test() {
     
     
     // Extract options from the usage sections
-    option_list_t usage_options = impl.collect_options(*tree);
+    option_list_t usage_options;
+    range_list_t all_variables;
+    impl.collect_options_and_variables(*tree, &usage_options, &all_variables);
     
     // Extract options from the options section
     option_list_t shortcut_options = impl.parse_options_spec(&impl.errors);
@@ -2327,8 +2341,8 @@ static int simple_test() {
     argv.push_back("5");
 #else
     argv.push_back("prog");
-    argv.push_back("-arm");
-    argv.push_back("yourass");
+    argv.push_back("10");
+    argv.push_back("20");
 #endif
     
     docopt_impl<std::string>::positional_argument_list_t positionals;
@@ -2347,7 +2361,7 @@ static int simple_test() {
     }
     
     index_list_t unused_arguments;
-    impl.match_argv(argv, positionals, resolved_options, shortcut_options, all_options, *tree, &unused_arguments);
+    impl.match_argv(argv, positionals, resolved_options, shortcut_options, all_options, all_variables, *tree, &unused_arguments);
     
     for (size_t i=0; i < unused_arguments.size(); i++) {
         size_t arg_idx = unused_arguments.at(i);
