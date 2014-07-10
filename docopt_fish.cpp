@@ -1345,6 +1345,7 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
     range_t remaining(range.start, options_end - range.start);
     scan_while(this->source, &remaining, isspace);
     range_t name_range_of_last_long_option;
+    range_t last_value_range;
     while (! remaining.empty()) {
         option_t opt = parse_option_from_string(this->source, &remaining, errors);
         if (opt.name.empty()) {
@@ -1360,6 +1361,12 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
             name_range_of_last_long_option = opt.name;
         }
         
+        // Keep track of the last variable range
+        // We imbue every other option with this range, unless it has its own
+        if (! opt.value.empty()) {
+            last_value_range = opt.value;
+        }
+        
         // Skip over commas, which separate arguments
         scan_while(this->source, &remaining, isspace);
         scan_while(this->source, &remaining, it_equals<','>);
@@ -1371,6 +1378,17 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
     if (! name_range_of_last_long_option.empty()) {
         for (size_t i=0; i < result.size(); i++) {
             result.at(i).key_range = name_range_of_last_long_option;
+        }
+    }
+    
+    // Set the value range of every option without one
+    // This is to support use cases like this:
+    //   -m, --message <contents>
+    // The -m should pick up 'contents' too
+    for (size_t i=0; i < result.size(); i++) {
+        option_t *opt = &result.at(i);
+        if (opt->value.empty()) {
+            opt->value = last_value_range;
         }
     }
     
@@ -2152,7 +2170,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
             arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
             state_destructive_append_to(state, &result);
         }
-    } else if (first_char == char_t('-')) {
+    } else if (first_char == char_t('-') && range.length > 1) {
         // Option. Use match_options() on an array containing exactly this option.
         option_list_t options_in_doc;
         options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
@@ -2219,13 +2237,12 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
 }
 
 /* Matches argv */
-option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const range_list_t &all_variables, const usage_t &tree, index_list_t *out_unused_arguments) {
+option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const range_list_t &all_variables, const usage_t &tree, index_list_t *out_unused_arguments, bool log_stuff = false) {
     match_context_t ctx(positionals, resolved_options, argv);
     match_state_t init_state;
     init_state.consumed_options.resize(resolved_options.size(), false);
     match_state_list_t result = match(tree, &init_state, &ctx);
 
-    bool log_stuff = false;
     if (log_stuff) {
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
         for (size_t i=0; i < result.size(); i++) {
@@ -2378,8 +2395,24 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
         }
     }
 
-    option_map_t result = this->match_argv(argv, positionals, resolved_options, all_options, all_variables, *tree, out_unused_arguments);
+    option_map_t result = this->match_argv(argv, positionals, resolved_options, all_options, all_variables, *tree, out_unused_arguments, log_stuff);
     delete tree;
+    
+    if (log_stuff) {
+        for (typename option_map_t::const_iterator iter = result.begin(); iter != result.end(); ++iter) {
+            const string_t &name = iter->first;
+            const arg_t &arg = iter->second;
+            fprintf(stderr, "\t%ls: ", widen(name).c_str());
+            for (size_t j=0; j < arg.values.size(); j++) {
+                if (j > 0) {
+                    fprintf(stderr, ", ");
+                }
+                fprintf(stderr, "%ls", widen(arg.values.at(j)).c_str());
+            }
+            std::cerr << '\n';
+        }
+    }
+    
     return result;
 }
 
@@ -2387,7 +2420,9 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 static int simple_test() {
     const std::string usage =
 #if 1
-    "Usage: prog -v ..."
+    "Usage: prog [-a <host:port>]\n"
+    "\n"
+    "Options: -a <host:port>, --address <host:port>  TCP address [default: localhost:6283].\n"
     ;
 #else
     "Naval Fate.\n"
@@ -2411,7 +2446,7 @@ static int simple_test() {
     
     const char *args[] = {
 #if 1
-        "prog", "-vv"
+        "prog"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif
@@ -2420,7 +2455,7 @@ static int simple_test() {
     size_t arg_count = sizeof args / sizeof *args;
     std::vector<std::string> argv(args, args + arg_count);
     
-    docopt_impl<std::string> impl(usage, flags_default);
+    docopt_impl<std::string> impl(usage, flags_default | flag_generate_empty_args);
     std::vector<size_t> unused_arguments;
     option_map_t match = impl.best_assignment(argv, &unused_arguments, true);
     
