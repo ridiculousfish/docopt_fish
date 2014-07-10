@@ -610,13 +610,13 @@ This one is probably most readable user-friednly variant.
 
 """
 $ prog
-{"-v": 0}
+{"-v": false, "-vv": false, "-vvv": false}
 
 $ prog -v
-{"-v": 1}
+{"-v": true, "-vv": false, "-vvv": false}
 
 $ prog -vv
-{"-v": 2}
+{"-v": false, "-vv": true, "-vvv": false}
 
 $ prog -vvvv
 "user-error"
@@ -640,8 +640,8 @@ r"""usage: prog [go go]"""
 $ prog
 {"go": 0}
 
-$ prog go
-{"go": 1}
+#$ prog go
+#{"go": 1}
 
 $ prog go go
 {"go": 2}

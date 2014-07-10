@@ -1867,6 +1867,14 @@ struct match_context_t {
                 }
             }
         }
+        
+        /* Walk over options NOT matched during tree descent and clear their bits. An argument may be both matched and unmatched, i.e. if "-vv" is parsed into two short options. In that case, we want to mark it as unmatched. */
+        for (size_t i=0; i < state->consumed_options.size(); i++) {
+            if (! state->consumed_options.at(i)) {
+                const resolved_option_t &opt = this->resolved_options.at(i);
+                used_indexes.at(opt.name_idx_in_argv) = false;
+            }
+        }
 
         /* Extract the unused indexes from the bitmap of used arguments */
         index_list_t unused_argv_idxs;
@@ -2307,6 +2315,32 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
     this->all_options.insert(this->all_options.end(), usage_options.begin(), usage_options.end());
     this->all_options.insert(this->all_options.end(), this->shortcut_options.begin(), this->shortcut_options.end());
     this->uniqueize_options(&this->all_options, &this->errors);
+
+    /* Hackish. Consider the following usage:
+       usage: prog [options] [-a]
+       options: -a
+       
+       invoked as: prog -a -a
+       
+       Naively we would expect options to match the first -a arg, and the -a from usage to match the second. But we don't. Instead, if an option appears explicitly in a usage pattern, we excise it from the shortcuts.
+       
+       What Python docopt does is assert, if an option appears anywhere in any usage, it may not be matched by [options]. This seems reasonable, because it means that that option has more particular use cases. So remove all items from shortcut_options() that appear in usage_options.
+       
+       TODO: this currently onlt removes the matched variant. For example, prog -a --alpha would still be allowed.
+    */
+    
+    for (size_t i=0; i < this->shortcut_options.size(); i++) {
+        const option_t &shortcut_opt = this->shortcut_options.at(i);
+        for (size_t j=0; j < usage_options.size(); j++) {
+            const option_t &usage_opt = usage_options.at(j);
+            if (options_have_same_name(shortcut_opt, usage_opt)) {
+                // Remove this shortcut, and decrement the index to reflect the position shift of the remaining items
+                this->shortcut_options.erase(this->shortcut_options.begin() + i);
+                i-=1;
+                break;
+            }
+        }
+    }
 
     // Dump them
     if (log_stuff) {
