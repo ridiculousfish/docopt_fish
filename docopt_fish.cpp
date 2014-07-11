@@ -2489,7 +2489,9 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 static int simple_test() {
     const std::string usage =
 #if 1
-    "usage: prog [--input=<file name>]...\n"
+    "usage: prog good [options]\n"
+    "       prog fail [options]\n"
+    "options: --loglevel=N\n"
     ;
 #else
     "Naval Fate.\n"

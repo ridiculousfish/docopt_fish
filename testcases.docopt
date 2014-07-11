@@ -904,7 +904,7 @@ $ prog --input a.txt --input=b.txt
 r"""usage: prog good [options]
            prog fail [options]
 
-options: --loglevel=N
+options: --loglevel=<N>
 
 """
 $ prog fail --loglevel 5
