@@ -851,7 +851,7 @@ $ prog -o this -o that
 {"-o": ["this", "that"]}
 
 $ prog
-{"-o": ["x"]}
+{"-o": "x"}
 
 r"""usage: prog [-o <o>]...
 
@@ -859,18 +859,19 @@ options: -o <o>  [default: x y]
 
 """
 $ prog -o this
-{"-o": ["this"]}
+{"-o": "this"}
 
+# Note: fish_docopt doesn't split default values. Python has this as ['x', 'y']
 $ prog
-{"-o": ["x", "y"]}
+{"-o": "x y"}
 
 #
 # Test stacked option's argument
 #
 
-r"""usage: prog -pPATH
+r"""usage: prog -p<PATH>
 
-options: -p PATH
+options: -p <PATH>
 
 """
 $ prog -pHOME
@@ -880,9 +881,9 @@ $ prog -pHOME
 # Issue 56: Repeated mutually exclusive args give nested lists sometimes
 #
 
-r"""Usage: foo (--xx=x|--yy=y)..."""
+r"""Usage: foo (--xx=<x>|--yy=<y>)..."""
 $ prog --xx=1 --yy=2
-{"--xx": ["1"], "--yy": ["2"]}
+{"--xx": "1", "--yy": "2"}
 
 #
 # POSIXly correct tokenization

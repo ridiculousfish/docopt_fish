@@ -101,7 +101,7 @@ struct range_t {
         assert(result >= start); //don't overflow
         return result;
     }
-
+    
     bool empty() const {
         return length == 0;
     }
@@ -293,7 +293,13 @@ static bool char_is_valid_in_variable(char_t c) {
 }
 
 static bool char_is_valid_in_word(char_t c) {
-    const char *invalid = ".|()[], \t\n";
+    const char *invalid = ".|()[],<> \t\n";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+static bool char_is_valid_in_bracketed_word(char_t c) {
+    const char *invalid = "|()[]>\t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
@@ -436,15 +442,38 @@ struct parse_context_t {
     
     bool scan_word(token_t *tok) {
         this->consume_leading_whitespace();
-        tok->range = scan_while(*source, &remaining_range, char_is_valid_in_word);
+        /* A word may have embedded <...>. These may contain spaces. They may also abut: --foo<abc def>bar' is one word. So we use a loop. */
+        range_t result;
+        for (;;) {
+            // Scan non-bracketed sequence. This may be empty (in which case the merge does nothing)
+            result.merge(scan_while(*source, &remaining_range, char_is_valid_in_word));
+            // Scan bracketed sequence
+            range_t bracket_start = scan_1_char(*source, &remaining_range, '<');
+            if (! bracket_start.empty()) {
+                scan_while(*source, &remaining_range, char_is_valid_in_bracketed_word);
+                range_t bracket_end = scan_1_char(*source, &remaining_range, '>');
+                if (bracket_end.empty()) {
+                    // TODO: report unclosed bracket
+                } else {
+                    // Merging the bracket ranges will include the contents
+                    result.merge(bracket_start);
+                    result.merge(bracket_end);
+                }
+            }
+            // If we got an empty bracket range, then we're done; otherwise start again
+            if (bracket_start.empty()) {
+                break;
+            }
+        }
+        tok->range = result;
         return ! tok->range.empty();
     }
     
     token_t peek_word() {
-        this->consume_leading_whitespace();
+        const range_t saved_range = remaining_range;
         token_t tok;
-        range_t local_range = remaining_range;
-        tok.range = scan_while(*source, &local_range, char_is_valid_in_word);
+        scan_word(&tok);
+        remaining_range = saved_range;
         return tok;
     }
 };
@@ -1257,7 +1286,7 @@ static option_t parse_option_from_string(const string_t &str, range_t *remaining
     range_t variable_range;
     range_t open_sign = scan_1_char(str, remaining, '<');
     if (! open_sign.empty()) {
-        range_t variable_name_range = scan_while(str, remaining, char_is_valid_in_variable);
+        range_t variable_name_range = scan_while(str, remaining, char_is_valid_in_bracketed_word);
         range_t close_sign = scan_1_char(str, remaining, '>');
         if (! variable_name_range.empty() && ! close_sign.empty()) {
             variable_range.merge(open_sign);
@@ -1349,6 +1378,12 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
     range_t name_range_of_last_long_option;
     range_t last_value_range;
     while (! remaining.empty()) {
+    
+        if (this->source.at(remaining.start) != char_t('-')) {
+            append_error(errors, remaining.start, "Not an option");
+            break;
+        }
+    
         option_t opt = parse_option_from_string(this->source, &remaining, errors);
         if (opt.name.empty()) {
             // Failed to get an option, give up
@@ -1373,7 +1408,6 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
         scan_while(this->source, &remaining, isspace);
         scan_while(this->source, &remaining, it_equals<','>);
         scan_while(this->source, &remaining, isspace);
-
     }
     
     // Set the key range to the name range of every option
@@ -1474,7 +1508,7 @@ option_list_t parse_options_spec(error_list_t *errors) const {
                         line_range = local_range;
                     }
                 }
-
+                
                 // Got the description. Skip leading whitespace and then parse out an option.
                 scan_while(this->source, &option_spec_range, isspace);
                 option_list_t tmp = parse_one_option_spec(option_spec_range, errors);
@@ -2455,7 +2489,7 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 static int simple_test() {
     const std::string usage =
 #if 1
-    "usage: prog [-o <foo>]...\n"
+    "usage: prog [--input=<file name>]...\n"
     ;
 #else
     "Naval Fate.\n"
@@ -2479,7 +2513,7 @@ static int simple_test() {
     
     const char *args[] = {
 #if 1
-        "prog", "-o", "this", "-o", "-that"
+        "prog", "--input", "a.txt", "--input=b.txt"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif
