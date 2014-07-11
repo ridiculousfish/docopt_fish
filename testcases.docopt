@@ -813,7 +813,7 @@ $ prog
 r"""usage: prog --long=<arg> ..."""
 
 $ prog --long one
-{"--long": ["one"]}
+{"--long": "one"}
 
 $ prog --long one --long two
 {"--long": ["one", "two"]}

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstdint>
 #include <iostream>
+#include <numeric>
 
 #define UNUSED __attribute__((unused))
 
@@ -830,8 +831,6 @@ struct simple_clause_t : public base_t {
         simple_clause_t *result = NULL;
         token_t word;
         if (ctx->scan_word(&word)) {
-            result = new simple_clause_t(word);
-            
             /* Hack to support specifying parameter names inline.
              
              Consider usage like this:
@@ -864,6 +863,7 @@ struct simple_clause_t : public base_t {
             */
             const string_t &src = *ctx->source;
             range_t range = word.range;
+            // TODO: don't match '--'
             if (range.length > 1 && src.at(range.start) == '-') {
                 // It's an option
                 option_t opt = parse_option_from_string(src, &range, NULL);
@@ -891,6 +891,8 @@ struct simple_clause_t : public base_t {
                     }
                 }
             }
+            
+            result = new simple_clause_t(word);
         }
         return result;
     }
@@ -1836,6 +1838,17 @@ struct match_state_t {
         this->consumed_options.swap(rhs.consumed_options);
         std::swap(this->next_positional_index, rhs.next_positional_index);
     }
+    
+    
+    /* Returns the "progress" of a state. This is a sum of the number of positionals and arguments conusmed. This is not directly comparable (two states may have identical progress values but be different) but it does capture the relationship between a state and another state derived from it, i.e. if the progress does not change then the child state is identical to its parent. */
+    size_t number_of_arguments_consumed() const {
+        // Add in positionals
+        size_t result = this->next_positional_index;
+        
+        // Add in arguments by counting set bits in the bitmap
+        result += std::accumulate(this->consumed_options.begin(), this->consumed_options.end(), 0);
+        return result;
+    }
 };
 
 typedef std::vector<match_state_t> match_state_list_t;
@@ -1936,6 +1949,7 @@ static void state_list_destructive_append_to(match_state_list_t *source, match_s
     source->clear();
 }
 
+// TODO: yuck
 static void state_destructive_append_to(match_state_t *state, match_state_list_t *dest) {
     dest->resize(dest->size() + 1);
     dest->back().swap(*state);
@@ -1950,13 +1964,34 @@ match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx)
     return result;
 }
 
+// TODO: comment me
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx) {
+match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx, bool require_progress = false) {
     match_state_list_t total_result;
     if (ptr.get()) {
         for (size_t i=0; i < state_list.size(); i++) {
             match_state_t *state = &state_list.at(i);
+            /* If we require that this makes progress, then get the current progress so we can compare */
+            size_t init_consumed_count = npos;
+            if (require_progress) {
+                init_consumed_count = state->number_of_arguments_consumed();
+            }
+            
             match_state_list_t child_result = this->match(*ptr, state, ctx);
+            
+            if (require_progress) {
+                /* Keep only those results that have increased in progress */
+                size_t idx = child_result.size();
+                while (idx--) {
+                    size_t new_consumed_count = child_result.at(idx).number_of_arguments_consumed();
+                    assert(new_consumed_count >= init_consumed_count); // should never go backwards
+                    if (new_consumed_count == init_consumed_count) {
+                        // No progress was made, toss this state
+                        child_result.erase(child_result.begin() + idx);
+                    }
+                }
+            }
+            
             state_list_destructive_append_to(&child_result, &total_result);
         }
     }
@@ -2048,7 +2083,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
                 while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.simple_clause, intermediate_states, ctx);
+                    match_state_list_t next_states = try_match(node.simple_clause, intermediate_states, ctx, true /* require progress */);
                     result.insert(result.end(), next_states.begin(), next_states.end());
                     intermediate_states.swap(next_states);
                 }
@@ -2067,7 +2102,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
                 while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx);
+                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx, true /* require progress */);
                     result.insert(result.end(), next_states.begin(), next_states.end());
                     intermediate_states.swap(next_states);
                 }
@@ -2086,7 +2121,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
             if (has_ellipsis) {
                 match_state_list_t intermediate_states = result;
                 while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx);
+                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx, true /* require progress */);
                     result.insert(result.end(), next_states.begin(), next_states.end());
                     intermediate_states.swap(next_states);
                 }
@@ -2420,9 +2455,7 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
 static int simple_test() {
     const std::string usage =
 #if 1
-    "Usage: prog [-a <host:port>]\n"
-    "\n"
-    "Options: -a <host:port>, --address <host:port>  TCP address [default: localhost:6283].\n"
+    "usage: prog [-o <foo>]...\n"
     ;
 #else
     "Naval Fate.\n"
@@ -2446,7 +2479,7 @@ static int simple_test() {
     
     const char *args[] = {
 #if 1
-        "prog"
+        "prog", "-o", "this", "-o", "-that"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif
