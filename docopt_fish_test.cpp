@@ -1398,5 +1398,5 @@ int main(int argc, const char** argv)
     
     printf("Encountered %lu errors in docopt tests\n", err_count);
     
-    return err_count ? 0 : 1;
+    return err_count ? 1 : 0;
 }
