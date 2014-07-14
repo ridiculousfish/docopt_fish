@@ -1,33 +1,109 @@
 #include "docopt_fish.h"
 
 #include <sstream>
+#include <assert.h>
+#include <stdio.h>
 
 using namespace docopt_fish;
 using namespace std;
 
 #define ERROR_EXPECTED "<ERROR>"
 
+/**
+ Print formatted error string
+ */
+static size_t err_count;
+
+__attribute__ ((format (printf, 1, 2)))
+static void err(const char *blah, ...)
+{
+    static bool has_term = !! getenv("TERM");
+    va_list va;
+    va_start(va, blah);
+    err_count++;
+    
+    // show errors in red
+    if (has_term) {
+        fputs("\x1b[31m", stdout);
+    }
+    
+    printf("Error: ");
+    vprintf(blah, va);
+    va_end(va);
+    
+    if (has_term) {
+        // return to normal color
+        fputs("\x1b[0m", stdout);
+    }
+    
+    printf("\n");
+}
+
+/* Helpers to make a wide C string from a wide or narrow string */
+static const wchar_t *widen(const wstring &t) {
+    return t.c_str();
+}
+
+static const wchar_t *widen(const string &t) {
+    static wstring result;
+    result.erase();
+    result.insert(result.begin(), t.begin(), t.end());
+    return result.c_str();
+}
+
+template<typename string_t>
+string_t to_string(const char *x) {
+    string_t result;
+    result.insert(result.begin(), x, x + strlen(x));
+    return result;
+}
+
+
+#define do_test(e) do { if (! (e)) err("Test failed on line %lu: %s", __LINE__, #e); } while (0)
+#define do_arg_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
+
 map<string, base_argument_t<string> >
 generic_docopt_parse(const string &doc,
-              const vector<string> &argv,
-              parse_flags_t flags,
-              vector<size_t> *out_unused_arguments)
+                     const vector<string> &argv,
+                     parse_flags_t flags,
+                     vector<size_t> *out_unused_arguments)
 {
     return docopt_parse(doc, argv, flags, out_unused_arguments);
 }
 
 map<wstring, base_argument_t<wstring> >
 generic_docopt_parse(const wstring &doc,
-              const vector<wstring> &argv,
-              parse_flags_t flags,
-              vector<size_t> *out_unused_arguments)
+                     const vector<wstring> &argv,
+                     parse_flags_t flags,
+                     vector<size_t> *out_unused_arguments)
 {
     return docopt_wparse(doc, argv, flags, out_unused_arguments);
 }
 
-/* Splits up a const char * via a delimiter, returning a list of some string type */
+/* Splits up a string via a delimiter string, returning a list of some string type */
 template<typename string_t>
-static vector<string_t> split(const char *str, char delimiter) {
+static vector<string_t> split(const string_t &str, const char *delim) {
+    vector<string_t> result;
+    const string_t delim_string = to_string<string_t>(delim);
+    size_t cursor = 0;
+    while (cursor < str.size()) {
+        size_t delim_pos = str.find(delim_string, cursor);
+        if (delim_pos == string_t::npos) {
+            delim_pos = str.size();
+        }
+        result.push_back(str.substr(cursor, delim_pos - cursor));
+        cursor = delim_pos + delim_string.size();
+    }
+    return result;
+}
+
+template<typename string_t>
+static bool is_percent_digit(const string_t &val) {
+    return val.size() == 2 && val.at(0) == '%' && val.at(1) >= '0' && val.at(1) <= '9';
+}
+
+template<typename string_t>
+static vector<string_t> split_nonempty(const char *str, char delimiter) {
     vector<string_t> result;
     const char *cursor = str;
     for (;;) {
@@ -54,21 +130,92 @@ static vector<string_t> split(const char *str, char delimiter) {
     return result;
 }
 
+/* joined_expected_results is a newline-delimited "map" of the form key:value. Make a real map out of it. */
 template<typename string_t>
-static void run_1_correctness_test(const char *usage, const char *joined_argv, const char *joined_expected_results) {
-    /* Separate argv by spaces */
-    const vector<string_t> argv = split<string_t>(joined_argv, ' ');
+static map<string_t, string_t> parse_expected_results(const char *joined_expected_results) {
+    map<string_t, string_t> expected;
+    vector<string_t> expected_lines = split_nonempty<string_t>(joined_expected_results, '\n');
+    for (size_t i=0; i < expected_lines.size(); i++) {
+        const string_t &str = expected_lines.at(i);
+        size_t colon = str.find(':');
+        assert(colon != string_t::npos);
+        
+        const string_t key(str, 0, colon);
+        const string_t value(str, colon + 1);
+        expected[key] = value;
+    }
+    return expected;
+}
+
+
+template<typename string_t>
+static void run_1_correctness_test(const char *usage, const char *joined_argv, const char *joined_expected_results, size_t test_idx, size_t arg_idx) {
+    typedef map<string_t, base_argument_t<string_t> > arg_map_t;
+    typedef map<string_t, string_t> string_map_t;
     
-    /* Each line of joined_expected_results looks like "foo:bar". key:value. */
-    const vector<string_t> expected = split<string_t>(joined_expected_results, '\n');
+    /* Separate argv by spaces */
+    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    
+    /* Prepend the program name for every argument */
+    argv.insert(argv.begin(), to_string<string_t>("prog"));
     
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
+    /* Perform the parsing */
     vector<size_t> unused_args;
+    arg_map_t results = generic_docopt_parse(usage_str, argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &unused_args);
     
-    map<string_t, base_argument_t<string_t> > results = generic_docopt_parse(usage_str, argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &unused_args);
+    bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
+    bool did_error = ! unused_args.empty();
     
+    if (expects_error && ! did_error) {
+        err("Test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
+    } else if (did_error && ! expects_error) {
+        err("Test %lu.%lu was expected to succeed, but instead errored", test_idx, arg_idx);
+    } else if (! did_error && ! expects_error) {
+        /* joined_expected_results is a newline-delimited "map" of the form key:value */
+        const string_map_t expected = parse_expected_results<string_t>(joined_expected_results);
+        
+        // Verify everything we expected appears in our map
+        for (typename string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
+            const string_t &key = iter->first;
+            const string_t &val = iter->second;
+            typename arg_map_t::const_iterator arg_iter = results.find(key);
+            if (arg_iter == results.end()) {
+                err("Test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, widen(key), widen(val));
+            } else {
+                const base_argument_t<string_t> &arg = arg_iter->second;
+                /* The value here can be interpreted a few ways. If it is "True" or "False", it means we expect the argument to have no values, and to have a count of 1 or 0, respectively. If it is % followed by a one-digit number, it represents the count of the argument; values is expected to be empty. Otherwise, split the value about ', '; those are the values we expect. */
+                if (val == to_string<string_t>("True")) {
+                    /* A "true" means we expect the argument ot have no values, and to have appeared once */
+                    do_arg_test(arg.count == 1);
+                    do_arg_test(arg.values.empty());
+                } else if (val == to_string<string_t>("False") || val == to_string<string_t>("None")) {
+                    do_arg_test(arg.count == 0);
+                    do_arg_test(arg.values.empty());
+                } else if (is_percent_digit(val)) {
+                    size_t expected_count = val.at(1) - '0';
+                    assert(expected_count <= 9);
+                    do_arg_test(arg.count == expected_count);
+                    do_arg_test(arg.values.empty());
+                } else {
+                    const vector<string_t> values = split(val, ", ");
+                    do_arg_test(arg.values == values);
+                    /* Note that we don't test count here, since count will be 0 if it came from a default: clause, and nonzero if it did not */
+                }
+            }
+        }
+        
+        // Verify nothing we didn't expect appears in our map
+        for (typename arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
+            const string_t &key = iter->first;
+            typename string_map_t::const_iterator result = expected.find(key);
+            if (result == expected.end()) {
+                err("Test %lu.%lu: Unexpected key %ls", test_idx, arg_idx, widen(key));
+            }
+        }
+    }
 }
 
 template<typename string_t>
@@ -86,10 +233,10 @@ static void test_correctness()
     {   /* Case 0 */
         {   "Usage: prog",
             {
-                {   "",
+                {   "", // argv
                     ""
                 },
-                {   "--xxx",
+                {   "--xxx", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -99,13 +246,13 @@ static void test_correctness()
             "\n"
             "Options: -a  All.",
             {
-                {   "",
+                {   "", // argv
                     "-a:False"
                 },
-                {   "-a",
+                {   "-a", // argv
                     "-a:True"
                 },
-                {   "-x",
+                {   "-x", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -115,13 +262,13 @@ static void test_correctness()
             "\n"
             "Options: --all  All.",
             {
-                {   "",
+                {   "", // argv
                     "--all:False"
                 },
-                {   "--all",
+                {   "--all", // argv
                     "--all:True"
                 },
-                {   "--xxx",
+                {   "--xxx", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -131,10 +278,10 @@ static void test_correctness()
             "\n"
             "Options: -v, --verbose  Verbose.",
             {
-                {   "--verbose",
+                {   "--verbose", // argv
                     "--verbose:True"
                 },
-                {   "-v",
+                {   "-v", // argv
                     "--verbose:True"
                 },
             },
@@ -144,10 +291,10 @@ static void test_correctness()
             "\n"
             "Options: -p <PATH>",
             {
-                {   "-p home/",
+                {   "-p home/", // argv
                     "-p:home/"
                 },
-                {   "-p",
+                {   "-p", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -157,10 +304,10 @@ static void test_correctness()
             "\n"
             "Options: -p<PATH>",
             {
-                {   "-phome/",
+                {   "-phome/", // argv
                     "-p:home/"
                 },
-                {   "-p",
+                {   "-p", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -170,16 +317,16 @@ static void test_correctness()
             "\n"
             "Options: --path <path>",
             {
-                {   "--path home/",
+                {   "--path home/", // argv
                     "--path:home/"
                 },
-                {   "--pa home/",
+                {   "--pa home/", // argv
                     "--path:home/"
                 },
-                {   "--pa=home/",
+                {   "--pa=home/", // argv
                     "--path:home/"
                 },
-                {   "--path",
+                {   "--path", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -189,7 +336,7 @@ static void test_correctness()
             "\n"
             "Options: -p<PATH>, --path=<path>  Path to files.",
             {
-                {   "-proot",
+                {   "-proot", // argv
                     "--path:root"
                 },
             },
@@ -199,10 +346,10 @@ static void test_correctness()
             "\n"
             "Options:    -p <PATH>, --path <PATH>  Path to files.",
             {
-                {   "-p root",
+                {   "-p root", // argv
                     "--path:root"
                 },
-                {   "--path root",
+                {   "--path root", // argv
                     "--path:root"
                 },
             },
@@ -213,10 +360,10 @@ static void test_correctness()
             "Options:\n"
             " -p<PATH>  Path to files [default: ./]",
             {
-                {   "",
+                {   "", // argv
                     "-p:./"
                 },
-                {   "-phome",
+                {   "-phome", // argv
                     "-p:home"
                 },
             },
@@ -227,10 +374,10 @@ static void test_correctness()
             "OpTiOnS: --path=<files>  Path to files\n"
             "                [dEfAuLt: /root]",
             {
-                {   "",
+                {   "", // argv
                     "--path:/root"
                 },
-                {   "--path=home",
+                {   "--path=home", // argv
                     "--path:home"
                 },
             },
@@ -243,17 +390,17 @@ static void test_correctness()
             "    -r        Remote\n"
             "    -m <msg>  Message",
             {
-                {   "-a -r -m Hello",
+                {   "-a -r -m Hello", // argv
                     "-m:Hello\n"
                     "-a:True\n"
                     "-r:True"
                 },
-                {   "-arm yourass",
+                {   "-arm yourass", // argv
                     "-m:yourass\n"
                     "-a:True\n"
                     "-r:True"
                 },
-                {   "-a -r",
+                {   "-a -r", // argv
                     "-m:False\n"
                     "-a:True\n"
                     "-r:True"
@@ -266,18 +413,18 @@ static void test_correctness()
             "Options: --version\n"
             "         --verbose",
             {
-                {   "--version",
+                {   "--version", // argv
                     "--verbose:False\n"
                     "--version:True"
                 },
-                {   "--verbose",
+                {   "--verbose", // argv
                     "--verbose:True\n"
                     "--version:False"
                 },
-                {   "--ver",
+                {   "--ver", // argv
                     ERROR_EXPECTED
                 },
-                {   "--verb",
+                {   "--verb", // argv
                     "--verbose:True\n"
                     "--version:False"
                 },
@@ -291,7 +438,7 @@ static void test_correctness()
             " -r        Remote\n"
             " -m <msg>  Message",
             {
-                {   "-arm yourass",
+                {   "-arm yourass", // argv
                     "-m:yourass\n"
                     "-a:True\n"
                     "-r:True"
@@ -305,7 +452,7 @@ static void test_correctness()
             "         -r        Remote\n"
             "         -m <msg>  Message",
             {
-                {   "-a -r -m Hello",
+                {   "-a -r -m Hello", // argv
                     "-m:Hello\n"
                     "-a:True\n"
                     "-r:True"
@@ -319,18 +466,18 @@ static void test_correctness()
             " -a\n"
             " -b",
             {
-                {   "-a -b",
+                {   "-a -b", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-b -a",
+                {   "-b -a", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-a",
+                {   "-a", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -341,18 +488,18 @@ static void test_correctness()
             "options: -a\n"
             "         -b",
             {
-                {   "-a -b",
+                {   "-a -b", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-b -a",
+                {   "-b -a", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-a",
+                {   "-a", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -363,22 +510,22 @@ static void test_correctness()
             "options: -a\n"
             " -b",
             {
-                {   "-a -b",
+                {   "-a -b", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-b -a",
+                {   "-b -a", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-a",
+                {   "-a", // argv
                     ERROR_EXPECTED
                 },
-                {   "-b",
+                {   "-b", // argv
                     "-a:False\n"
                     "-b:True"
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -389,21 +536,21 @@ static void test_correctness()
             "options: -a\n"
             "         -b",
             {
-                {   "-a -b",
+                {   "-a -b", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-b -a",
+                {   "-b -a", // argv
                     "-a:True\n"
                     "-b:True"
                 },
-                {   "-a",
+                {   "-a", // argv
                     ERROR_EXPECTED
                 },
-                {   "-b",
+                {   "-b", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     "-a:False\n"
                     "-b:False"
                 },
@@ -415,17 +562,17 @@ static void test_correctness()
             "options: -a\n"
             "         -b",
             {
-                {   "-a -b",
+                {   "-a -b", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
-                {   "-a",
+                {   "-a", // argv
                     "-a:True\n"
                     "-b:False"
                 },
-                {   "-b",
+                {   "-b", // argv
                     "-a:False\n"
                     "-b:True"
                 },
@@ -437,18 +584,18 @@ static void test_correctness()
             "options: -a\n"
             "         -b",
             {
-                {   "-a -b",
+                {   "-a -b", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     "-a:False\n"
                     "-b:False"
                 },
-                {   "-a",
+                {   "-a", // argv
                     "-a:True\n"
                     "-b:False"
                 },
-                {   "-b",
+                {   "-b", // argv
                     "-a:False\n"
                     "-b:True"
                 },
@@ -457,13 +604,13 @@ static void test_correctness()
         /* Case 21 */
         {   "usage: prog <arg>",
             {
-                {   "10",
+                {   "10", // argv
                     "<arg>:10"
                 },
-                {   "10 20",
+                {   "10 20", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -471,13 +618,13 @@ static void test_correctness()
         /* Case 22 */
         {   "usage: prog [<arg>]",
             {
-                {   "10",
+                {   "10", // argv
                     "<arg>:10"
                 },
-                {   "10 20",
+                {   "10 20", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     "<arg>:None"
                 },
             },
@@ -485,15 +632,15 @@ static void test_correctness()
         /* Case 23 */
         {   "usage: prog <kind> <name> <type>",
             {
-                {   "10 20 40",
+                {   "10 20 40", // argv
                     "<type>:40\n"
                     "<kind>:10\n"
                     "<name>:20"
                 },
-                {   "10 20",
+                {   "10 20", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -501,12 +648,12 @@ static void test_correctness()
         /* Case 24 */
         {   "usage: prog <kind> [<name> <type>]",
             {
-                {   "10 20 40",
+                {   "10 20 40", // argv
                     "<type>:40\n"
                     "<kind>:10\n"
                     "<name>:20"
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -514,15 +661,15 @@ static void test_correctness()
         /* Case 25 */
         {   "usage: prog [<kind> | <name> <type>]",
             {
-                {   "10 20 40",
+                {   "10 20 40", // argv
                     ERROR_EXPECTED
                 },
-                {   "20 40",
+                {   "20 40", // argv
                     "<type>:40\n"
                     "<kind>:None\n"
                     "<name>:20"
                 },
-                {   "",
+                {   "", // argv
                     "<type>:None\n"
                     "<kind>:None\n"
                     "<name>:None"
@@ -535,17 +682,17 @@ static void test_correctness()
             "options:\n"
             " --all",
             {
-                {   "10 --all",
+                {   "10 --all", // argv
                     "--all:True\n"
                     "<kind>:10\n"
                     "<name>:None"
                 },
-                {   "10",
+                {   "10", // argv
                     "--all:False\n"
                     "<kind>:None\n"
                     "<name>:10"
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -553,10 +700,10 @@ static void test_correctness()
         /* Case 27 */
         {   "usage: prog [<name> <name>]",
             {
-                {   "10 20",
-                    "<name>:[u'10', u'20']"
+                {   "10 20", // argv
+                    "<name>:10, 20"
                 },
-                {   "",
+                {   "", // argv
                     "<name>:None"
                 },
             },
@@ -564,13 +711,13 @@ static void test_correctness()
         /* Case 28 */
         {   "usage: prog [(<name> <name>)]",
             {
-                {   "10 20",
-                    "<name>:[u'10', u'20']"
+                {   "10 20", // argv
+                    "<name>:10, 20"
                 },
-                {   "10",
+                {   "10", // argv
                     ERROR_EXPECTED
                 },
-                {   "",
+                {   "", // argv
                     "<name>:None"
                 },
             },
@@ -578,13 +725,13 @@ static void test_correctness()
         /* Case 29 */
         {   "usage: prog <NAME>...",
             {
-                {   "10 20",
-                    "<NAME>:[u'10', u'20']"
+                {   "10 20", // argv
+                    "<NAME>:10, 20"
                 },
-                {   "10",
+                {   "10", // argv
                     "<NAME>:10"
                 },
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -592,13 +739,13 @@ static void test_correctness()
         /* Case 30 */
         {   "usage: prog [<NAME>]...",
             {
-                {   "10 20",
-                    "<NAME>:[u'10', u'20']"
+                {   "10 20", // argv
+                    "<NAME>:10, 20"
                 },
-                {   "10",
+                {   "10", // argv
                     "<NAME>:10"
                 },
-                {   "",
+                {   "", // argv
                     "<NAME>:None"
                 },
             },
@@ -606,13 +753,13 @@ static void test_correctness()
         /* Case 31 */
         {   "usage: prog [<NAME>...]",
             {
-                {   "10 20",
-                    "<NAME>:[u'10', u'20']"
+                {   "10 20", // argv
+                    "<NAME>:10, 20"
                 },
-                {   "10",
+                {   "10", // argv
                     "<NAME>:10"
                 },
-                {   "",
+                {   "", // argv
                     "<NAME>:None"
                 },
             },
@@ -620,13 +767,13 @@ static void test_correctness()
         /* Case 32 */
         {   "usage: prog [<NAME> [<NAME> ...]]",
             {
-                {   "10 20",
-                    "<NAME>:[u'10', u'20']"
+                {   "10 20", // argv
+                    "<NAME>:10, 20"
                 },
-                {   "10",
+                {   "10", // argv
                     "<NAME>:10"
                 },
-                {   "",
+                {   "", // argv
                     "<NAME>:None"
                 },
             },
@@ -636,15 +783,15 @@ static void test_correctness()
             "\n"
             "options: --foo",
             {
-                {   "10",
+                {   "10", // argv
                     "--foo:False\n"
                     "<NAME>:10"
                 },
-                {   "--foo 10",
+                {   "--foo 10", // argv
                     "--foo:True\n"
                     "<NAME>:10"
                 },
-                {   "--foo=10",
+                {   "--foo=10", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -655,17 +802,17 @@ static void test_correctness()
             "options: --foo\n"
             "options: --bar",
             {
-                {   "10",
+                {   "10", // argv
                     "--bar:False\n"
                     "--foo:False\n"
                     "<NAME>:10"
                 },
-                {   "10 20",
+                {   "10 20", // argv
                     "--bar:False\n"
                     "--foo:False\n"
-                    "<NAME>:[u'10', u'20']"
+                    "<NAME>:10, 20"
                 },
-                {   "--foo --bar",
+                {   "--foo --bar", // argv
                     "--bar:True\n"
                     "--foo:True\n"
                     "<NAME>:None"
@@ -690,7 +837,7 @@ static void test_correctness()
             "  --moored      Mored (anchored) mine.\n"
             "  --drifting    Drifting mine.",
             {
-                {   "ship Guardian move 150 300 --speed=20",
+                {   "ship Guardian move 150 300 --speed=20", // argv
                     "shoot:False\n"
                     "--moored:False\n"
                     "--drifting:False\n"
@@ -712,7 +859,7 @@ static void test_correctness()
         /* Case 36 */
         {   "usage: prog --hello",
             {
-                {   "--hello",
+                {   "--hello", // argv
                     "--hello:True"
                 },
             },
@@ -720,10 +867,10 @@ static void test_correctness()
         /* Case 37 */
         {   "usage: prog [--hello=<world>]",
             {
-                {   "",
+                {   "", // argv
                     "--hello:False"
                 },
-                {   "--hello wrld",
+                {   "--hello wrld", // argv
                     "--hello:wrld"
                 },
             },
@@ -731,10 +878,10 @@ static void test_correctness()
         /* Case 38 */
         {   "usage: prog [-o]",
             {
-                {   "",
+                {   "", // argv
                     "-o:False"
                 },
-                {   "-o",
+                {   "-o", // argv
                     "-o:True"
                 },
             },
@@ -742,7 +889,7 @@ static void test_correctness()
         /* Case 39 */
         {   "usage: prog [-o -p -r]",
             {
-                {   "-op",
+                {   "-op", // argv
                     "-o:True\n"
                     "-p:True\n"
                     "-r:False"
@@ -752,11 +899,11 @@ static void test_correctness()
         /* Case 40 */
         {   "usage: prog --aabb | --aa",
             {
-                {   "--aa",
+                {   "--aa", // argv
                     "--aa:True\n"
                     "--aabb:False"
                 },
-                {   "--a",
+                {   "--a", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -764,7 +911,7 @@ static void test_correctness()
         /* Case 41 */
         {   "Usage: prog -v",
             {
-                {   "-v",
+                {   "-v", // argv
                     "-v:True"
                 },
             },
@@ -772,31 +919,31 @@ static void test_correctness()
         /* Case 42 */
         {   "Usage: prog [-v -v]",
             {
-                {   "",
-                    "-v:0"
+                {   "", // argv
+                    "-v:%0"
                 },
-                {   "-v",
-                    "-v:1"
+                {   "-v", // argv
+                    "-v:%1"
                 },
-                {   "-vv",
-                    "-v:2"
+                {   "-vv", // argv
+                    "-v:%2"
                 },
             },
         },
         /* Case 43 */
         {   "Usage: prog -v ...",
             {
-                {   "",
+                {   "", // argv
                     ERROR_EXPECTED
                 },
-                {   "-v",
-                    "-v:1"
+                {   "-v", // argv
+                    "-v:%1"
                 },
-                {   "-vv",
-                    "-v:2"
+                {   "-vv", // argv
+                    "-v:%2"
                 },
-                {   "-vvvvvv",
-                    "-v:6"
+                {   "-vvvvvv", // argv
+                    "-v:%6"
                 },
             },
         },
@@ -805,22 +952,22 @@ static void test_correctness()
             "\n"
             "This one is probably most readable user-friednly variant.",
             {
-                {   "",
+                {   "", // argv
                     "-v:False\n"
                     "-vvv:False\n"
                     "-vv:False"
                 },
-                {   "-v",
+                {   "-v", // argv
                     "-v:True\n"
                     "-vvv:False\n"
                     "-vv:False"
                 },
-                {   "-vv",
+                {   "-vv", // argv
                     "-v:False\n"
                     "-vvv:False\n"
                     "-vv:True"
                 },
-                {   "-vvvv",
+                {   "-vvvv", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -828,15 +975,15 @@ static void test_correctness()
         /* Case 45 */
         {   "usage: prog [--ver --ver]",
             {
-                {   "--ver --ver",
-                    "--ver:2"
+                {   "--ver --ver", // argv
+                    "--ver:%2"
                 },
             },
         },
         /* Case 46 */
         {   "usage: prog [go]",
             {
-                {   "go",
+                {   "go", // argv
                     "go:True"
                 },
             },
@@ -844,13 +991,13 @@ static void test_correctness()
         /* Case 47 */
         {   "usage: prog [go go]",
             {
-                {   "",
-                    "go:0"
+                {   "", // argv
+                    "go:%0"
                 },
-                {   "go go",
-                    "go:2"
+                {   "go go", // argv
+                    "go:%2"
                 },
-                {   "go go go",
+                {   "go go go", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -858,8 +1005,8 @@ static void test_correctness()
         /* Case 48 */
         {   "usage: prog go...",
             {
-                {   "go go go go go",
-                    "go:5"
+                {   "go go go go go", // argv
+                    "go:%5"
                 },
             },
         },
@@ -869,11 +1016,11 @@ static void test_correctness()
             "options: -a\n"
             "         -b",
             {
-                {   "-a",
+                {   "-a", // argv
                     "-a:True\n"
                     "-b:False"
                 },
-                {   "-aa",
+                {   "-aa", // argv
                     ERROR_EXPECTED
                 },
             },
@@ -884,17 +1031,17 @@ static void test_correctness()
             "    -q  Be quiet\n"
             "    -v  Be verbose.",
             {
-                {   "arg",
+                {   "arg", // argv
                     "<A>:arg\n"
                     "-v:False\n"
                     "-q:False"
                 },
-                {   "-v arg",
+                {   "-v arg", // argv
                     "<A>:arg\n"
                     "-v:True\n"
                     "-q:False"
                 },
-                {   "-q arg",
+                {   "-q arg", // argv
                     "<A>:arg\n"
                     "-v:False\n"
                     "-q:True"
@@ -904,10 +1051,10 @@ static void test_correctness()
         /* Case 51 */
         {   "usage: prog [-]",
             {
-                {   "-",
+                {   "-", // argv
                     "-:True"
                 },
-                {   "",
+                {   "", // argv
                     "-:False"
                 },
             },
@@ -915,10 +1062,10 @@ static void test_correctness()
         /* Case 52 */
         {   "usage: prog [<NAME> [<NAME> ...]]",
             {
-                {   "a b",
-                    "<NAME>:[u'a', u'b']"
+                {   "a b", // argv
+                    "<NAME>:a, b"
                 },
-                {   "",
+                {   "", // argv
                     "<NAME>:None"
                 },
             },
@@ -929,7 +1076,7 @@ static void test_correctness()
             " -a        Add\n"
             " -m <msg>  Message",
             {
-                {   "-a",
+                {   "-a", // argv
                     "-m:False\n"
                     "-a:True"
                 },
@@ -938,7 +1085,7 @@ static void test_correctness()
         /* Case 54 */
         {   "usage: prog --hello",
             {
-                {   "--hello",
+                {   "--hello", // argv
                     "--hello:True"
                 },
             },
@@ -946,10 +1093,10 @@ static void test_correctness()
         /* Case 55 */
         {   "usage: prog [--hello=<world>]",
             {
-                {   "",
+                {   "", // argv
                     "--hello:False"
                 },
-                {   "--hello wrld",
+                {   "--hello wrld", // argv
                     "--hello:wrld"
                 },
             },
@@ -957,10 +1104,10 @@ static void test_correctness()
         /* Case 56 */
         {   "usage: prog [-o]",
             {
-                {   "",
+                {   "", // argv
                     "-o:False"
                 },
-                {   "-o",
+                {   "-o", // argv
                     "-o:True"
                 },
             },
@@ -968,7 +1115,7 @@ static void test_correctness()
         /* Case 57 */
         {   "usage: prog [-o -p -r]",
             {
-                {   "-op",
+                {   "-op", // argv
                     "-o:True\n"
                     "-p:True\n"
                     "-r:False"
@@ -978,7 +1125,7 @@ static void test_correctness()
         /* Case 58 */
         {   "usage: git [-v | --verbose]",
             {
-                {   "-v",
+                {   "-v", // argv
                     "-v:True\n"
                     "--verbose:False"
                 },
@@ -987,7 +1134,7 @@ static void test_correctness()
         /* Case 59 */
         {   "usage: git remote [-v | --verbose]",
             {
-                {   "remote -v",
+                {   "remote -v", // argv
                     "-v:True\n"
                     "remote:True\n"
                     "--verbose:False"
@@ -997,7 +1144,7 @@ static void test_correctness()
         /* Case 60 */
         {   "usage: prog",
             {
-                {   "",
+                {   "", // argv
                     ""
                 },
             },
@@ -1006,11 +1153,11 @@ static void test_correctness()
         {   "usage: prog\n"
             "           prog <a> <b>",
             {
-                {   "1 2",
+                {   "1 2", // argv
                     "<a>:1\n"
                     "<b>:2"
                 },
-                {   "",
+                {   "", // argv
                     "<a>:None\n"
                     "<b>:None"
                 },
@@ -1020,7 +1167,7 @@ static void test_correctness()
         {   "usage: prog <a> <b>\n"
             "           prog",
             {
-                {   "",
+                {   "", // argv
                     "<a>:None\n"
                     "<b>:None"
                 },
@@ -1029,7 +1176,7 @@ static void test_correctness()
         /* Case 63 */
         {   "usage: prog [--file=<f>]",
             {
-                {   "",
+                {   "", // argv
                     "--file:False"
                 },
             },
@@ -1039,7 +1186,7 @@ static void test_correctness()
             "\n"
             "options: --file <a>",
             {
-                {   "",
+                {   "", // argv
                     "--file:False"
                 },
             },
@@ -1049,7 +1196,7 @@ static void test_correctness()
             "\n"
             "Options: -a, --address <host:port>  TCP address [default: localhost:6283].",
             {
-                {   "",
+                {   "", // argv
                     "--address:localhost:6283"
                 },
             },
@@ -1057,21 +1204,21 @@ static void test_correctness()
         /* Case 66 */
         {   "usage: prog --long=<arg> ...",
             {
-                {   "--long one",
+                {   "--long one", // argv
                     "--long:one"
                 },
-                {   "--long one --long two",
-                    "--long:[u'one', u'two']"
+                {   "--long one --long two", // argv
+                    "--long:one, two"
                 },
             },
         },
         /* Case 67 */
         {   "usage: prog (go <direction> --speed=<km/h>)...",
             {
-                {   "go left --speed=5  go right --speed=9",
-                    "go:2\n"
-                    "<direction>:[u'left', u'right']\n"
-                    "--speed:[u'5', u'9']"
+                {   "go left --speed=5  go right --speed=9", // argv
+                    "go:%2\n"
+                    "<direction>:left, right\n"
+                    "--speed:5, 9"
                 },
             },
         },
@@ -1080,7 +1227,7 @@ static void test_correctness()
             "\n"
             "options: -a",
             {
-                {   "-a",
+                {   "-a", // argv
                     "-a:True"
                 },
             },
@@ -1090,10 +1237,10 @@ static void test_correctness()
             "\n"
             "options: -o <o>  [default: x]",
             {
-                {   "-o this -o that",
-                    "-o:[u'this', u'that']"
+                {   "-o this -o that", // argv
+                    "-o:this, that"
                 },
-                {   "",
+                {   "", // argv
                     "-o:x"
                 },
             },
@@ -1103,10 +1250,10 @@ static void test_correctness()
             "\n"
             "options: -o <o>  [default: x y]",
             {
-                {   "-o this",
+                {   "-o this", // argv
                     "-o:this"
                 },
-                {   "",
+                {   "", // argv
                     "-o:x y"
                 },
             },
@@ -1116,7 +1263,7 @@ static void test_correctness()
             "\n"
             "options: -p <PATH>",
             {
-                {   "-pHOME",
+                {   "-pHOME", // argv
                     "-p:HOME"
                 },
             },
@@ -1124,7 +1271,7 @@ static void test_correctness()
         /* Case 72 */
         {   "Usage: foo (--xx=<x>|--yy=<y>)...",
             {
-                {   "--xx=1 --yy=2",
+                {   "--xx=1 --yy=2", // argv
                     "--yy:2\n"
                     "--xx:1"
                 },
@@ -1133,7 +1280,7 @@ static void test_correctness()
         /* Case 73 */
         {   "usage: prog [<input file>]",
             {
-                {   "f.txt",
+                {   "f.txt", // argv
                     "<input file>:f.txt"
                 },
             },
@@ -1141,8 +1288,8 @@ static void test_correctness()
         /* Case 74 */
         {   "usage: prog [--input=<file name>]...",
             {
-                {   "--input a.txt --input=b.txt",
-                    "--input:[u'a.txt', u'b.txt']"
+                {   "--input a.txt --input=b.txt", // argv
+                    "--input:a.txt, b.txt"
                 },
             },
         },
@@ -1152,7 +1299,7 @@ static void test_correctness()
             "\n"
             "options: --loglevel=<N>",
             {
-                {   "fail --loglevel 5",
+                {   "fail --loglevel 5", // argv
                     "fail:True\n"
                     "good:False\n"
                     "--loglevel:5"
@@ -1162,7 +1309,7 @@ static void test_correctness()
         /* Case 76 */
         {   "usage:prog --foo",
             {
-                {   "--foo",
+                {   "--foo", // argv
                     "--foo:True"
                 },
             },
@@ -1170,7 +1317,7 @@ static void test_correctness()
         /* Case 77 */
         {   "PROGRAM USAGE: prog --foo",
             {
-                {   "--foo",
+                {   "--foo", // argv
                     "--foo:True"
                 },
             },
@@ -1180,7 +1327,7 @@ static void test_correctness()
             "           prog --bar\n"
             "NOT PART OF SECTION",
             {
-                {   "--foo",
+                {   "--foo", // argv
                     "--bar:False\n"
                     "--foo:True"
                 },
@@ -1193,7 +1340,7 @@ static void test_correctness()
             "\n"
             "NOT PART OF SECTION",
             {
-                {   "--foo",
+                {   "--foo", // argv
                     "--bar:False\n"
                     "--foo:True"
                 },
@@ -1205,7 +1352,7 @@ static void test_correctness()
             " prog --bar\n"
             "NOT PART OF SECTION",
             {
-                {   "--foo",
+                {   "--foo", // argv
                     "--bar:False\n"
                     "--foo:True"
                 },
@@ -1222,7 +1369,7 @@ static void test_correctness()
             " --spam\n"
             "-not-an-option-",
             {
-                {   "--baz --egg",
+                {   "--baz --egg", // argv
                     "--baz:True\n"
                     "--bar:False\n"
                     "--spam:False\n"
@@ -1239,7 +1386,7 @@ static void test_correctness()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_correctness_test<string_t>(testcase->usage, args->argv, args->expected_results);
+            run_1_correctness_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
@@ -1248,4 +1395,8 @@ int main(int argc, const char** argv)
 {
     test_correctness<string>();
     test_correctness<wstring>();
+    
+    printf("Encountered %lu errors in docopt tests\n", err_count);
+    
+    return err_count ? 0 : 1;
 }
