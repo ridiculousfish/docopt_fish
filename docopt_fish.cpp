@@ -1,8 +1,8 @@
 #include "docopt_fish.h"
 #include <memory>
 #include <assert.h>
-#include <cstring>
-#include <cstdint>
+#include <string.h>
+#include <stdint.h>
 #include <iostream>
 #include <numeric>
 
@@ -89,45 +89,32 @@ static size_t find_case_insensitive(const std::wstring &haystack, const char *ne
     return std::wstring::npos;
 }
 
-/* Class representing a range of a string */
-struct range_t {
-    size_t start;
-    size_t length;
-    range_t() : start(0), length(0) {}
-    range_t(size_t s, size_t l) : start(s), length(l) {}
+size_t range_t::end() const {
+    size_t result = start + length;
+    assert(result >= start); //don't overflow
+    return result;
+}
 
-    size_t end() const {
-        size_t result = start + length;
-        assert(result >= start); //don't overflow
-        return result;
-    }
-    
-    bool empty() const {
-        return length == 0;
-    }
+bool range_t::empty() const {
+    return length == 0;
+}
 
-    bool operator==(const range_t &rhs) const {
-        return this->start == rhs.start && this->length == rhs.length;
-    }
+bool range_t::operator==(const range_t &rhs) const {
+    return this->start == rhs.start && this->length == rhs.length;
+}
 
-    // Range comparison so these can be used as dictionary keys
-    bool operator<(const range_t &rhs) const {
-        if (this->start != rhs.start) {
-            return this->start < rhs.start;
-        }
-        return this->length < rhs.length;
-    }
+bool range_t::operator!=(const range_t &rhs) const {
+    return !(*this == rhs);
+}
 
-    // Merges a range into this range. Empty ranges are discarded.
-    void merge(const range_t &rhs) {
-        if (this->empty()) {
-            *this = rhs;
-        } else if (! rhs.empty()) {
-            this->start = std::min(this->start, rhs.start);
-            this->length = std::max(this->end(), rhs.end()) - this->start;
-        }
+void range_t::merge(const range_t &rhs) {
+    if (this->empty()) {
+        *this = rhs;
+    } else if (! rhs.empty()) {
+        this->start = std::min(this->start, rhs.start);
+        this->length = std::max(this->end(), rhs.end()) - this->start;
     }
-};
+}
 typedef std::vector<range_t> range_list_t;
 
 /* A token is just a range of some string, with a type */
@@ -1022,24 +1009,21 @@ struct expression_t : public base_t {
 
 
 /* Class representing an error */
-struct error_t {
-    /* Where the error occurred */
-    size_t location;
-
-    /* Text of the error */
-    string_t text;
-};
+typedef error_t<string_t> error_t;
 typedef std::vector<error_t> error_list_t;
 
 /* Constructor takes the source */
 public:
 const string_t source;
-const parse_flags_t parse_flags;
-docopt_impl(const string_t &s, parse_flags_t f) : source(s), parse_flags(f){}
+parse_flags_t parse_flags;
+docopt_impl(const string_t &s) : source(s), parse_tree(NULL) {}
 
 #pragma mark -
 #pragma mark Instance Variables
 #pragma mark -
+
+/* The usage parse tree */
+usage_t *parse_tree;
 
 /* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
 option_list_t shortcut_options;
@@ -2333,7 +2317,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
         }
     }
     
-    // Return the one with the fewest unused arguments
+    // Determine the index of the one with the fewest unused arguments
     size_t best_state_idx = npos;
     index_list_t best_unused_args;
     for (size_t i=0; i < result.size(); i++) {
@@ -2369,34 +2353,43 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
     }
 }
 
-option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused_arguments, bool log_stuff = false) {
+/* Parses the docopt, etc. Returns true on success, false on error */
+bool preflight() {
+    /* Clean up from any prior run */
+    if (this->parse_tree) {
+        delete this->parse_tree;
+        this->parse_tree = NULL;
+    }
+    this->shortcut_options.clear();
+    this->all_options.clear();
+    this->all_variables.clear();
+    this->all_static_arguments.clear();
+
     const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
     if (usage_ranges.empty()) {
         append_error(&this->errors, npos, "Unable to find Usage: section");
-        return option_map_t();
+        return false;
     } else if (usage_ranges.size() > 1) {
         append_error(&this->errors, npos, "More than one Usage: section");
-        return option_map_t();
+        return false;
     }
-
+    
     // Extract options from the options section
     this->shortcut_options = this->parse_options_spec(&this->errors);
     this->uniqueize_options(&this->shortcut_options, &this->errors);
     
     parse_context_t ctx(this->source, this->shortcut_options, usage_ranges.at(0));
-    usage_t *tree = usage_t::parse(&ctx);
-    
-    if (! tree) {
-        fprintf(stderr, "failed to parse!\n");
-        return option_map_t();
+    this->parse_tree = usage_t::parse(&ctx);
+    if (! this->parse_tree) {
+        append_error(&this->errors, npos, "Failed to parse");
+        return false;
     }
-
+    
     // Extract options and variables from the usage sections
     option_list_t usage_options;
-    this->collect_options_and_variables(*tree, &usage_options, &this->all_variables, &this->all_static_arguments);
+    this->collect_options_and_variables(*this->parse_tree, &usage_options, &this->all_variables, &this->all_static_arguments);
 
     // Combine these into a single list
-    this->all_options.clear();
     this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
     this->all_options.insert(this->all_options.end(), usage_options.begin(), usage_options.end());
     this->all_options.insert(this->all_options.end(), this->shortcut_options.begin(), this->shortcut_options.end());
@@ -2427,8 +2420,18 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
             }
         }
     }
+    
+    /* Successfully preflighted */
+    return true;
+}
 
-    // Dump them
+option_map_t best_assignment(const string_list_t &argv, parse_flags_t flags, index_list_t *out_unused_arguments, bool log_stuff = false) {
+    // Preflight
+    if (! this->preflight()) {
+        return option_map_t();
+    }
+
+    // Dump options
     if (log_stuff) {
         for (size_t i=0; i < all_options.size(); i++) {
             fprintf(stderr, "Option %lu: %ls\n", i, widen(all_options.at(i).describe(this->source)).c_str());
@@ -2436,8 +2439,11 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
     }
 
     if (log_stuff) {
-        std::cerr << node_dumper_t::dump_tree(*tree, this->source) << "\n";
+        std::cerr << node_dumper_t::dump_tree(*this->parse_tree, this->source) << "\n";
     }
+    
+    // Store flags
+    this->parse_flags = flags;
 
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
@@ -2448,24 +2454,21 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
             size_t arg_idx = positionals.at(i).idx_in_argv;
             fprintf(stderr, "positional %lu: %ls\n", i, widen(argv.at(arg_idx)).c_str());
         }
-    }
 
-    for (size_t i=0; i < resolved_options.size(); i++) {
-        resolved_option_t &opt = resolved_options.at(i);
-        range_t range = opt.option.name;
-        const string_t name = string_t(this->source, range.start, range.length);
-        if (log_stuff) {
-            std::wstring value_str;
-            if (opt.value_idx_in_argv != npos) {
-                const range_t &value_range = opt.value_range_in_arg;
-                value_str = widen(string_t(argv.at(opt.value_idx_in_argv), value_range.start, value_range.length));
-            }
-            fprintf(stderr, "Resolved %lu: %ls (%ls) <%lu, %lu>\n", i, widen(name).c_str(), value_str.c_str(), opt.option.name.start, opt.option.name.length);
+        for (size_t i=0; i < resolved_options.size(); i++) {
+            resolved_option_t &opt = resolved_options.at(i);
+            range_t range = opt.option.name;
+            const string_t name = string_t(this->source, range.start, range.length);
+                std::wstring value_str;
+                if (opt.value_idx_in_argv != npos) {
+                    const range_t &value_range = opt.value_range_in_arg;
+                    value_str = widen(string_t(argv.at(opt.value_idx_in_argv), value_range.start, value_range.length));
+                }
+                fprintf(stderr, "Resolved %lu: %ls (%ls) <%lu, %lu>\n", i, widen(name).c_str(), value_str.c_str(), opt.option.name.start, opt.option.name.length);
         }
     }
 
-    option_map_t result = this->match_argv(argv, positionals, resolved_options, all_options, all_variables, *tree, out_unused_arguments, log_stuff);
-    delete tree;
+    option_map_t result = this->match_argv(argv, positionals, resolved_options, all_options, all_variables, *this->parse_tree, out_unused_arguments, log_stuff);
     
     if (log_stuff) {
         for (typename option_map_t::const_iterator iter = result.begin(); iter != result.end(); ++iter) {
@@ -2485,13 +2488,32 @@ option_map_t best_assignment(const string_list_t &argv, index_list_t *out_unused
     return result;
 }
 
+string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags)
+{
+    // Store flags
+    // TODO: this isn't thread safe...
+    this->parse_flags = flags;
+    
+    positional_argument_list_t positionals;
+    resolved_option_list_t resolved_options;
+    this->separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
+    
+    
+}
+
 #if SIMPLE_TEST
 static int simple_test() {
     const std::string usage =
 #if 1
-    "usage: prog good [options]\n"
-    "       prog fail [options]\n"
-    "options: --loglevel=N\n"
+    "Usage:\n"
+    "       jobs [options] [<pid>]\n"
+    "\n"
+    "Options:\n"
+    "       ‐c, ‐‐command  prints the command name for each process in jobs.\n"
+    "       ‐g, ‐‐group  only prints the group ID of each job.\n"
+    "       ‐h, --help  displays a help message and exits.\n"
+    "       ‐l, --last  prints only the last job to be started.\n"
+    "       ‐p, ‐‐pid  prints the process ID for each process in all jobs.\n"
     ;
 #else
     "Naval Fate.\n"
@@ -2515,7 +2537,7 @@ static int simple_test() {
     
     const char *args[] = {
 #if 1
-        "prog", "--input", "a.txt", "--input=b.txt"
+        "jobs", "--last"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif
@@ -2524,9 +2546,9 @@ static int simple_test() {
     size_t arg_count = sizeof args / sizeof *args;
     std::vector<std::string> argv(args, args + arg_count);
     
-    docopt_impl<std::string> impl(usage, flags_default | flag_generate_empty_args);
+    docopt_impl<std::string> impl(usage);
     std::vector<size_t> unused_arguments;
-    option_map_t match = impl.best_assignment(argv, &unused_arguments, true);
+    option_map_t match = impl.best_assignment(argv, flags_default | flag_generate_empty_args, &unused_arguments, true);
     
     for (size_t i=0; i < unused_arguments.size(); i++) {
         size_t arg_idx = unused_arguments.at(i);
@@ -2540,18 +2562,77 @@ static int simple_test() {
 // close the class
 CLOSE_DOCOPT_IMPL;
 
+
+template<typename string_t>
+argument_parser_t<string_t> *argument_parser_t<string_t>::create(const string_t &doc, std::vector<error_t<string_t> > *out_errors)
+{
+    /* Optimistically create the parser */
+    argument_parser_t<string_t> *result = new argument_parser_t<string_t>();
+    result->src = doc;
+    
+    /* Make and store its guts */
+    result->impl = new docopt_impl<string_t>(result->src);
+
+    if (! result->impl->preflight()) {
+        /* D'oh. Note that argument_parser_t's destructor will clean up the impl.  */
+        if (out_errors != NULL) {
+            *out_errors = result->impl->errors;
+        }
+        delete result;
+        return NULL;
+    }
+    return result;
+}
+
+template<typename string_t>
+std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags)
+{
+    size_t arg_count = argv.size();
+    std::vector<argument_status_t> result(arg_count, status_valid);
+
+    index_list_t unused_args;
+    impl->best_assignment(argv, flags, &unused_args);
+    
+    // Unused arguments are all invalid
+    for (size_t i=0; i < unused_args.size(); i++) {
+        size_t unused_arg_idx = unused_args.at(i);
+        result.at(unused_arg_idx) = status_invalid;
+    }
+    return result;
+}
+
+template<typename string_t>
+std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags)
+{
+    return impl->suggest_next_argument(argv, flags);
+}
+
+/* Destructor */
+template<typename string_t>
+argument_parser_t<string_t>::~argument_parser_t<string_t>() {
+    /* Clean up guts */
+    docopt_impl<string_t> *typed_impl = static_cast<docopt_impl<string_t> *>(this->impl);
+    if (typed_impl != NULL) {
+        delete typed_impl;
+    }
+}
+
 std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
-    docopt_impl<std::string> impl(usage_doc, flags);
-    return impl.best_assignment(argv, out_unused_arguments);
+    docopt_impl<std::string> impl(usage_doc);
+    return impl.best_assignment(argv, flags, out_unused_arguments);
 }
 
 std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
-    docopt_impl<std::wstring> impl(usage_doc, flags);
-    return impl.best_assignment(argv, out_unused_arguments);
+    docopt_impl<std::wstring> impl(usage_doc);
+    return impl.best_assignment(argv, flags, out_unused_arguments);
 }
 
 // close the namespace
 CLOSE_DOCOPT_IMPL
+
+// Force template instantiation
+template class docopt_fish::argument_parser_t<std::string>;
+template class docopt_fish::argument_parser_t<std::wstring>;
 
 #if SIMPLE_TEST
 int main(void) {
