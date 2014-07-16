@@ -45,10 +45,12 @@ static const wchar_t *widen(const wstring &t) {
 }
 
 static const wchar_t *widen(const string &t) {
-    static wstring result;
-    result.erase();
-    result.insert(result.begin(), t.begin(), t.end());
-    return result.c_str();
+    static wstring result[16];
+    static size_t idx = 0;
+    idx = (idx + 1) % 16;
+    result[idx].erase();
+    result[idx].insert(result[idx].begin(), t.begin(), t.end());
+    return result[idx].c_str();
 }
 
 template<typename string_t>
@@ -93,6 +95,20 @@ static vector<string_t> split(const string_t &str, const char *delim) {
         }
         result.push_back(str.substr(cursor, delim_pos - cursor));
         cursor = delim_pos + delim_string.size();
+    }
+    return result;
+}
+
+/* Joins a vector of strings via a delimiter */
+template<typename string_t>
+string_t join(const vector<string_t> &vec, const char *delim) {
+    string_t result;
+    const string_t delim_string = to_string<string_t>(delim);
+    for (size_t i=0; i < vec.size(); i++) {
+        if (i > 0) {
+            result.append(delim_string);
+        }
+        result.append(vec.at(i));
     }
     return result;
 }
@@ -147,6 +163,44 @@ static map<string_t, string_t> parse_expected_results(const char *joined_expecte
     return expected;
 }
 
+
+template<typename string_t>
+static void run_1_suggestion_test(const char *usage, const char *joined_argv, const char *joined_expected_suggestions, size_t test_idx, size_t arg_idx) {
+    using namespace docopt_fish;
+    
+    /* Separate argv by spaces */
+    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    
+    /* Prepend the program name for every argument */
+    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    
+    /* Usage as a string */
+    const string_t usage_str(usage, usage + strlen(usage));
+    
+    std::vector<error_t<string_t> > errors;
+    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, &errors);
+    
+    if (! errors.empty()) {
+        err("Test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
+        for (size_t i=0; i < errors.size(); i++) {
+            fprintf(stderr, "\t%ls\n", widen(errors.at(i).text));
+        }
+    } else {
+        /* Get the suggested arguments, then sort and join them */
+        std::vector<string_t> suggestions = parser->suggest_next_argument(argv, flags_default);
+        sort(suggestions.begin(), suggestions.end());
+        const string_t sugg_string = join(suggestions, ", ");
+        
+        /* Split, sort, and join expected suggestions */
+        std::vector<string_t> expected_vector = split(to_string<string_t>(joined_expected_suggestions), ", ");
+        sort(expected_vector.begin(), expected_vector.end());
+        const string_t expected_string = join(expected_vector, ", ");
+        
+        if (sugg_string != expected_string) {
+            err("Test %lu.%lu: Wrong suggestions. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_string), widen(sugg_string));
+        }
+    }
+}
 
 template<typename string_t>
 static void run_1_correctness_test(const char *usage, const char *joined_argv, const char *joined_expected_results, size_t test_idx, size_t arg_idx) {
@@ -218,18 +272,21 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     }
 }
 
+
+struct args_t {
+    const char * argv;
+    const char * expected_results;
+};
+
+struct testcase_t {
+    const char *usage;
+    args_t args[8];
+};
+
 template<typename string_t>
 static void test_correctness()
 {
-    struct args_t {
-        const char * argv;
-        const char * expected_results;
-    };
-    
-    const struct testcase_t {
-        const char *usage;
-        args_t args[8];
-    } testcases[] =
+    const testcase_t testcases[] =
     {   /* Case 0 */
         {   "Usage: prog",
             {
@@ -1391,10 +1448,43 @@ static void test_correctness()
     }
 }
 
+template<typename string_t>
+static void test_suggestions()
+{
+    const testcase_t testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog --status\n"
+            "       prog jump [--height <in>]",
+            {
+                {   "", // argv
+                    "jump, --status"
+                },
+                {   "jump", // argv
+                    "--height"
+                },
+                {   "jump --height", // argv
+                    "<km>"
+                },
+            },
+        },
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const testcase_t *testcase = &testcases[testcase_idx];
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+            const args_t *args = &testcase->args[arg_idx];
+            run_1_suggestion_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+        }
+    }
+}
+
+
 int main(int argc, const char** argv)
 {
     test_correctness<string>();
     test_correctness<wstring>();
+    
+    test_suggestions<string>();
+    test_suggestions<string>();
     
     printf("Encountered %lu errors in docopt tests\n", err_count);
     

@@ -364,6 +364,15 @@ static range_t scan_while(const string_t &str, range_t *remaining, T func) {
  
  */
 
+ enum {
+    symbol_alternation_list,
+    symbol_or_continuation,
+    symbol_expression_list,
+    symbol_opt_expression_list,
+    symbol_expression,
+    symbol_simple_clause
+ };
+
 struct alternation_list;
 struct expression_list_t;
 struct opt_expression_list_t;
@@ -1015,7 +1024,6 @@ typedef std::vector<error_t> error_list_t;
 /* Constructor takes the source */
 public:
 const string_t source;
-parse_flags_t parse_flags;
 docopt_impl(const string_t &s) : source(s), parse_tree(NULL) {}
 
 #pragma mark -
@@ -1553,7 +1561,7 @@ void uniqueize_options(option_list_t *options, error_list_t *errors UNUSED) cons
 }
 
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx. */
-bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
+bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
     const string_t &arg = argv.at(*idx);
     assert(type == option_t::single_long || type == option_t::double_long);
     assert(substr_equals("--", arg, (type == option_t::double_long ? 2 : 1)));
@@ -1580,7 +1588,7 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, size_t *idx, c
         }
     }
     
-    if (matches.empty() && (this->parse_flags & flag_resolve_unambiguous_prefixes)) {
+    if (matches.empty() && (flags & flag_resolve_unambiguous_prefixes)) {
         /* We didn't get any direct matches; look for an unambiguous prefix match */
         option_list_t prefix_matches;
         for (size_t i=0; i < options.size(); i++) {
@@ -1793,7 +1801,7 @@ bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &op
 }
 
 /* The Python implementation calls this "parse_argv" */
-void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first UNUSED = false) {
+void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, bool options_first UNUSED = false) {
 
     size_t idx = 0;
     while (idx < argv.size()) {
@@ -1806,7 +1814,7 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
             break;
         } else if (substr_equals("--", arg, 2)) {
             // Leading long option
-            if (parse_long(argv, option_t::double_long, &idx, options, out_resolved_options, &this->errors)) {
+            if (parse_long(argv, option_t::double_long, flags, &idx, options, out_resolved_options, &this->errors)) {
                 // parse_long will have updated idx and out_resolved_options
             } else {
                 // This argument is unused
@@ -1821,7 +1829,7 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
                3. A short option with a value: -DNDEBUG
              Try to parse it as a long option; if that fails try to parse it as a short option
              */
-            if (parse_long(argv, option_t::single_long, &idx, options, out_resolved_options, &this->errors)) {
+            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, &this->errors)) {
                 // parse_long succeeded. TODO: implement this.
             } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, &this->errors)) {
                 // parse_unseparated_short will have updated idx and out_resolved_options
@@ -1845,8 +1853,13 @@ typedef std::map<string_t, base_argument_t<string_t> > option_map_t;
 typedef std::vector<option_map_t> option_map_list_t;
 
 struct match_state_t {
+    // Map from option names to arguments
     option_map_t option_map;
+    
+    // Next positional to dequeue
     size_t next_positional_index;
+    
+    // Bitset of options we've consumed
     std::vector<bool> consumed_options;
 
     match_state_t() : next_positional_index(0) {}
@@ -1874,14 +1887,18 @@ typedef std::vector<match_state_t> match_state_list_t;
 static match_state_list_t no_match() { return match_state_list_t(); }
 
 struct match_context_t {
+    const parse_flags_t flags;
+    
     /* Note: these are stored references. Match context objects are expected to be transient and stack-allocated. */
     const positional_argument_list_t &positionals;
     const resolved_option_list_t &resolved_options;
     const string_list_t &argv;
     
+    string_list_t suggested_next_arguments;
+    
     /* Hackish - records whether we are within square brackets. This is because a sequence of options becomes non-required when in square brackets. */
     bool is_in_square_brackets;
-
+    
     bool has_more_positionals(const match_state_t *state) const {
         assert(state->next_positional_index <= this->positionals.size());
         return state->next_positional_index < this->positionals.size();
@@ -1945,7 +1962,7 @@ struct match_context_t {
         return positionals.at(state->next_positional_index++);
     }
 
-    match_context_t(const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : positionals(p), resolved_options(r), argv(av), is_in_square_brackets(false)
+    match_context_t(parse_flags_t f, const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : flags(f), positionals(p), resolved_options(r), argv(av), is_in_square_brackets(false)
     {}
 };
 
@@ -2152,7 +2169,11 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
         case 3:
         {
             // This is the [options] clause. It does not have ellipsis.
-            result = this->match_options(this->shortcut_options, false /* don't require match */, state, ctx);
+            result = this->match_options(this->shortcut_options, state, ctx);
+            if (result.empty()) {
+                // Matches are not required
+                state_destructive_append_to(state, &result);
+            }
             break;
         }
 
@@ -2166,7 +2187,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
 
 // Match the options in the options list, updating the state
 // This returns success (i.e. a non-empty state list) if we match at least one
-match_state_list_t match_options(const option_list_t &options_in_doc, bool require__match, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx) {
     match_state_list_t result;
     bool successful_match = false;
     for (size_t j=0; j < options_in_doc.size(); j++) {
@@ -2200,8 +2221,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, bool requi
         }
     }
     
-    // We return a state if either we don't require a match, or we do require a match but we found one.
-    if (! require__match || successful_match) {
+    if (successful_match) {
         state_destructive_append_to(state, &result);
     }
     return result;
@@ -2222,13 +2242,23 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
             const positional_argument_t &positional = ctx->acquire_next_positional(state);
             arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
             state_destructive_append_to(state, &result);
+        } else {
+            // No more positionals. Suggest one.
+            ctx->suggested_next_arguments.push_back(string_t(this->source, range.start, range.length));
         }
     } else if (first_char == char_t('-') && range.length > 1) {
         // Option. Use match_options() on an array containing exactly this option.
         option_list_t options_in_doc;
         options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
-        bool require_match = ! ctx->is_in_square_brackets;
-        result = this->match_options(options_in_doc, require_match, state, ctx);
+        result = this->match_options(options_in_doc, state, ctx);
+        if (result.empty()) {
+            // Didn't get any options. Suggest one.
+            ctx->suggested_next_arguments.push_back(options_in_doc.back().key_as_string(this->source));
+            if (ctx->is_in_square_brackets) {
+                // Here we don't require a match. Also return the state
+                state_destructive_append_to(state, &result);
+            }
+        }
     } else {
         // Fixed argument
         // Compare the next positional to this static argument
@@ -2242,14 +2272,17 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
                 ctx->acquire_next_positional(state);
                 state_destructive_append_to(state, &result);
             }
+        } else {
+            // No more positionals. Suggest one.
+            ctx->suggested_next_arguments.push_back(string_t(this->source, range.start, range.length));
         }
     }
     return result;
 }
 
-option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options, const range_list_t &all_variables) {
+option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options, const range_list_t &all_variables, parse_flags_t flags) {
     // If we aren't asked to do empty args, then skip it
-    if (! (this->parse_flags & flag_generate_empty_args)) {
+    if (! (flags & flag_generate_empty_args)) {
         return map;
     }
     
@@ -2290,11 +2323,11 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
 }
 
 /* Matches argv */
-option_map_t match_argv(const string_list_t &argv, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const range_list_t &all_variables, const usage_t &tree, index_list_t *out_unused_arguments, bool log_stuff = false) {
-    match_context_t ctx(positionals, resolved_options, argv);
+option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const range_list_t &all_variables, index_list_t *out_unused_arguments, bool log_stuff = false) {
+    match_context_t ctx(flags, positionals, resolved_options, argv);
     match_state_t init_state;
     init_state.consumed_options.resize(resolved_options.size(), false);
-    match_state_list_t result = match(tree, &init_state, &ctx);
+    match_state_list_t result = match(*this->parse_tree, &init_state, &ctx);
 
     if (log_stuff) {
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
@@ -2340,7 +2373,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
         if (out_unused_arguments != NULL) {
             out_unused_arguments->swap(best_unused_args);
         }
-        return finalize_option_map(result.at(best_state_idx).option_map, all_options, all_variables);
+        return finalize_option_map(result.at(best_state_idx).option_map, all_options, all_variables, flags);
     } else {
         // No states. Every argument is unused.
         if (out_unused_arguments != NULL) {
@@ -2349,7 +2382,7 @@ option_map_t match_argv(const string_list_t &argv, const positional_argument_lis
                 out_unused_arguments->push_back(i);
             }
         }
-        return finalize_option_map(option_map_t(), all_options, all_variables);
+        return finalize_option_map(option_map_t(), all_options, all_variables, flags);
     }
 }
 
@@ -2442,12 +2475,9 @@ option_map_t best_assignment(const string_list_t &argv, parse_flags_t flags, ind
         std::cerr << node_dumper_t::dump_tree(*this->parse_tree, this->source) << "\n";
     }
     
-    // Store flags
-    this->parse_flags = flags;
-
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
-    this->separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
+    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options);
 
     if (log_stuff) {
         for (size_t i=0; i < positionals.size(); i++) {
@@ -2468,7 +2498,7 @@ option_map_t best_assignment(const string_list_t &argv, parse_flags_t flags, ind
         }
     }
 
-    option_map_t result = this->match_argv(argv, positionals, resolved_options, all_options, all_variables, *this->parse_tree, out_unused_arguments, log_stuff);
+    option_map_t result = this->match_argv(argv, flags, positionals, resolved_options, all_options, all_variables, out_unused_arguments, log_stuff);
     
     if (log_stuff) {
         for (typename option_map_t::const_iterator iter = result.begin(); iter != result.end(); ++iter) {
@@ -2490,15 +2520,15 @@ option_map_t best_assignment(const string_list_t &argv, parse_flags_t flags, ind
 
 string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags)
 {
-    // Store flags
-    // TODO: this isn't thread safe...
-    this->parse_flags = flags;
-    
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
-    this->separate_argv_into_options_and_positionals(argv, all_options, &positionals, &resolved_options);
+    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options);
     
-    
+    match_context_t ctx(flags, positionals, resolved_options, argv);
+    match_state_t init_state;
+    init_state.consumed_options.resize(resolved_options.size(), false);
+    match(*this->parse_tree, &init_state, &ctx);
+    return ctx.suggested_next_arguments;
 }
 
 #if SIMPLE_TEST
@@ -2602,7 +2632,7 @@ std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(c
 }
 
 template<typename string_t>
-std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags)
+std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags)
 {
     return impl->suggest_next_argument(argv, flags);
 }
