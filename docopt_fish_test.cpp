@@ -1457,16 +1457,45 @@ static void test_suggestions()
             "       prog jump [--height <in>]",
             {
                 {   "", // argv
-                    "jump, --status"
+                    "jump, --status, --height"
                 },
                 {   "jump", // argv
                     "--height"
                 },
                 {   "jump --height", // argv
-                    "<km>"
+                    "<in>"
                 },
             },
         },
+        /* Case 1 */
+        {   "Usage: prog --status\n"
+            "       prog jump [--height <in>]",
+            {
+                {   "", // argv
+                    "jump, --status, --height"
+                },
+                {   "jump", // argv
+                    "--height"
+                },
+                {   "jump --height", // argv
+                    "<in>"
+                },
+            },
+        },
+        /* Case 2 */
+        {   "Usage: prog [fast] [options]\n"
+            "Options: -f, --foo",
+            {
+                {   "", // argv
+                    "fast, -f, --foo"
+                },
+                {   "fast", // argv
+                    "-f, --foo"
+                },
+
+            },
+        },
+        {NULL, {}}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const testcase_t *testcase = &testcases[testcase_idx];

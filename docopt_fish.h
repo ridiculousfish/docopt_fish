@@ -9,13 +9,13 @@ namespace docopt_fish
 {
     /* Our docopt classes are parameterized by a string, expected to be either std::wstring or std::string */
     enum {
-        flags_default = 0,
+        flags_default = 0U,
         
         /* If set, specifies that we should generate arguments even for unspecified values. These will have a count of 0. */
-        flag_generate_empty_args = 1 << 0,
+        flag_generate_empty_args = 1U << 0,
         
         /* If set, long options may be resolved using unambiguous prefixes. */
-        flag_resolve_unambiguous_prefixes = 1 << 1,
+        flag_resolve_unambiguous_prefixes = 1U << 1,
     };
     typedef unsigned int parse_flags_t;
     
