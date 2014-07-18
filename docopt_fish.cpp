@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <iostream>
 #include <numeric>
+#include <set>
 
 #define UNUSED __attribute__((unused))
 
@@ -1886,7 +1887,7 @@ struct match_state_t {
     // Bitset of options we've consumed
     std::vector<bool> consumed_options;
     
-    string_list_t suggested_next_arguments;
+    std::set<string_t> suggested_next_arguments;
 
     match_state_t() : next_positional_index(0) {}
 
@@ -1898,13 +1899,17 @@ struct match_state_t {
     }
     
     
-    /* Returns the "progress" of a state. This is a sum of the number of positionals and arguments conusmed. This is not directly comparable (two states may have identical progress values but be different) but it does capture the relationship between a state and another state derived from it, i.e. if the progress does not change then the child state is identical to its parent. */
-    size_t number_of_arguments_consumed() const {
+    /* Returns the "progress" of a state. This is a sum of the number of positionals and arguments consumed, plus the number of suggestions. This is not directly comparable (two states may have identical progress values but be different) but it does capture the relationship between a state and another state derived from it, i.e. if the progress does not change then the child state is identical to its parent. */
+    size_t progress() const {
         // Add in positionals
         size_t result = this->next_positional_index;
         
         // Add in arguments by counting set bits in the bitmap
         result += std::accumulate(this->consumed_options.begin(), this->consumed_options.end(), 0);
+        
+        // Add in number of suggestions
+        result += suggested_next_arguments.size();
+        
         return result;
     }
 };
@@ -2032,9 +2037,9 @@ match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_conte
         for (size_t i=0; i < state_list.size(); i++) {
             match_state_t *state = &state_list.at(i);
             /* If we require that this makes progress, then get the current progress so we can compare */
-            size_t init_consumed_count = npos;
+            size_t init_progress = npos;
             if (require_progress) {
-                init_consumed_count = state->number_of_arguments_consumed();
+                init_progress = state->progress();
             }
             
             match_state_list_t child_result = this->match(*ptr, state, ctx);
@@ -2043,9 +2048,9 @@ match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_conte
                 /* Keep only those results that have increased in progress */
                 size_t idx = child_result.size();
                 while (idx--) {
-                    size_t new_consumed_count = child_result.at(idx).number_of_arguments_consumed();
-                    assert(new_consumed_count >= init_consumed_count); // should never go backwards
-                    if (new_consumed_count == init_consumed_count) {
+                    size_t new_progress = child_result.at(idx).progress();
+                    assert(new_progress >= init_progress); // should never go backwards
+                    if (new_progress == init_progress) {
                         // No progress was made, toss this state
                         child_result.erase(child_result.begin() + idx);
                     }
@@ -2200,7 +2205,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
                 if (ctx->flags & flag_generate_suggestions) {
                     for (size_t i=0; i < this->shortcut_options.size(); i++) {
                         const option_t &opt = this->shortcut_options.at(i);
-                        state->suggested_next_arguments.push_back(opt.name_as_string(this->source));
+                        state->suggested_next_arguments.insert(opt.name_as_string(this->source));
                     }
                 }
                 state_destructive_append_to(state, &result);
@@ -2221,11 +2226,13 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
 match_state_list_t match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx) {
     match_state_list_t result;
     bool successful_match = false;
+    bool made_suggestion = false;
     for (size_t j=0; j < options_in_doc.size(); j++) {
         const option_t opt_in_doc = options_in_doc.at(j);
 
         // Find the matching option from the resolved option list (i.e. argv)
         size_t resolved_opt_idx = npos;
+        bool option_already_consumed = false;
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
             // Skip ones that have already been consumed
             if (! state->consumed_options.at(i)) {
@@ -2249,10 +2256,17 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
             arg->count += 1;
             successful_match = true;
             state->consumed_options.at(resolved_opt_idx) = true;
+        } else if (! option_already_consumed) {
+            // This was an option that was not specified in argv
+            // It can be a suggestion
+            if (ctx->flags & flag_generate_suggestions) {
+                state->suggested_next_arguments.insert(opt_in_doc.name_as_string(this->source));
+                made_suggestion = true;
+            }
         }
     }
     
-    if (successful_match) {
+    if (successful_match || made_suggestion) {
         state_destructive_append_to(state, &result);
     }
     return result;
@@ -2276,7 +2290,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
         } else {
             // No more positionals. Suggest one.
             if (ctx->flags & flag_generate_suggestions) {
-                state->suggested_next_arguments.push_back(string_t(this->source, range.start, range.length));
+                state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
                 state_destructive_append_to(state, &result);
             }
         }
@@ -2290,7 +2304,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
             // We want to return this state if either we were in square brackets (so we don't require a match), OR we are accepting incomplete
             bool wants_append_state = ctx->is_in_square_brackets;
             if (ctx->flags & flag_generate_suggestions) {
-                state->suggested_next_arguments.push_back(options_in_doc.back().name_as_string(this->source));
+                state->suggested_next_arguments.insert(options_in_doc.back().name_as_string(this->source));
                 wants_append_state = true;
             }
             if (wants_append_state) {
@@ -2313,7 +2327,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
         } else {
             // No more positionals. Suggest one.
             if (ctx->flags & flag_generate_suggestions) {
-                state->suggested_next_arguments.push_back(string_t(this->source, range.start, range.length));
+                state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
                 state_destructive_append_to(state, &result);
             }
         }
@@ -2604,16 +2618,8 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
 static int simple_test() {
     const std::string usage =
 #if 1
-    "Usage:\n"
-    "       jobs [options] [<pid>]\n"
-    "\n"
-    "Options:\n"
-    "       ‐c, ‐‐command  prints the command name for each process in jobs.\n"
-    "       ‐g, ‐‐group  only prints the group ID of each job.\n"
-    "       ‐h, --help  displays a help message and exits.\n"
-    "       ‐l, --last  prints only the last job to be started.\n"
-    "       ‐p, ‐‐pid  prints the process ID for each process in all jobs.\n"
-    ;
+    "Usage: prog --status\n"
+    "       prog jump [--height <in>]";
 #else
     "Naval Fate.\n"
     "\n"
@@ -2636,7 +2642,7 @@ static int simple_test() {
     
     const char *args[] = {
 #if 1
-        "jobs", "--last"
+        "prog"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif

@@ -272,6 +272,45 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     }
 }
 
+template<typename string_t>
+static void run_1_unused_argument_test(const char *usage, const char *joined_argv, const char *joined_expected_unused, size_t test_idx, size_t arg_idx) {
+    typedef map<string_t, base_argument_t<string_t> > arg_map_t;
+    typedef map<string_t, string_t> string_map_t;
+    
+    /* Separate argv by spaces */
+    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    
+    /* Prepend the program name for every argument */
+    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    
+    /* Usage as a string */
+    const string_t usage_str(usage, usage + strlen(usage));
+    
+    /* Perform the parsing */
+    vector<size_t> unused_arg_idxs;
+    arg_map_t results = generic_docopt_parse(usage_str, argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &unused_arg_idxs);
+    
+    /* Construct unused argument string */
+    vector<string_t> unused_args_vec;
+    for (size_t i=0; i < unused_arg_idxs.size(); i++) {
+        size_t idx = unused_arg_idxs.at(i);
+        unused_args_vec.push_back(argv.at(idx));
+    }
+    sort(unused_args_vec.begin(), unused_args_vec.end());
+    const string_t actual_unused = join(unused_args_vec, ", ");
+    
+    /* Compare unused arguments */
+    std::vector<string_t> expected_unused_vec = split(to_string<string_t>(joined_expected_unused), ", ");
+    sort(expected_unused_vec.begin(), expected_unused_vec.end());
+    const string_t expected_unused = join(expected_unused_vec, ", ");
+    
+    if (expected_unused != actual_unused) {
+        err("Test %lu.%lu: Wrong unused arguments. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_unused), widen(actual_unused));
+    }
+
+}
+
+
 
 struct args_t {
     const char * argv;
@@ -1492,7 +1531,28 @@ static void test_suggestions()
                 {   "fast", // argv
                     "-f, --foo"
                 },
-
+                {   "fast --foo", // argv
+                    ""
+                },
+                {   "fast -f", // argv
+                    ""
+                },
+            },
+        },
+        /* Case 3 */
+        {   "Usage: cp [options] <src>... <dst>\n"
+            "Options: --fast\n"
+            "         --slow\n",
+            {
+                {   "", // argv
+                    "<src>, <dst>, --fast, --slow"
+                },
+                {   "some_src", // argv
+                    "<src>, <dst>, --fast, --slow"
+                },
+                {   "some_src --fast", // argv
+                    "<src>, <dst>, --slow"
+                }
             },
         },
         {NULL, {}}
@@ -1506,16 +1566,66 @@ static void test_suggestions()
     }
 }
 
+template<typename string_t>
+static void test_unused_args()
+{
+    const testcase_t testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog --status\n"
+            "       prog jump [--height <in>]",
+            {
+                {   "", // argv
+                    ""
+                },
+                {   "jump", // argv
+                    ""
+                },
+                {   "--foo", // argv
+                    "--foo"
+                },
+                {   "jump foo", // argv
+                    "foo"
+                },
+            },
+        },
+        /* Case 1 */
+        {   "Usage: prog [options] <pid>\n"
+            "Options: -e, --embiggen  Embiggen the smallest man",
+            {
+                {   "", // argv
+                    ""
+                },
+                {   "-e", // argv
+                    ""
+                },
+                {   "--embiggen -e", // argv
+                    "-e"
+                },
+            },
+        },
+        {NULL, {}}
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const testcase_t *testcase = &testcases[testcase_idx];
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+            const args_t *args = &testcase->args[arg_idx];
+            run_1_unused_argument_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+        }
+    }
+}
+
+
+template<typename string_t>
+void do_all_tests() {
+    test_correctness<string_t>();
+    test_unused_args<string_t>();
+    test_suggestions<string_t>();
+}
 
 int main(int argc, const char** argv)
 {
-    test_correctness<string>();
-    test_correctness<wstring>();
-    
-    test_suggestions<string>();
-    test_suggestions<string>();
-    
+    do_all_tests<string>();
+    do_all_tests<wstring>();
     printf("Encountered %lu errors in docopt tests\n", err_count);
-    
     return err_count ? 1 : 0;
 }
