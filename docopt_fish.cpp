@@ -157,7 +157,7 @@ struct option_t {
     range_t value;
     
     // key name of the option, e.g. if we have both -v and --verbose, this will be 'verbose' for the -v option. Empty for none.
-    range_t key_range;
+    range_t corresponding_long_name;
 
     // Range of the description. Empty for none.
     range_t description_range;
@@ -172,6 +172,7 @@ struct option_t {
         // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
         if (leading_dash_count > 1) {
             this->type = option_t::double_long;
+            this->corresponding_long_name = this->name;
         } else if (n.length > 1) {
             this->type = option_t::single_long;
         } else {
@@ -197,8 +198,12 @@ struct option_t {
                 result = (0 == src.compare(this->name.start, this->name.length, src, opt2.name.start, opt2.name.length));
             }
         }
-    return result;
-
+        return result;
+    }
+    
+    // Returns true if the options
+    bool is_equivalent_to(const option_t &rhs) const {
+        return this->name == rhs.name || (! this->corresponding_long_name.empty() && this->corresponding_long_name == rhs.corresponding_long_name);
     }
 
     bool operator==(const option_t &rhs) const {
@@ -244,12 +249,12 @@ struct option_t {
     void assign_key_to_string(const string_t &src, string_t *result) const {
         // Everyone gets at least one dash; doubles get two
         result->clear();
-        bool use_key_range = ! this->key_range.empty();
+        bool use_long_name = ! this->corresponding_long_name.empty();
         result->push_back('-');
-        if (use_key_range || this->type == double_long) {
+        if (use_long_name || this->type == double_long) {
             result->push_back('-');
         }
-        const range_t &effective_range = use_key_range ? this->key_range : this->name;
+        const range_t &effective_range = use_long_name ? this->corresponding_long_name : this->name;
         result->append(src, effective_range.start, effective_range.length);
     }
     
@@ -1423,10 +1428,10 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
         scan_while(this->source, &remaining, isspace);
     }
     
-    // Set the key range to the name range of every option
+    // Set the corresponding long name to the name range of the last long option
     if (! name_range_of_last_long_option.empty()) {
         for (size_t i=0; i < result.size(); i++) {
-            result.at(i).key_range = name_range_of_last_long_option;
+            result.at(i).corresponding_long_name = name_range_of_last_long_option;
         }
     }
     
@@ -2227,8 +2232,21 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
     match_state_list_t result;
     bool successful_match = false;
     bool made_suggestion = false;
+    
+    // As we traverse, ensure we don't match both -f and --foo by remembering the key ranges of the matched options
+    range_list_t matched_long_ranges;
+    
+    // Collect potential suggestions in here. We squelch them if we find that a later matched option has the same corresponding long name; we need to remove those from the suggestions
+    option_list_t potential_suggestions;
+    
     for (size_t j=0; j < options_in_doc.size(); j++) {
-        const option_t opt_in_doc = options_in_doc.at(j);
+        const option_t &opt_in_doc = options_in_doc.at(j);
+        
+        // Skip this option if its key range is already used
+        const range_t &key_range = opt_in_doc.corresponding_long_name;
+        if (! key_range.empty() && find(matched_long_ranges.begin(), matched_long_ranges.end(), key_range) != matched_long_ranges.end()) {
+            continue;
+        }
 
         // Find the matching option from the resolved option list (i.e. argv)
         size_t resolved_opt_idx = npos;
@@ -2236,6 +2254,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
             // Skip ones that have already been consumed
             if (! state->consumed_options.at(i)) {
+                // See if the option from argv has the same key range as the option in the document
                 if (options_have_same_name(ctx->resolved_options.at(i).option, opt_in_doc)) {
                     resolved_opt_idx = i;
                     break;
@@ -2247,6 +2266,8 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
             // We found a matching option in argv. Set it in the option_map for this state and mark its index as used
             const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
             const string_t name = opt_in_doc.key_as_string(this->source);
+            
+            // Update the argument, creating it if necessary
             arg_t *arg = &state->option_map[name];
             if (resolved_opt.value_idx_in_argv != npos) {
                 const string_t &str = ctx->argv.at(resolved_opt.value_idx_in_argv);
@@ -2254,17 +2275,34 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
                 arg->values.push_back(string_t(str, value_range.start, value_range.length));
             }
             arg->count += 1;
+            
             successful_match = true;
             state->consumed_options.at(resolved_opt_idx) = true;
+            if (! opt_in_doc.corresponding_long_name.empty()) {
+                matched_long_ranges.push_back(opt_in_doc.corresponding_long_name);
+            }
         } else if (! option_already_consumed) {
             // This was an option that was not specified in argv
             // It can be a suggestion
             if (ctx->flags & flag_generate_suggestions) {
-                state->suggested_next_arguments.insert(opt_in_doc.name_as_string(this->source));
+                potential_suggestions.push_back(opt_in_doc);
+            }
+        }
+    }
+    
+    // Now go through and handle potential suggestions
+    if (ctx->flags & flag_generate_suggestions) {
+        for (size_t i=0; i < potential_suggestions.size(); i++) {
+            const option_t &suggestion = potential_suggestions.at(i);
+            const range_t &key_range = suggestion.corresponding_long_name;
+            if (key_range.empty() || find(matched_long_ranges.begin(), matched_long_ranges.end(), key_range) == matched_long_ranges.end()) {
+                // This option's long name was not found in the matched long names
+                state->suggested_next_arguments.insert(suggestion.name_as_string(this->source));
                 made_suggestion = true;
             }
         }
     }
+
     
     if (successful_match || made_suggestion) {
         state_destructive_append_to(state, &result);

@@ -1552,7 +1552,21 @@ static void test_suggestions()
                 },
                 {   "some_src --fast", // argv
                     "<src>, <dst>, --slow"
+                },
+                {   "some_src --slow", // argv
+                    "<src>, <dst>, --fast"
                 }
+            },
+        },
+        /* Case 4 */
+        {   "Usage: cp [--message <name>]\n",
+            {
+                {   "", // argv
+                    "--message"
+                },
+                {   "--message", // argv
+                    "<name>"
+                },
             },
         },
         {NULL, {}}
@@ -1571,7 +1585,7 @@ static void test_unused_args()
 {
     const testcase_t testcases[] =
     {   /* Case 0 */
-        {   "Usage: prog --status\n"
+        {   "Usage: prog [--status]\n"
             "       prog jump [--height <in>]",
             {
                 {   "", // argv
@@ -1590,15 +1604,18 @@ static void test_unused_args()
         },
         /* Case 1 */
         {   "Usage: prog [options] <pid>\n"
-            "Options: -e, --embiggen  Embiggen the smallest man",
+            "Options: --embiggen, -e  Embiggen the smallest man",
             {
-                {   "", // argv
+                {   "12", // argv
                     ""
                 },
-                {   "-e", // argv
+                {   "12 -e", // argv
                     ""
                 },
-                {   "--embiggen -e", // argv
+                {   "12 -e -e", // argv
+                    "-e"
+                },
+                {   "12 --embiggen -e", // argv
                     "-e"
                 },
             },
