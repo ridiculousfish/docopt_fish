@@ -244,29 +244,22 @@ struct option_t {
         return result;
     }
     
-    // Modifies the string to the name of the option, by plucking it out of the source. Includes dashes.
+    // Returns the "longest" name (using corresponding_long_name if possible), plucking it out of the given source. Includes dashes.
     template<typename string_t>
-    void assign_key_to_string(const string_t &src, string_t *result) const {
+    string_t longest_name_as_string(const string_t &src) const {
+        string_t result;
         // Everyone gets at least one dash; doubles get two
-        result->clear();
         bool use_long_name = ! this->corresponding_long_name.empty();
-        result->push_back('-');
+        result.push_back('-');
         if (use_long_name || this->type == double_long) {
-            result->push_back('-');
+            result.push_back('-');
         }
         const range_t &effective_range = use_long_name ? this->corresponding_long_name : this->name;
-        result->append(src, effective_range.start, effective_range.length);
-    }
-    
-    // todo: comment me
-    template<typename string_t>
-    string_t key_as_string(const string_t &src) const {
-        string_t result;
-        this->assign_key_to_string(src, &result);
+        result.append(src, effective_range.start, effective_range.length);
         return result;
     }
-
-    // todo: comment me
+    
+    // Returns the normal name (short or long), plucking it out of the given source. Includes dashes.
     template<typename string_t>
     string_t name_as_string(const string_t &src) const {
         string_t result;
@@ -2265,7 +2258,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
         if (resolved_opt_idx != npos) {
             // We found a matching option in argv. Set it in the option_map for this state and mark its index as used
             const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
-            const string_t name = opt_in_doc.key_as_string(this->source);
+            const string_t name = opt_in_doc.longest_name_as_string(this->source);
             
             // Update the argument, creating it if necessary
             arg_t *arg = &state->option_map[name];
@@ -2379,13 +2372,13 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
         return map;
     }
     
+    
     // For each option, fill in the value in the map
     // This could be made more efficient via a single call to insert()
     option_map_t result = map;
-    string_t name;
     for (size_t i=0; i < all_options.size(); i++) {
         const option_t &opt = all_options.at(i);
-        opt.assign_key_to_string(this->source, &name);
+        string_t name = opt.longest_name_as_string(this->source);
         // We merely invoke operator[]; this will do the insertion with a default value if necessary.
         // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
         arg_t *arg = &result[name];
@@ -2397,6 +2390,7 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     }
     
     // Fill in variables
+    string_t name;
     for (size_t i=0; i < all_variables.size(); i++) {
         const range_t &var_range = all_variables.at(i);
         name.assign(this->source, var_range.start, var_range.length);
