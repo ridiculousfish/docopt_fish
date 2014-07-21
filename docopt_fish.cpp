@@ -850,14 +850,10 @@ struct opt_ellipsis_t : public base_t {
 
 struct options_shortcut_t : public base_t {
     // The options shortcut does not need to remember its token, since we never use it
-    options_shortcut_t(const token_t &t1 UNUSED) : base_t() {}
+    options_shortcut_t() : base_t() {}
     
     static options_shortcut_t *parse(parse_context_t *ctx) {
-        token_t opt;
-        if (ctx->scan("[options]", &opt)) {
-            return NULL;
-        }
-        return new options_shortcut_t(opt);
+        return new options_shortcut_t();
     }
     
     std::string name() const { return "options_shortcut"; }
