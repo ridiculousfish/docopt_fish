@@ -58,7 +58,7 @@ static std::wstring widen(const std::string &t) {
 }
 
 
-// Need a wstring implementation of this
+// Narrow implementation
 static size_t find_case_insensitive(const std::string &haystack, const char *needle, size_t haystack_start) {
     assert(haystack_start < haystack.size());
     const char *haystack_cstr = haystack.c_str();
@@ -66,6 +66,7 @@ static size_t find_case_insensitive(const std::string &haystack, const char *nee
     return found ? found - haystack_cstr : std::string::npos;
 }
 
+// Nasty wide implementation
 static size_t find_case_insensitive(const std::wstring &haystack, const char *needle, size_t haystack_start) {
     // Nasty implementation
     // The assumption here is that needle is always ASCII; thus it suffices to do an ugly tolower comparison
@@ -96,32 +97,46 @@ static size_t find_case_insensitive(const std::wstring &haystack, const char *ne
     return std::wstring::npos;
 }
 
-size_t range_t::end() const {
-    size_t result = start + length;
-    assert(result >= start); //don't overflow
-    return result;
-}
 
-bool range_t::empty() const {
-    return length == 0;
-}
-
-bool range_t::operator==(const range_t &rhs) const {
-    return this->start == rhs.start && this->length == rhs.length;
-}
-
-bool range_t::operator!=(const range_t &rhs) const {
-    return !(*this == rhs);
-}
-
-void range_t::merge(const range_t &rhs) {
-    if (this->empty()) {
-        *this = rhs;
-    } else if (! rhs.empty()) {
-        this->start = std::min(this->start, rhs.start);
-        this->length = std::max(this->end(), rhs.end()) - this->start;
+/* Class representing a range of a string */
+struct range_t {
+    size_t start;
+    size_t length;
+    range_t() : start(0), length(0) {}
+    range_t(size_t s, size_t l) : start(s), length(l) {}
+    
+    /* Returns start + length, dying on overflow */
+    size_t end() const {
+        size_t result = start + length;
+        assert(result >= start); //don't overflow
+        return result;
     }
-}
+    
+    /* Returns whether the range is empty */
+    bool empty() const {
+        return length == 0;
+    }
+    
+    /* Equality and inequality */
+    bool operator==(const range_t &rhs) const {
+        return this->start == rhs.start && this->length == rhs.length;
+    }
+
+    bool operator!=(const range_t &rhs) const {
+        return !(*this == rhs);
+    }
+
+    /* Merges a range into this range. After merging, the receiver is the smallest range containing every index that is in either range. Empty ranges are discarded. */
+    void merge(const range_t &rhs) {
+        if (this->empty()) {
+            *this = rhs;
+        } else if (! rhs.empty()) {
+            this->start = std::min(this->start, rhs.start);
+            this->length = std::max(this->end(), rhs.end()) - this->start;
+        }
+    }
+};
+
 typedef std::vector<range_t> range_list_t;
 
 /* A token is just a range of some string, with a type */
@@ -201,11 +216,6 @@ struct option_t {
         return result;
     }
     
-    // Returns true if the options
-    bool is_equivalent_to(const option_t &rhs) const {
-        return this->name == rhs.name || (! this->corresponding_long_name.empty() && this->corresponding_long_name == rhs.corresponding_long_name);
-    }
-
     bool operator==(const option_t &rhs) const {
         return this->type == rhs.type &&
                this->separator == rhs.separator &&
@@ -235,7 +245,7 @@ struct option_t {
         if (this->separator == sep_none) {
             assign_narrow_string_to_string(" (no sep)", &tmp);
             result.append(tmp);
-        } else if (this->separator == sep_none) {
+        } else if (this->separator == sep_equals) {
             assign_narrow_string_to_string(" (= sep)", &tmp);
             result.append(tmp);
         }
@@ -292,12 +302,6 @@ static bool char_is_valid_in_parameter(char_t c) {
     return std::find(invalid, end, c) == end;
 }
 
-static bool char_is_valid_in_variable(char_t c) {
-    const char *invalid = ".|<>,=()[] \t\n";
-    const char *end = invalid + strlen(invalid);
-    return std::find(invalid, end, c) == end;
-}
-
 static bool char_is_valid_in_word(char_t c) {
     const char *invalid = ".|()[],<> \t\n";
     const char *end = invalid + strlen(invalid);
@@ -316,17 +320,6 @@ static bool char_is_space_or_tab(char_t c) {
 
 template<char T>
 static bool it_equals(char_t c) { return c == T; }
-
-template<typename T>
-static range_t scan_1(const string_t &str, range_t *remaining, T func) {
-    range_t result(remaining->start, 0);
-    if (result.end() < remaining->end() && func(str.at(result.end()))) {
-        result.length += 1;
-        remaining->start += 1;
-        remaining->length -= 1;
-    }
-    return result;
-}
 
 static range_t scan_1_char(const string_t &str, range_t *remaining, char_t c) {
     range_t result(remaining->start, 0);
@@ -495,16 +488,6 @@ struct parse_context_t {
 
 
 /* Helpers to parse when the productions are fixed. */
-template<typename PARENT, typename CHILD>
-static PARENT *parse_1(parse_context_t *ctx) {
-    PARENT *result = NULL;
-    auto_ptr<CHILD> child(CHILD::parse(ctx));
-    if (child.get() != NULL) {
-        result = new PARENT(child);
-    }
-    return result;
-}
-
 template<typename PARENT, typename CHILD1, typename CHILD2>
 static PARENT *parse_2(parse_context_t *ctx) {
     PARENT *result = NULL;
@@ -530,24 +513,16 @@ static PARENT *parse_1_or_empty(parse_context_t *ctx) {
     return result;
 }
 
-// Node visitor class, using CRTP. Child classes should override accept(
+// Node visitor class, using CRTP. Child classes should override accept().
 template<typename T>
 struct node_visitor_t {
     /* Additional overrides */
-    template<typename IGNORED_TYPE>
-    void will_visit_children(const IGNORED_TYPE& t UNUSED) {}
-    
-    template<typename IGNORED_TYPE>
-    void did_visit_children(const IGNORED_TYPE& t UNUSED) {}
-    
     template<typename NODE_TYPE>
     void visit_internal(const NODE_TYPE &node)
     {
         T *derived_this = static_cast<T *>(this);
         derived_this->accept(node);
-        derived_this->will_visit_children(node);
         node.visit_children(this);
-        derived_this->did_visit_children(node);
     }
     
     
@@ -592,14 +567,13 @@ public:
         lines.push_back(result);
     }
     
+    /* Override of visit() to bump the depth */
     template<typename NODE_TYPE>
-    void will_visit_children(const NODE_TYPE &t) {
-        depth = depth + 1 - t.unindent();
-    }
-    
-    template<typename NODE_TYPE>
-    void did_visit_children(const NODE_TYPE &t) {
-        depth = depth - 1 + t.unindent();
+    void visit(const NODE_TYPE &t)
+    {
+        depth += 1;
+        node_visitor_t<node_dumper_t>::visit(t);
+        depth -= 1;
     }
     
     
@@ -676,9 +650,6 @@ struct base_t {
     // Constructors. The default production index is 0. The second constructor specifies a production.
     base_t() : production(0){}
     base_t(uint8_t p) : production(p) {}
-    
-    // How much to un-indent children when pretty-printing
-    unsigned unindent() const { return 0; }
 };
 
 struct expression_list_t : public base_t {
@@ -695,9 +666,6 @@ struct expression_list_t : public base_t {
         v->visit(expression);
         v->visit(opt_expression_list);
     }
-    
-    /* Don't indent children of opt_expression_list to keep the list looking flatter */
-    unsigned unindent() const { return 1*0; }
 };
 
 struct alternation_list_t : public base_t {
@@ -707,7 +675,6 @@ struct alternation_list_t : public base_t {
     alternation_list_t(auto_ptr<expression_list_t> el, auto_ptr<or_continuation_t> o) : expression_list(el), or_continuation(o) {}
     static alternation_list_t *parse(parse_context_t *ctx) { return parse_2<alternation_list_t, expression_list_t, or_continuation_t>(ctx); }
     std::string name() const { return "alternation_list"; }
-    unsigned unindent() const { return 1*0; }
     
     template<typename T>
     void visit_children(T *v) const {
@@ -727,7 +694,6 @@ struct opt_expression_list_t : public base_t {
     opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
     static opt_expression_list_t *parse(parse_context_t *ctx) { return parse_1_or_empty<opt_expression_list_t, expression_list_t>(ctx); }
     std::string name() const { return "opt_expression_list"; }
-    unsigned unindent() const { return 1*0; }
     
     template<typename T>
     void visit_children(T *v) const {
@@ -744,7 +710,7 @@ struct usage_t : public base_t {
     usage_t() : base_t(0) {}
 
     // usage = word usage
-    usage_t(const token_t name, auto_ptr<usage_t> next) : base_t(1), prog_name(name), next_usage(next) {}
+    usage_t(const token_t &name, auto_ptr<usage_t> next) : base_t(1), prog_name(name), next_usage(next) {}
     
     // usage = word alternation_list usage
     usage_t(token_t t, auto_ptr<alternation_list_t> c, auto_ptr<usage_t> next) : base_t(2), prog_name(t), alternation_list(c), next_usage(next) {}
@@ -1060,14 +1026,6 @@ range_list_t all_variables;
 /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
 range_list_t all_static_arguments;
 
-
-/* Helper function to make a string (narrow or wide) from a C string */
-static string_t string_from_narrow_string(const char *s) {
-    string_t result;
-    assign_narrow_string_to_string(s, &result);
-    return result;
-}
-
 /* List of errors */
 error_list_t errors;
 static void append_error(error_list_t *errors, size_t where, const char *txt) {
@@ -1143,17 +1101,6 @@ static bool get_next_line(const string_t &str, range_t *inout_range, size_t end 
     return success;
 }
 
-/* Helper function for string containment. Returns true if c is found in cstr, which is ASCII. */
-static bool contains(const char *cstr, char_t c) {
-    assert(c != 0);
-    for (size_t i=0; cstr[i]; i++) {
-        if (cstr[i] == c) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /* Returns true if the two strings are equal. */
 static bool str_equals(const char *a, const string_t &str) {
     size_t len = str.size();
@@ -1202,17 +1149,6 @@ bool token_substr_equals(const token_t &tok, const char *str, size_t len) const 
     }
 }
 
-/* Returns true if the given token matches the given string */
-bool token_equals(const token_t &tok, const string_t &str) const {
-    assert(tok.range.end() < this->source.length());
-    if (str.size() != tok.range.length) {
-        /* If our token is too short, then it doesn't match */
-        return false;
-    } else {
-        return this->source.compare(tok.range.start, tok.range.length, str) == 0;
-    }
-}
-
 /* Collects options, i.e. tokens of the form --foo */
 template<typename ENTRY_TYPE>
 void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_options, range_list_t *out_variables, range_list_t *out_static_arguments) const {
@@ -1250,7 +1186,7 @@ static option_t parse_option_from_argument(const string_t &str, error_list_t *er
     const range_t equals_range = scan_1_char(str, remaining, char_t('='));
     
     // If we got an equals sign, the rest is the value
-    // Note that this is of a very different nature than char_is_valid_in_variable
+    // Note that this is of a very different nature than char_is_valid_in_word
     // It can have any character at all, since it's coming from the argument, not from the usage spec
     range_t value_range;
     if (! equals_range.empty()) {
@@ -2739,6 +2675,10 @@ std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const s
 {
     return impl->suggest_next_argument(argv, flags);
 }
+
+/* Constructor */
+template<typename string_t>
+argument_parser_t<string_t>::argument_parser_t() {}
 
 /* Destructor */
 template<typename string_t>

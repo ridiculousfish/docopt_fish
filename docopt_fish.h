@@ -29,27 +29,6 @@ namespace docopt_fish
         status_valid_prefix // the argument is a prefix of something that may work
     };
     
-    /* Class representing a range of a string */
-    struct range_t {
-        size_t start;
-        size_t length;
-        range_t() : start(0), length(0) {}
-        range_t(size_t s, size_t l) : start(s), length(l) {}
-        
-        /* Returns start + length, dying on overflow */
-        size_t end() const;
-        
-        /* Returns length == 0 */
-        bool empty() const;
-        
-        /* Equality and inequality */
-        bool operator==(const range_t &rhs) const;
-        bool operator!=(const range_t &rhs) const;
-
-        /* Merges a range into this range. After merging, the receiver is the smallest range containing every index that is in either range. Empty ranges are discarded. */
-        void merge(const range_t &rhs);
-    };
-    
     /* Represents an error. */
     template<typename string_t>
     struct error_t {
@@ -78,6 +57,7 @@ namespace docopt_fish
         /* Given a list of arguments, returns an array of potential next values. A value may be either a literal flag -foo, or a variable; these may be distinguished by the <> surrounding the variable. */
         std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags);
         
+        argument_parser_t();
         ~argument_parser_t();
     };
     
