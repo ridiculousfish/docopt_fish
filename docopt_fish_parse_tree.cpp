@@ -40,12 +40,6 @@ struct opt_ellipsis_t;
 template<typename string_t>
 struct parse_context_t {
     typedef typename string_t::value_type char_t;
-    
-    static bool char_is_valid_in_parameter(char_t c) {
-        const char *invalid = ".|<>,=()[] \t\n";
-        const char *end = invalid + strlen(invalid);
-        return std::find(invalid, end, c) == end;
-    }
 
     static bool char_is_valid_in_word(char_t c) {
         const char *invalid = ".|()[],<> \t\n";

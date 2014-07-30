@@ -67,8 +67,6 @@ static void append_error(std::vector<error_t<string_t> > *errors, size_t where, 
     }
 }
 
-
-
 template<char T>
 static bool it_equals(int c) { return c == T; }
 
@@ -95,6 +93,23 @@ static range_t scan_while(const string_t &str, range_t *remaining, T func) {
         remaining->length -= 1;
     }
     return result;
+}
+
+// Returns a new range where leading and trailing whitespace has been trimmed
+template<typename string_t>
+static range_t trim_whitespace(const range_t &range, const string_t &src) {
+    assert(range.end() <= src.size());
+    size_t left = range.start, right = range.end();
+    while (left < right && isspace(src.at(left)))
+    {
+        left++;
+    }
+    while (right > left && isspace(src.at(right - 1)))
+    {
+        right--;
+    }
+    assert(left <= right);
+    return range_t(left, right - left);
 }
 
 template<typename string_t>
@@ -188,53 +203,6 @@ typedef typename string_t::value_type char_t;
 #pragma mark -
 #pragma mark Scanning
 #pragma mark -
-
-static bool char_is_valid_in_word(char_t c) {
-    const char *invalid = ".|()[],<> \t\n";
-    const char *end = invalid + strlen(invalid);
-    return std::find(invalid, end, c) == end;
-}
-
-static bool char_is_space_or_tab(char_t c) {
-    return c == ' ' || c == '\t';
-}
-
-template<char T>
-static bool it_equals(char_t c) { return c == T; }
-
-// Node visitor class, using CRTP. Child classes should override accept().
-template<typename T>
-struct node_visitor_t {
-    /* Additional overrides */
-    template<typename NODE_TYPE>
-    void visit_internal(const NODE_TYPE &node)
-    {
-        T *derived_this = static_cast<T *>(this);
-        derived_this->accept(node);
-        node.visit_children(this);
-    }
-    
-    
-    /* Function called from overrides of visit_children. We invoke an override of accept(), and then recurse to children. */
-    template<typename NODE_TYPE>
-    void visit(const NODE_TYPE &t)
-    {
-        if (t.get() != NULL) {
-            this->visit_internal(*t);
-        }
-    }
-    
-    /* Visit is called from node visit_children implementations. A token has no children. */
-    void visit(const token_t &token) {
-        static_cast<T *>(this)->accept(token);
-    }
-    
-    /* Public entry point */
-    template<typename ENTRY_TYPE>
-    void begin(const ENTRY_TYPE &t) {
-        this->visit_internal(t);
-    }
-};
 
 /* Helper class for pretty-printing */
 class node_dumper_t : public node_visitor_t<node_dumper_t> {
@@ -331,6 +299,9 @@ std::vector<const TYPE_TO_COLLECT *> collect_nodes(const ENTRY_TYPE &entry) cons
 typedef error_t<string_t> error_t;
 typedef std::vector<error_t> error_list_t;
 
+/* Class representing a map from variable names to conditions */
+typedef std::map<string_t, range_t> condition_map_t;
+
 /* Constructor takes the source */
 public:
 const string_t source;
@@ -357,6 +328,9 @@ range_list_t all_static_arguments;
 
 /* List of errors */
 error_list_t errors;
+
+/* Map from variable names to conditions */
+condition_map_t variables_to_conditions;
 
 /* Helper typedefs */
 typedef base_argument_t<string_t> arg_t;
@@ -506,7 +480,6 @@ static option_t parse_option_from_argument(const string_t &str, error_list_t *er
     const range_t equals_range = scan_1_char(str, remaining, char_t('='));
     
     // If we got an equals sign, the rest is the value
-    // Note that this is of a very different nature than char_is_valid_in_word
     // It can have any character at all, since it's coming from the argument, not from the usage spec
     range_t value_range;
     if (! equals_range.empty()) {
@@ -712,6 +685,42 @@ option_list_t parse_options_spec(error_list_t *errors) const {
     }
     return result;
 }
+
+/* Parses the conditions specification at the given location */
+condition_map_t parse_conditions_spec(error_list_t *errors) const {
+    condition_map_t result;
+    
+    const range_list_t section_ranges = source_ranges_for_section("Conditions:");
+    for (size_t range_idx = 0; range_idx < section_ranges.size(); range_idx++) {
+        const range_t section_range = section_ranges.at(range_idx);
+        const size_t section_end = section_range.end();
+        range_t line_range(section_range.start, 0);
+        while (get_next_line(this->source, &line_range, section_end)) {
+            // A specification look like this:
+            // <pid>  stuff
+            // Two spaces are the separator
+            // TODO: actual error reporting, etc.
+            const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
+            size_t sep = this->source.find(two_spaces, line_range.start);
+            if (sep < line_range.end())
+            {
+                range_t key(line_range.start, sep - line_range.start);
+                range_t value(sep, line_range.end() - sep);
+                
+                // Trim whitespace off of both sides and then populate our map
+                // TODO: verify that the variable was found
+                key = trim_whitespace(key, this->source);
+                value = trim_whitespace(value, this->source);
+                const string_t key_str(this->source, key.start, key.length);
+                if (! result.insert(typename condition_map_t::value_type(key_str, value)).second) {
+                    append_error(errors, key.start, "Variable already has a condition");
+                }
+            }
+        }
+    }
+    return result;
+}
+
 
 /* Returns true if the two options have the same name */
 bool options_have_same_name(const option_t &opt1, const option_t &opt2) const {
@@ -1667,6 +1676,7 @@ bool preflight() {
     this->all_options.clear();
     this->all_variables.clear();
     this->all_static_arguments.clear();
+    this->variables_to_conditions.clear();
 
     const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
     if (usage_ranges.empty()) {
@@ -1722,6 +1732,9 @@ bool preflight() {
             }
         }
     }
+    
+    // Extract conditions from the conditions section
+    this->variables_to_conditions = this->parse_conditions_spec(&this->errors);
     
     /* Successfully preflighted */
     return true;
@@ -1828,6 +1841,16 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
     return all_suggestions;
 }
 
+string_t conditions_for_variable(const string_t &var_name) const {
+    string_t result;
+    typename condition_map_t::const_iterator where = this->variables_to_conditions.find(var_name);
+    if (where != this->variables_to_conditions.end()) {
+        const range_t &cond_range = where->second;
+        result.assign(this->source, cond_range.start, cond_range.length);
+    }
+    return result;
+}
+
 #if SIMPLE_TEST
 static int simple_test() {
     const std::string usage =
@@ -1924,6 +1947,12 @@ template<typename string_t>
 std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags)
 {
     return impl->suggest_next_argument(argv, flags);
+}
+
+template<typename string_t>
+string_t argument_parser_t<string_t>::conditions_for_variable(const string_t &var) const
+{
+    return impl->conditions_for_variable(var);
 }
 
 /* Constructor */

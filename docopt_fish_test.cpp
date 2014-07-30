@@ -310,7 +310,24 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
 
 }
 
-
+template<typename string_t>
+static void run_1_condition_test(const char *usage, const char *variable, const char *expected_condition, size_t test_idx, size_t arg_idx) {
+    /* Usage as a string */
+    const string_t usage_str(usage, usage + strlen(usage));
+    
+    /* Perform the parsing */
+    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, NULL);
+    
+    const string_t var_string(variable, variable + strlen(variable));
+    const string_t condition_string = parser->conditions_for_variable(var_string);
+    const string_t expected_condition_string(expected_condition, expected_condition + strlen(expected_condition));
+    
+    if (expected_condition_string != condition_string) {
+        err("Test %lu.%lu: Wrong condition. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_condition_string), widen(condition_string));
+    }
+    
+    delete parser;
+}
 
 struct args_t {
     const char * argv;
@@ -1631,12 +1648,36 @@ static void test_unused_args()
     }
 }
 
+template<typename string_t>
+static void test_conditions()
+{
+    const testcase_t testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog <pid>\n"
+            "Conditions: <pid>  get_a_pid",
+            {
+                {   "<pid>", // variable
+                    "get_a_pid"
+                }
+            }
+        },
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const testcase_t *testcase = &testcases[testcase_idx];
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+            const args_t *args = &testcase->args[arg_idx];
+            run_1_condition_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+        }
+    }
+}
+
 
 template<typename string_t>
 void do_all_tests() {
     test_correctness<string_t>();
     test_unused_args<string_t>();
     test_suggestions<string_t>();
+    test_conditions<string_t>();
 }
 
 int main(int argc, const char** argv)

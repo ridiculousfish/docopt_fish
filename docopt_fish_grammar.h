@@ -238,6 +238,41 @@ struct expression_t : public base_t {
 template<typename string_t>
 usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options);
 
+// Node visitor class, using CRTP. Child classes should override accept().
+template<typename T>
+struct node_visitor_t {
+    /* Additional overrides */
+    template<typename NODE_TYPE>
+    void visit_internal(const NODE_TYPE &node)
+    {
+        T *derived_this = static_cast<T *>(this);
+        derived_this->accept(node);
+        node.visit_children(this);
+    }
+    
+    
+    /* Function called from overrides of visit_children. We invoke an override of accept(), and then recurse to children. */
+    template<typename NODE_TYPE>
+    void visit(const NODE_TYPE &t)
+    {
+        if (t.get() != NULL) {
+            this->visit_internal(*t);
+        }
+    }
+    
+    /* Visit is called from node visit_children implementations. A token has no children. */
+    void visit(const token_t &token) {
+        static_cast<T *>(this)->accept(token);
+    }
+    
+    /* Public entry point */
+    template<typename ENTRY_TYPE>
+    void begin(const ENTRY_TYPE &t) {
+        this->visit_internal(t);
+    }
+};
+
+
 };
 
 #endif
