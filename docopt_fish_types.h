@@ -228,6 +228,16 @@ struct option_t {
         result.append(src, this->name.start, this->name.length);
         return result;
     }
+    
+    /* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
+    template<typename string_t>
+    static option_t parse_from_string(const string_t &str, range_t *remaining, std::vector<error_t<string_t> >* errors = NULL );
+
+    /* Variant for when the remaining range is uninteresting. */
+    template<typename string_t>
+    static option_t parse_from_string(const string_t &str, range_t range, std::vector<error_t<string_t> > *errors = NULL) {
+        return parse_from_string(str, &range, errors);
+    }
 
 };
 typedef std::vector<option_t> option_list_t;

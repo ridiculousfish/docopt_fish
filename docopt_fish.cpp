@@ -57,6 +57,127 @@ static size_t find_case_insensitive(const std::wstring &haystack, const char *ne
     return std::wstring::npos;
 }
 
+template <typename string_t>
+static void append_error(std::vector<error_t<string_t> > *errors, size_t where, const char *txt) {
+    if (errors != NULL) {
+        errors->resize(errors->size() + 1);
+        error_t<string_t> *error = &errors->back();
+        error->location = where;
+        assign_narrow_string_to_string(txt, &error->text);
+    }
+}
+
+
+
+template<char T>
+static bool it_equals(int c) { return c == T; }
+
+template<typename char_t>
+static bool char_is_valid_in_parameter(char_t c) {
+    const char *invalid = ".|<>,=()[] \t\n";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+template<typename char_t>
+static bool char_is_valid_in_bracketed_word(char_t c) {
+    const char *invalid = "|()[]>\t\n";
+    const char *end = invalid + strlen(invalid);
+    return std::find(invalid, end, c) == end;
+}
+
+template<typename string_t, typename T>
+static range_t scan_while(const string_t &str, range_t *remaining, T func) {
+    range_t result(remaining->start, 0);
+    while (result.end() < remaining->end() && func(str.at(result.end()))) {
+        result.length += 1;
+        remaining->start += 1;
+        remaining->length -= 1;
+    }
+    return result;
+}
+
+template<typename string_t>
+static range_t scan_1_char(const string_t &str, range_t *remaining, typename string_t::value_type c) {
+    range_t result(remaining->start, 0);
+    if (result.end() < remaining->end() && str.at(result.end()) == c) {
+        result.length += 1;
+        remaining->start += 1;
+        remaining->length -= 1;
+    }
+    return result;
+}
+
+
+/* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
+template<typename string_t>
+option_t option_t::parse_from_string(const string_t &str, range_t *remaining, std::vector<error_t<string_t> >* errors UNUSED) {
+    assert(remaining->length > 0);
+    
+    typedef typename string_t::value_type char_t;
+    
+    // Count how many leading dashes
+    const size_t start = remaining->start;
+    range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
+    assert(leading_dash_range.length > 0);
+    if (leading_dash_range.length > 2) {
+        append_error(errors, start, "Too many dashes");
+    }
+
+    // Walk over characters valid in a name
+    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter<char_t>);
+    
+    // Check to see if there's a space
+    range_t space_separator = scan_while(str, remaining, isspace);
+
+    // Check to see if there's an = sign
+    const range_t equals_range = scan_while(str, remaining, it_equals<'='>);
+    if (equals_range.length > 1) {
+        append_error(errors, equals_range.start, "Too many equal signs");
+    }
+
+    // Try to scan a variable
+    // TODO: If we have a naked equals sign (foo = ) generate an error
+    scan_while(str, remaining, isspace);
+    
+    range_t variable_range;
+    range_t open_sign = scan_1_char(str, remaining, '<');
+    if (! open_sign.empty()) {
+        range_t variable_name_range = scan_while(str, remaining, char_is_valid_in_bracketed_word<char_t>);
+        range_t close_sign = scan_1_char(str, remaining, '>');
+        if (! variable_name_range.empty() && ! close_sign.empty()) {
+            variable_range.merge(open_sign);
+            variable_range.merge(variable_name_range);
+            variable_range.merge(close_sign);
+        }
+    }
+    // TODO: generate error for wrong-looking variables
+    
+    // Determine the separator type
+    // If we got an equals range, it's something like 'foo = <bar>' or 'foo=<bar>'. The separator is equals and the space is ignored.
+    // Otherwise, the space matters: 'foo <bar>' is space-separated, and 'foo<bar>' has no separator
+    // Hackish: store sep_space for options without a separator
+    option_t::separator_t separator;
+    if (variable_range.empty()) {
+        separator = option_t::sep_space;
+    } else if (! equals_range.empty()) {
+        separator = option_t::sep_equals;
+    } else if (! space_separator.empty()) {
+        separator = option_t::sep_space;
+    } else {
+        separator = option_t::sep_none;
+    }
+    
+    // TODO: generate an error on long options with no separators (--foo<bar>). Only short options support these.
+    if (separator == option_t::sep_none && (leading_dash_range.length > 1 || name_range.length > 1)) {
+        append_error(errors, name_range.start, "Long options must use a space or equals separator");
+    }
+    
+    // Create and return the option
+    return option_t(name_range, variable_range, leading_dash_range.length, separator);
+}
+
+
 /* Wrapper template class that takes either a string or wstring as string_t */
 template<typename string_t>
 class docopt_impl OPEN_DOCOPT_IMPL
@@ -68,20 +189,8 @@ typedef typename string_t::value_type char_t;
 #pragma mark Scanning
 #pragma mark -
 
-static bool char_is_valid_in_parameter(char_t c) {
-    const char *invalid = ".|<>,=()[] \t\n";
-    const char *end = invalid + strlen(invalid);
-    return std::find(invalid, end, c) == end;
-}
-
 static bool char_is_valid_in_word(char_t c) {
     const char *invalid = ".|()[],<> \t\n";
-    const char *end = invalid + strlen(invalid);
-    return std::find(invalid, end, c) == end;
-}
-
-static bool char_is_valid_in_bracketed_word(char_t c) {
-    const char *invalid = "|()[]>\t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
@@ -92,27 +201,6 @@ static bool char_is_space_or_tab(char_t c) {
 
 template<char T>
 static bool it_equals(char_t c) { return c == T; }
-
-static range_t scan_1_char(const string_t &str, range_t *remaining, char_t c) {
-    range_t result(remaining->start, 0);
-    if (result.end() < remaining->end() && str.at(result.end()) == c) {
-        result.length += 1;
-        remaining->start += 1;
-        remaining->length -= 1;
-    }
-    return result;
-}
-
-template<typename T>
-static range_t scan_while(const string_t &str, range_t *remaining, T func) {
-    range_t result(remaining->start, 0);
-    while (result.end() < remaining->end() && func(str.at(result.end()))) {
-        result.length += 1;
-        remaining->start += 1;
-        remaining->length -= 1;
-    }
-    return result;
-}
 
 // Node visitor class, using CRTP. Child classes should override accept().
 template<typename T>
@@ -269,15 +357,6 @@ range_list_t all_static_arguments;
 
 /* List of errors */
 error_list_t errors;
-static void append_error(error_list_t *errors, size_t where, const char *txt) {
-    if (errors != NULL) {
-        errors->resize(errors->size() + 1);
-        error_t *error = &errors->back();
-        error->location = where;
-        assign_narrow_string_to_string(txt, &error->text);
-    }
-}
-
 
 /* Helper typedefs */
 typedef base_argument_t<string_t> arg_t;
@@ -398,7 +477,7 @@ void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_o
         const token_t &tok = nodes.at(i)->word;
         if (this->token_substr_equals(tok, "-", 1)) {
             // It's an option
-            out_options->push_back(parse_option_from_string(this->source, tok.range, NULL));
+            out_options->push_back(option_t::parse_from_string(this->source, tok.range));
         } else if (this->token_substr_equals(tok, "<", 1)) {
             // It's a variable
             out_variables->push_back(tok.range);
@@ -421,7 +500,7 @@ static option_t parse_option_from_argument(const string_t &str, error_list_t *er
     range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
     
     // Walk over characters valid in a name
-    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter);
+    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter<char_t>);
     
     // Check to see if there's an = sign
     const range_t equals_range = scan_1_char(str, remaining, char_t('='));
@@ -438,76 +517,6 @@ static option_t parse_option_from_argument(const string_t &str, error_list_t *er
     
     // Return the option
     return option_t(name_range, value_range, leading_dash_range.length, equals_range.empty() ? option_t::sep_space : option_t::sep_equals);
-}
-
-/* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
-static option_t parse_option_from_string(const string_t &str, range_t *remaining, error_list_t *errors UNUSED) {
-    assert(remaining->length > 0);
-
-    // Count how many leading dashes
-    const size_t start = remaining->start;
-    range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
-    assert(leading_dash_range.length > 0);
-    if (leading_dash_range.length > 2) {
-        append_error(errors, start, "Too many dashes");
-    }
-
-    // Walk over characters valid in a name
-    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter);
-    
-    // Check to see if there's a space
-    range_t space_separator = scan_while(str, remaining, isspace);
-
-    // Check to see if there's an = sign
-    const range_t equals_range = scan_while(str, remaining, it_equals<'='>);
-    if (equals_range.length > 1) {
-        append_error(errors, equals_range.start, "Too many equal signs");
-    }
-
-    // Try to scan a variable
-    // TODO: If we have a naked equals sign (foo = ) generate an error
-    scan_while(str, remaining, isspace);
-    
-    range_t variable_range;
-    range_t open_sign = scan_1_char(str, remaining, '<');
-    if (! open_sign.empty()) {
-        range_t variable_name_range = scan_while(str, remaining, char_is_valid_in_bracketed_word);
-        range_t close_sign = scan_1_char(str, remaining, '>');
-        if (! variable_name_range.empty() && ! close_sign.empty()) {
-            variable_range.merge(open_sign);
-            variable_range.merge(variable_name_range);
-            variable_range.merge(close_sign);
-        }
-    }
-    // TODO: generate error for wrong-looking variables
-    
-    // Determine the separator type
-    // If we got an equals range, it's something like 'foo = <bar>' or 'foo=<bar>'. The separator is equals and the space is ignored.
-    // Otherwise, the space matters: 'foo <bar>' is space-separated, and 'foo<bar>' has no separator
-    // Hackish: store sep_space for options without a separator
-    option_t::separator_t separator;
-    if (variable_range.empty()) {
-        separator = option_t::sep_space;
-    } else if (! equals_range.empty()) {
-        separator = option_t::sep_equals;
-    } else if (! space_separator.empty()) {
-        separator = option_t::sep_space;
-    } else {
-        separator = option_t::sep_none;
-    }
-    
-    // TODO: generate an error on long options with no separators (--foo<bar>). Only short options support these.
-    if (separator == option_t::sep_none && (leading_dash_range.length > 1 || name_range.length > 1)) {
-        append_error(errors, name_range.start, "Long options must use a space or equals separator");
-    }
-    
-    // Create and return the option
-    return option_t(name_range, variable_range, leading_dash_range.length, separator);
-}
-
-/* Variant for when the remaining range is uninteresting. */
-option_t parse_option_from_string(const string_t &str, range_t range, error_list_t *errors) const {
-    return parse_option_from_string(str, &range, errors);
 }
 
 /* Given an option spec in the given range, that extends from the initial - to the end of the description, parse out a list of options */
@@ -569,7 +578,7 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
             break;
         }
     
-        option_t opt = parse_option_from_string(this->source, &remaining, errors);
+        option_t opt = option_t::parse_from_string(this->source, &remaining, errors);
         if (opt.name.empty()) {
             // Failed to get an option, give up
             break;
@@ -1502,7 +1511,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
     } else if (first_char == char_t('-') && range.length > 1) {
         // Option. Use match_options() on an array containing exactly this option.
         option_list_t options_in_doc;
-        options_in_doc.push_back(parse_option_from_string(this->source, range, NULL));
+        options_in_doc.push_back(option_t::parse_from_string(this->source, range));
         result = this->match_options(options_in_doc, state, ctx);
         if (result.empty()) {
             // Didn't get any options. Maybe we suggest one.

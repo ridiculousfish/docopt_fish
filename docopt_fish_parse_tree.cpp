@@ -325,7 +325,7 @@ struct parse_context_t {
             // TODO: don't match '--'
             if (range.length > 1 && src.at(range.start) == '-') {
                 // It's an option
-                option_t opt = parse_option_from_string(src, &range, NULL);
+                option_t opt = option_t::parse_from_string(src, &range);
                 if (opt.name.length > 0 && opt.separator == option_t::sep_space) {
                     // Looks like an option without a separator. See if the next token is a variable
                     range_t next = this->peek_word().range;
