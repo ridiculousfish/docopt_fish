@@ -90,7 +90,7 @@ struct parse_context_t {
     const option_list_t *shortcut_options;
     range_t remaining_range;
     
-    parse_context_t(const string_t &src, const option_list_t &shortcuts, const range_t &usage_range) : source(&src), shortcut_options(&shortcuts), remaining_range(usage_range)
+    parse_context_t(const string_t &src, const range_t &usage_range, const option_list_t &shortcuts) : source(&src), shortcut_options(&shortcuts), remaining_range(usage_range)
     {}
     
     /* Consume leading whitespace, except newlines, which are meaningful and therefore tokens in their own right */
@@ -179,9 +179,9 @@ struct parse_context_t {
     template<typename PARENT, typename CHILD1, typename CHILD2>
     PARENT *parse_2() {
         PARENT *result = NULL;
-        auto_ptr<CHILD1> child1(CHILD1::parse(this));
+        auto_ptr<CHILD1> child1(parse<CHILD1>());
         if (child1.get()) {
-            auto_ptr<CHILD2> child2(CHILD2::parse(this));
+            auto_ptr<CHILD2> child2(parse<CHILD2>());
             if (child2.get()) {
                 result = new PARENT(child1, child2);
             }
@@ -192,7 +192,7 @@ struct parse_context_t {
     template<typename PARENT, typename CHILD>
     PARENT *parse_1_or_empty() {
         PARENT *result = NULL;
-        auto_ptr<CHILD> child(CHILD::parse(this));
+        auto_ptr<CHILD> child(parse<CHILD>());
         if (child.get()) {
             result = new PARENT(child);
         } else {
@@ -242,12 +242,12 @@ struct parse_context_t {
         // TODO: generate error for missing word name
         token_t word;
         if (this->scan_word(&word)) {
-            auto_ptr<alternation_list_t> el(parse());
+            auto_ptr<alternation_list_t> el(parse<alternation_list_t>());
             // Consume as many newlines as we can, and then try to generate the tail
             while (this->scan('\n')) {
                 continue;
             }
-            auto_ptr<usage_t> next(parse());
+            auto_ptr<usage_t> next(parse<usage_t>());
             
             if (el.get()) {
                 result = new usage_t(word, el, next);
@@ -365,19 +365,19 @@ struct parse_context_t {
         token_t token;
         // Note that options must come before trying to parse it as a list, because "[options]" itself looks like a list
         if (this->scan("[options]", &token)) {
-            auto_ptr<options_shortcut_t> shortcut(parse());
+            auto_ptr<options_shortcut_t> shortcut(parse<options_shortcut_t>());
             if (shortcut.get()) {
                 result = new expression_t(shortcut);
             }
         } else if (this->scan('(', &token) || this->scan('[', &token)) {
-            auto_ptr<alternation_list_t> contents(parse());
+            auto_ptr<alternation_list_t> contents(parse<alternation_list_t>());
             if (contents.get()) {
                 char_t c = this->source->at(token.range.start);
                 assert(c == char_t('(') || c == char_t('['));
                 bool is_paren = (c == char_t('('));
                 token_t close_token;
                 if (this->scan(char_t(is_paren ? ')' : ']'), &close_token)) {
-                    auto_ptr<opt_ellipsis_t> ellipsis(parse());
+                    auto_ptr<opt_ellipsis_t> ellipsis(parse<opt_ellipsis_t>());
                     assert(ellipsis.get() != NULL); // should never fail
                     result = new expression_t(token, is_paren, contents, close_token, ellipsis);
                 } else {
@@ -388,9 +388,9 @@ struct parse_context_t {
             // Indicates leading ellipsis
             // TODO: generate error
         } else {
-            auto_ptr<simple_clause_t> simple_clause(parse());
+            auto_ptr<simple_clause_t> simple_clause(parse<simple_clause_t>());
             if (simple_clause.get()) {
-                auto_ptr<opt_ellipsis_t> ellipsis(parse());
+                auto_ptr<opt_ellipsis_t> ellipsis(parse<opt_ellipsis_t>());
                 assert(ellipsis.get() != NULL); // should never fail
                 result = new expression_t(simple_clause, ellipsis);
             }
@@ -400,6 +400,17 @@ struct parse_context_t {
     }
 };
 
-CLOSE_DOCOPT_IMPL /* namespace */
+template<typename string_t>
+usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options)
+{
+    parse_context_t<string_t> ctx(src, src_range, shortcut_options);
+    return ctx.template parse<usage_t>();
+}
 
+// Force template instantiation
+template usage_t *parse_usage<std::string>(const std::string &src, const range_t &src_range, const option_list_t &shortcut_options);
+template usage_t *parse_usage<std::wstring>(const std::wstring &src, const range_t &src_range, const option_list_t &shortcut_options);
+
+
+CLOSE_DOCOPT_IMPL /* namespace */
 

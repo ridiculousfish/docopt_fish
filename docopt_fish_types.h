@@ -232,7 +232,6 @@ struct option_t {
 };
 typedef std::vector<option_t> option_list_t;
 
-
 /* Internal flags */
 enum {
     /* When matching, if we run out of positionals or options, instead of failing, return a match containing a suggestion */
