@@ -772,7 +772,7 @@ void uniqueize_options(option_list_t *options, error_list_t *errors UNUSED) cons
 }
 
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx. */
-bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion = NULL) {
+bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion = NULL) const {
     const string_t &arg = argv.at(*idx);
     assert(type == option_t::single_long || type == option_t::double_long);
     assert(substr_equals("--", arg, (type == option_t::double_long ? 2 : 1)));
@@ -858,13 +858,13 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
                     out_suggestion->assign(this->source, match.value.start, match.value.length);
                     errored = true;
                 } else {
-                    append_error(&errors, match.value.start, "Option expects an argument");
+                    append_error(out_errors, match.value.start, "Option expects an argument");
                     errored = true;
                 }
             }
         } else if (arg_as_option.has_value()) {
             // A value was specified as --foo=bar, but none was expected
-            append_error(&errors, match.name.start, "Option does not expect an argument");
+            append_error(out_errors, match.name.start, "Option does not expect an argument");
             errored = true;
         }
         if (! errored) {
@@ -877,7 +877,7 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
 }
 
 // Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator.
-bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
+bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) const {
     const string_t &arg = argv.at(*idx);
     assert(substr_equals("-", arg, 1));
     assert(arg.size() > 1); // must not be just a single dash
@@ -926,7 +926,7 @@ bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const optio
 
 
 // Given a list of short options, parse out an argument
-bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) {
+bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) const {
     const string_t &arg = argv.at(*idx);
     assert(substr_equals("-", arg, 1));
     assert(arg.size() > 1); // must not be just a single dash
@@ -989,7 +989,7 @@ bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &op
             val_idx_for_last_option = *idx + 1;
             val_range_for_last_option = range_t(0, argv.at(*idx + 1).size());
         } else {
-            append_error(&errors, options_for_argument.back().value.start, "Option expects an argument");
+            append_error(out_errors, options_for_argument.back().value.start, "Option expects an argument");
             errored = true;
         }
     }
@@ -1016,7 +1016,7 @@ bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &op
 }
 
 /* The Python implementation calls this "parse_argv" */
-void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, string_t *out_suggestion = NULL) {
+void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, string_t *out_suggestion = NULL) const {
 
     size_t idx = 0;
     while (idx < argv.size()) {
@@ -1029,7 +1029,7 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
             break;
         } else if (substr_equals("--", arg, 2)) {
             // Leading long option
-            if (parse_long(argv, option_t::double_long, flags, &idx, options, out_resolved_options, &this->errors, out_suggestion)) {
+            if (parse_long(argv, option_t::double_long, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
                 // parse_long will have updated idx and out_resolved_options
             } else {
                 // This argument is unused
@@ -1044,11 +1044,11 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
                3. A short option with a value: -DNDEBUG
              Try to parse it as a long option; if that fails try to parse it as a short option
              */
-            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, &this->errors)) {
+            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, out_errors)) {
                 // parse_long succeeded. TODO: implement this.
-            } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, &this->errors)) {
+            } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, out_errors)) {
                 // parse_unseparated_short will have updated idx and out_resolved_options
-            } else if (parse_short(argv, &idx, options, out_resolved_options, &this->errors)) {
+            } else if (parse_short(argv, &idx, options, out_resolved_options, out_errors)) {
                 // parse_short succeeded.
             } else {
                 // Unparseable argument
@@ -1211,7 +1211,7 @@ static void state_destructive_append_to(match_state_t *state, match_state_list_t
 }
 
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx) {
+match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx) const {
     match_state_list_t result;
     if (ptr.get()) {
         result = this->match(*ptr, state, ctx);
@@ -1221,7 +1221,7 @@ match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx)
 
 // TODO: comment me
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx, bool require_progress = false) {
+match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx, bool require_progress = false) const {
     match_state_list_t total_result;
     if (ptr.get()) {
         for (size_t i=0; i < state_list.size(); i++) {
@@ -1254,7 +1254,7 @@ match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_conte
 }
 
 /* Match overrides */
-match_state_list_t match(const usage_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const usage_t &node, match_state_t *state, match_context_t *ctx) const {
     if (! ctx->has_more_positionals(state)) {
         // todo: error handling
         return no_match();
@@ -1285,12 +1285,12 @@ match_state_list_t match(const usage_t &node, match_state_t *state, match_contex
     return main_branch;
 }
 
-match_state_list_t match(const expression_list_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const expression_list_t &node, match_state_t *state, match_context_t *ctx) const {
     match_state_list_t intermed_state_list = try_match(node.expression, state, ctx);
     return try_match(node.opt_expression_list, intermed_state_list, ctx);
 }
 
-match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx) const {
     match_state_list_t result;
     if (node.expression_list.get()) {
         return match(*node.expression_list, state, ctx);
@@ -1300,7 +1300,7 @@ match_state_list_t match(const opt_expression_list_t &node, match_state_t *state
     }
 }
 
-match_state_list_t match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx) const {
     // Must duplicate the state for the second branch
     match_state_t copied_state = *state;
     match_state_list_t result1 = try_match(node.expression_list, state, ctx);
@@ -1311,11 +1311,11 @@ match_state_list_t match(const alternation_list_t &node, match_state_t *state, m
     return result1;
 }
 
-match_state_list_t match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx) const {
     return try_match(node.alternation_list, state, ctx);
 }
 
-match_state_list_t match(const expression_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const expression_t &node, match_state_t *state, match_context_t *ctx) const {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
     match_state_list_t result;
@@ -1413,7 +1413,7 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
 
 // Match the options in the options list, updating the state
 // This returns success (i.e. a non-empty state list) if we match at least one
-match_state_list_t match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx) {
+match_state_list_t match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx) const {
     match_state_list_t result;
     bool successful_match = false;
     bool made_suggestion = false;
@@ -1495,7 +1495,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
     return result;
 }
 
-match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) {
+match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) const {
     // Check to see if this is an argument or a variable
     match_state_list_t result;
     const range_t &range = node.word.range;
@@ -1759,7 +1759,7 @@ option_map_t best_assignment(const string_list_t &argv, parse_flags_t flags, ind
     
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
-    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options);
+    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, &this->errors);
 
     if (log_stuff) {
         for (size_t i=0; i < positionals.size(); i++) {
@@ -1800,7 +1800,7 @@ option_map_t best_assignment(const string_list_t &argv, parse_flags_t flags, ind
     return result;
 }
 
-string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags)
+string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const
 {
     /* Set internal flags to generate suggestions */
     flags |= flag_generate_suggestions;
@@ -1808,7 +1808,7 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
     string_t suggestion;
-    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, &suggestion);
+    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, NULL /* errors */, &suggestion);
     
     /* If we got a suggestion, it means that the last argument was of the form --foo, where --foo wants a value. That's all we care about. */
     if (! suggestion.empty()) {
@@ -1927,7 +1927,7 @@ argument_parser_t<string_t> *argument_parser_t<string_t>::create(const string_t 
 }
 
 template<typename string_t>
-std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags)
+std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const
 {
     size_t arg_count = argv.size();
     std::vector<argument_status_t> result(arg_count, status_valid);
@@ -1944,7 +1944,7 @@ std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(c
 }
 
 template<typename string_t>
-std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags)
+std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const
 {
     return impl->suggest_next_argument(argv, flags);
 }

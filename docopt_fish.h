@@ -52,10 +52,10 @@ namespace docopt_fish
         static argument_parser_t *create(const string_t &doc, std::vector<error_t<string_t> > *out_errors);
         
         /* Given a list of arguments, this returns a corresponding parallel array validating the arguments */
-        std::vector<argument_status_t> validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags);
+        std::vector<argument_status_t> validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const;
         
         /* Given a list of arguments, returns an array of potential next values. A value may be either a literal flag -foo, or a variable; these may be distinguished by the <> surrounding the variable. */
-        std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags);
+        std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const;
         
         /* Given a variable name, returns the conditions for that variable, or the empty string if none. */
         string_t conditions_for_variable(const string_t &var) const;
