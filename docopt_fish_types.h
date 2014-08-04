@@ -248,6 +248,13 @@ enum {
     flag_generate_suggestions = 1U << 16
 };
 
+/* Error codes */
+enum {
+    error_none,
+    error_excessive_dashes,
+    error_excessive_equal_signs
+};
+
 CLOSE_DOCOPT_IMPL
 
 #endif

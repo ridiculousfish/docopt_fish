@@ -37,6 +37,12 @@ namespace docopt_fish
         
         /* Text of the error */
         string_t text;
+        
+        /* Internal code, for use in the tests */
+        int code;
+        
+        error_t() : code(0)
+        {}
     };
     
     /* A processed docopt file is called an argument parser. */

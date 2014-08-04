@@ -11,6 +11,7 @@ namespace docopt_fish
 {
 
 using std::auto_ptr;
+using std::vector;
 
 /* Usage grammar:
  
@@ -236,7 +237,7 @@ struct expression_t : public base_t {
 };
 
 template<typename string_t>
-usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options);
+usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors);
 
 // Node visitor class, using CRTP. Child classes should override accept().
 template<typename T>

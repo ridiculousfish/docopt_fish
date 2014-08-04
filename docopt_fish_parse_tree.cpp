@@ -9,14 +9,18 @@
 #include <numeric>
 #include <set>
 
+using std::vector;
+using std::string;
+using std::wstring;
+
 UNUSED
-static const std::wstring &widen(const std::wstring &t) {
+static const wstring &widen(const wstring &t) {
     return t;
 }
 
 UNUSED
-static std::wstring widen(const std::string &t) {
-    std::wstring result;
+static wstring widen(const string &t) {
+    wstring result;
     result.insert(result.begin(), t.begin(), t.end());
     return result;
 }
@@ -83,6 +87,7 @@ struct parse_context_t {
     const string_t *source;
     const option_list_t *shortcut_options;
     range_t remaining_range;
+    vector<error_t<string_t> > errors;
     
     parse_context_t(const string_t &src, const range_t &usage_range, const option_list_t &shortcuts) : source(&src), shortcut_options(&shortcuts), remaining_range(usage_range)
     {}
@@ -319,7 +324,7 @@ struct parse_context_t {
             // TODO: don't match '--'
             if (range.length > 1 && src.at(range.start) == '-') {
                 // It's an option
-                option_t opt = option_t::parse_from_string(src, &range);
+                option_t opt = option_t::parse_from_string(src, &range, &this->errors);
                 if (opt.name.length > 0 && opt.separator == option_t::sep_space) {
                     // Looks like an option without a separator. See if the next token is a variable
                     range_t next = this->peek_word().range;
@@ -395,15 +400,19 @@ struct parse_context_t {
 };
 
 template<typename string_t>
-usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options)
+usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors)
 {
     parse_context_t<string_t> ctx(src, src_range, shortcut_options);
-    return ctx.template parse<usage_t>();
+    usage_t *result = ctx.template parse<usage_t>();
+    if (out_errors) {
+        out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
+    }
+    return result;
 }
 
 // Force template instantiation
-template usage_t *parse_usage<std::string>(const std::string &src, const range_t &src_range, const option_list_t &shortcut_options);
-template usage_t *parse_usage<std::wstring>(const std::wstring &src, const range_t &src_range, const option_list_t &shortcut_options);
+template usage_t *parse_usage<string>(const string &, const range_t &, const option_list_t &, vector<error_t<string> > *);
+template usage_t *parse_usage<wstring>(const wstring &, const range_t &, const option_list_t &shortcut_options, vector<error_t<wstring> > *);
 
 
 CLOSE_DOCOPT_IMPL /* namespace */

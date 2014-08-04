@@ -1,4 +1,5 @@
 #include "docopt_fish.h"
+#include "docopt_fish_types.h"
 
 #include <sstream>
 #include <assert.h>
@@ -40,11 +41,11 @@ static void err(const char *blah, ...)
 }
 
 /* Helpers to make a wide C string from a wide or narrow string */
-static const wchar_t *widen(const wstring &t) {
+static const wchar_t *wide(const wstring &t) {
     return t.c_str();
 }
 
-static const wchar_t *widen(const string &t) {
+static const wchar_t *wide(const string &t) {
     static wstring result[16];
     static size_t idx = 0;
     idx = (idx + 1) % 16;
@@ -61,7 +62,7 @@ string_t to_string(const char *x) {
 }
 
 
-#define do_test(e) do { if (! (e)) err("Test failed on line %lu: %s", __LINE__, #e); } while (0)
+#define do_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 #define do_arg_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 
 map<string, base_argument_t<string> >
@@ -183,7 +184,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     if (! errors.empty()) {
         err("Test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
         for (size_t i=0; i < errors.size(); i++) {
-            fprintf(stderr, "\t%ls\n", widen(errors.at(i).text));
+            fprintf(stderr, "\t%ls\n", wide(errors.at(i).text));
         }
     } else {
         /* Get the suggested arguments, then sort and join them */
@@ -197,7 +198,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
         const string_t expected_string = join(expected_vector, ", ");
         
         if (sugg_string != expected_string) {
-            err("Test %lu.%lu: Wrong suggestions. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_string), widen(sugg_string));
+            err("Test %lu.%lu: Wrong suggestions. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_string), wide(sugg_string));
         }
     }
 }
@@ -237,7 +238,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
             const string_t &val = iter->second;
             typename arg_map_t::const_iterator arg_iter = results.find(key);
             if (arg_iter == results.end()) {
-                err("Test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, widen(key), widen(val));
+                err("Test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, wide(key), wide(val));
             } else {
                 const base_argument_t<string_t> &arg = arg_iter->second;
                 /* The value here can be interpreted a few ways. If it is "True" or "False", it means we expect the argument to have no values, and to have a count of 1 or 0, respectively. If it is % followed by a one-digit number, it represents the count of the argument; values is expected to be empty. Otherwise, split the value about ', '; those are the values we expect. */
@@ -266,7 +267,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
             const string_t &key = iter->first;
             typename string_map_t::const_iterator result = expected.find(key);
             if (result == expected.end()) {
-                err("Test %lu.%lu: Unexpected key %ls", test_idx, arg_idx, widen(key));
+                err("Test %lu.%lu: Unexpected key %ls", test_idx, arg_idx, wide(key));
             }
         }
     }
@@ -305,7 +306,7 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
     const string_t expected_unused = join(expected_unused_vec, ", ");
     
     if (expected_unused != actual_unused) {
-        err("Test %lu.%lu: Wrong unused arguments. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_unused), widen(actual_unused));
+        err("Test %lu.%lu: Wrong unused arguments. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_unused), wide(actual_unused));
     }
 
 }
@@ -323,10 +324,29 @@ static void run_1_condition_test(const char *usage, const char *variable, const 
     const string_t expected_condition_string(expected_condition, expected_condition + strlen(expected_condition));
     
     if (expected_condition_string != condition_string) {
-        err("Test %lu.%lu: Wrong condition. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_condition_string), widen(condition_string));
+        err("Test %lu.%lu: Wrong condition. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_condition_string), wide(condition_string));
     }
     
     delete parser;
+}
+
+template<typename string_t>
+static void run_1_err_test(const char *usage, int expected_error_code, size_t test_idx, size_t arg_idx) {
+    const string_t usage_str(usage, usage + strlen(usage));
+    
+    /* Perform the parsing */
+    std::vector<error_t<string_t> > error_list;
+    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, &error_list);
+    
+    /* Check errors */
+    do_test(! error_list.empty());
+    if (! error_list.empty()) {
+        do_test(error_list.at(0).code == expected_error_code);
+    }
+    
+    if (parser) {
+        delete parser;
+    }
 }
 
 template<typename string_t>
@@ -342,7 +362,7 @@ static void run_1_description_test(const char *usage, const char *option, const 
     const string_t expected_description_string(expected_description, expected_description + strlen(expected_description));
     
     if (expected_description_string != description_string) {
-        err("Test %lu.%lu: Wrong description. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_description_string), widen(description_string));
+        err("Test %lu.%lu: Wrong description. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_description_string), wide(description_string));
     }
     
     delete parser;
@@ -356,6 +376,11 @@ struct args_t {
 struct testcase_t {
     const char *usage;
     args_t args[8];
+};
+
+struct err_testcase_t {
+    const char *usage;
+    int expected_error;
 };
 
 template<typename string_t>
@@ -1745,6 +1770,23 @@ static void test_conditions()
     }
 }
 
+template<typename string_t>
+static void test_errors()
+{
+    const err_testcase_t testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog ---foo\n",
+            error_excessive_dashes
+        },
+        {NULL, 0}
+        
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const err_testcase_t *testcase = &testcases[testcase_idx];
+        run_1_err_test<string_t>(testcase->usage, testcase->expected_error, testcase_idx, 0);
+    }
+}
+
 
 template<typename string_t>
 void do_all_tests() {
@@ -1753,6 +1795,7 @@ void do_all_tests() {
     test_suggestions<string_t>();
     test_descriptions<string_t>();
     test_conditions<string_t>();
+    test_errors<string_t>();
 }
 
 int main(int argc, const char** argv)

@@ -58,14 +58,22 @@ static size_t find_case_insensitive(const std::wstring &haystack, const char *ne
 }
 
 template <typename string_t>
-static void append_error(std::vector<error_t<string_t> > *errors, size_t where, const char *txt) {
+static void append_error(std::vector<error_t<string_t> > *errors, size_t where, int code, const char *txt) {
     if (errors != NULL) {
         errors->resize(errors->size() + 1);
         error_t<string_t> *error = &errors->back();
         error->location = where;
+        error->code = code;
         assign_narrow_string_to_string(txt, &error->text);
     }
 }
+
+// TODO: This is just the non-code taking version. Eliminate it.
+template <typename string_t>
+static void append_error(std::vector<error_t<string_t> > *errors, size_t where, const char *txt) {
+    append_error(errors, where, 0, txt);
+}
+
 
 template<char T>
 static bool it_equals(int c) { return c == T; }
@@ -136,7 +144,7 @@ option_t option_t::parse_from_string(const string_t &str, range_t *remaining, st
     range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
     assert(leading_dash_range.length > 0);
     if (leading_dash_range.length > 2) {
-        append_error(errors, start, "Too many dashes");
+        append_error(errors, start, error_excessive_dashes, "Too many dashes");
     }
 
     // Walk over characters valid in a name
@@ -148,7 +156,7 @@ option_t option_t::parse_from_string(const string_t &str, range_t *remaining, st
     // Check to see if there's an = sign
     const range_t equals_range = scan_while(str, remaining, it_equals<'='>);
     if (equals_range.length > 1) {
-        append_error(errors, equals_range.start, "Too many equal signs");
+        append_error(errors, equals_range.start, error_excessive_equal_signs, "Too many equal signs");
     }
 
     // Try to scan a variable
@@ -758,7 +766,7 @@ void uniqueize_options(option_list_t *options, error_list_t *errors UNUSED) cons
                 matching_indexes.push_back(match_cursor);
                 
                 // This argument matches.
-                // TODO: verify agreement in the parameters, etc.
+                // x: verify agreement in the parameters, etc.
                 if (maybe_match.description_range.length > current_match.description_range.length) {
                     // The second one has a better description. Keep it.
                     best_match_idx = match_cursor;
@@ -1066,7 +1074,7 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
              Try to parse it as a long option; if that fails try to parse it as a short option
              */
             if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
-                // parse_long succeeded. TODO: implement this.
+                // parse_long succeeded
             } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
                 // parse_unseparated_short will have updated idx and out_resolved_options
             } else if (parse_short(argv, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
@@ -1712,7 +1720,7 @@ bool preflight() {
     this->shortcut_options = this->parse_options_spec(&this->errors);
     this->uniqueize_options(&this->shortcut_options, &this->errors);
     
-    this->parse_tree = parse_usage<string_t>(this->source, usage_ranges.at(0), this->shortcut_options);
+    this->parse_tree = parse_usage<string_t>(this->source, usage_ranges.at(0), this->shortcut_options, &this->errors);
     if (! this->parse_tree) {
         append_error(&this->errors, npos, "Failed to parse");
         return false;
@@ -1969,12 +1977,15 @@ argument_parser_t<string_t> *argument_parser_t<string_t>::create(const string_t 
     
     /* Make and store its guts */
     result->impl = new docopt_impl<string_t>(result->src);
+    
+    bool preflighted = result->impl->preflight();
+    
+    if (out_errors != NULL) {
+        *out_errors = result->impl->errors;
+    }
 
-    if (! result->impl->preflight()) {
+    if (! preflighted) {
         /* D'oh. Note that argument_parser_t's destructor will clean up the impl.  */
-        if (out_errors != NULL) {
-            *out_errors = result->impl->errors;
-        }
         delete result;
         return NULL;
     }
