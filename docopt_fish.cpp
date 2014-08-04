@@ -785,7 +785,9 @@ void uniqueize_options(option_list_t *options, error_list_t *errors UNUSED) cons
     }
 }
 
-/* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx. */
+/* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx.
+TODO: merge with parse_unseparated_short, etc
+*/
 bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion = NULL) const {
     const string_t &arg = argv.at(*idx);
     assert(type == option_t::single_long || type == option_t::double_long);
@@ -890,8 +892,8 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
     return success;
 }
 
-// Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator.
-bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) const {
+// Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator. TODO: Use out_suggestion
+bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion) const {
     const string_t &arg = argv.at(*idx);
     assert(substr_equals("-", arg, 1));
     assert(arg.size() > 1); // must not be just a single dash
@@ -940,7 +942,7 @@ bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const optio
 
 
 // Given a list of short options, parse out an argument
-bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors) const {
+bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion) const {
     const string_t &arg = argv.at(*idx);
     assert(substr_equals("-", arg, 1));
     assert(arg.size() > 1); // must not be just a single dash
@@ -1002,6 +1004,11 @@ bool parse_short(const string_list_t &argv, size_t *idx, const option_list_t &op
         if (*idx + 1 < argv.size()) {
             val_idx_for_last_option = *idx + 1;
             val_range_for_last_option = range_t(0, argv.at(*idx + 1).size());
+        } else if ((flags & flag_generate_suggestions) && out_suggestion != NULL) {
+            // We are at the last argument, and we expect a value. Return the value as a suggestion.
+            const option_t &match = options_for_argument.back();
+            out_suggestion->assign(this->source, match.value.start, match.value.length);
+            errored = true;
         } else {
             append_error(out_errors, options_for_argument.back().value.start, "Option expects an argument");
             errored = true;
@@ -1058,11 +1065,11 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
                3. A short option with a value: -DNDEBUG
              Try to parse it as a long option; if that fails try to parse it as a short option
              */
-            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, out_errors)) {
+            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
                 // parse_long succeeded. TODO: implement this.
-            } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, out_errors)) {
+            } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
                 // parse_unseparated_short will have updated idx and out_resolved_options
-            } else if (parse_short(argv, &idx, options, out_resolved_options, out_errors)) {
+            } else if (parse_short(argv, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
                 // parse_short succeeded.
             } else {
                 // Unparseable argument

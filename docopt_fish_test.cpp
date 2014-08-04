@@ -1605,6 +1605,18 @@ static void test_suggestions()
                 },
             },
         },
+        /* Case 5 */
+        {   "Usage: cp [options]\n"
+            "Options: -x <msg>",
+            {
+                {   "", // argv
+                    "-x"
+                },
+                {   "-x", // argv
+                    "<msg>"
+                },
+            },
+        },
         {NULL, {}}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
