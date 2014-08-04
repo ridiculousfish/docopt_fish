@@ -521,9 +521,9 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
         options_end = end; // no description
     }
 
-    // Determine the description range (possibly empty). Skip over its leading whitespace
+    // Determine the description range (possibly empty). Trim leading and trailing whitespace
     range_t description_range = range_t(options_end, end - options_end);
-    scan_while(this->source, &description_range, isspace);
+    description_range = trim_whitespace(description_range, this->source);
     
     // Parse out a "default:" value.
     range_t default_value_range;

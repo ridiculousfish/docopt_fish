@@ -1674,7 +1674,8 @@ static void test_descriptions()
     {
         /* Case 0 */
         {   "Usage: prog [options] <pid>\n"
-            "Options: --embiggen, -e  Embiggen the smallest man",
+            "Options: --embiggen, -e  Embiggen the smallest man\n"
+            "         --debiggen, -d  Debiggen the largest man\n",
             {
                 {   "--embiggen",
                     "Embiggen the smallest man"
@@ -1686,6 +1687,9 @@ static void test_descriptions()
                     ""
                 },
                 {   "--debiggen",
+                    "Debiggen the largest man"
+                },
+                {   "--rebiggen",
                     ""
                 },
             },
