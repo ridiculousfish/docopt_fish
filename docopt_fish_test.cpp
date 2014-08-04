@@ -1711,12 +1711,16 @@ static void test_conditions()
 {
     const testcase_t testcases[] =
     {   /* Case 0 */
-        {   "Usage: prog <pid>\n"
-            "Conditions: <pid>  get_a_pid",
+        {   "Usage: prog <pid> <grp>\n"
+            "Conditions: <pid>  get_a_pid\n"
+            "            <grp>  (echo groups)",
             {
                 {   "<pid>", // variable
                     "get_a_pid"
-                }
+                },
+                {   "<grp>", // variable
+                    "(echo groups)"
+                },
             }
         },
     };

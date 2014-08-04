@@ -711,14 +711,15 @@ condition_map_t parse_conditions_spec(error_list_t *errors) const {
         while (get_next_line(this->source, &line_range, section_end)) {
             // A specification look like this:
             // <pid>  stuff
-            // Two spaces are the separator
+            // Two spaces are the separator. But make sure we skip leading spaces!
             // TODO: actual error reporting, etc.
+            range_t trimmed_line_range = trim_whitespace(line_range, this->source);
             const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
-            size_t sep = this->source.find(two_spaces, line_range.start);
-            if (sep < line_range.end())
+            size_t sep = this->source.find(two_spaces, trimmed_line_range.start);
+            if (sep < trimmed_line_range.end())
             {
-                range_t key(line_range.start, sep - line_range.start);
-                range_t value(sep, line_range.end() - sep);
+                range_t key(trimmed_line_range.start, sep - trimmed_line_range.start);
+                range_t value(sep, trimmed_line_range.end() - sep);
                 
                 // Trim whitespace off of both sides and then populate our map
                 // TODO: verify that the variable was found
