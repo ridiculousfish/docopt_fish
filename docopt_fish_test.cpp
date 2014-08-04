@@ -329,6 +329,25 @@ static void run_1_condition_test(const char *usage, const char *variable, const 
     delete parser;
 }
 
+template<typename string_t>
+static void run_1_description_test(const char *usage, const char *option, const char *expected_description, size_t test_idx, size_t arg_idx) {
+    /* Usage as a string */
+    const string_t usage_str(usage, usage + strlen(usage));
+    
+    /* Perform the parsing */
+    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, NULL);
+    
+    const string_t option_string(option, option + strlen(option));
+    const string_t description_string = parser->description_for_option(option_string);
+    const string_t expected_description_string(expected_description, expected_description + strlen(expected_description));
+    
+    if (expected_description_string != description_string) {
+        err("Test %lu.%lu: Wrong description. Expected '%ls', got '%ls'", test_idx, arg_idx, widen(expected_description_string), widen(description_string));
+    }
+    
+    delete parser;
+}
+
 struct args_t {
     const char * argv;
     const char * expected_results;
@@ -1649,6 +1668,41 @@ static void test_unused_args()
 }
 
 template<typename string_t>
+static void test_descriptions()
+{
+    const testcase_t testcases[] =
+    {
+        /* Case 0 */
+        {   "Usage: prog [options] <pid>\n"
+            "Options: --embiggen, -e  Embiggen the smallest man",
+            {
+                {   "--embiggen",
+                    "Embiggen the smallest man"
+                },
+                {   "-e",
+                    "Embiggen the smallest man"
+                },
+                {   "-f",
+                    ""
+                },
+                {   "--debiggen",
+                    ""
+                },
+            },
+        },
+        {NULL, {}}
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const testcase_t *testcase = &testcases[testcase_idx];
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+            const args_t *args = &testcase->args[arg_idx];
+            run_1_description_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+        }
+    }
+}
+
+
+template<typename string_t>
 static void test_conditions()
 {
     const testcase_t testcases[] =
@@ -1677,6 +1731,7 @@ void do_all_tests() {
     test_correctness<string_t>();
     test_unused_args<string_t>();
     test_suggestions<string_t>();
+    test_descriptions<string_t>();
     test_conditions<string_t>();
 }
 

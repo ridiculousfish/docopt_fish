@@ -60,6 +60,10 @@ namespace docopt_fish
         /* Given a variable name, returns the conditions for that variable, or the empty string if none. */
         string_t conditions_for_variable(const string_t &var) const;
         
+        /* Given an option name like --foo, returns the description of that option name, or the empty string if none. */
+        string_t description_for_option(const string_t &option) const;
+
+        
         argument_parser_t();
         ~argument_parser_t();
     };
