@@ -65,22 +65,19 @@ string_t to_string(const char *x) {
 #define do_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 #define do_arg_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 
-map<string, base_argument_t<string> >
-generic_docopt_parse(const string &doc,
-                     const vector<string> &argv,
+template <typename string_t>
+map<string_t, base_argument_t<string_t> >
+generic_docopt_parse(const string_t &doc,
+                     const vector<string_t> &argv,
                      parse_flags_t flags,
                      vector<size_t> *out_unused_arguments)
 {
-    return docopt_parse(doc, argv, flags, out_unused_arguments);
-}
-
-map<wstring, base_argument_t<wstring> >
-generic_docopt_parse(const wstring &doc,
-                     const vector<wstring> &argv,
-                     parse_flags_t flags,
-                     vector<size_t> *out_unused_arguments)
-{
-    return docopt_wparse(doc, argv, flags, out_unused_arguments);
+    argument_parser_t<string_t> parser;
+    if (parser.set_doc(doc, NULL)) {
+        return parser.parse_arguments(argv, flags, NULL, out_unused_arguments);
+    } else {
+        return map<string_t, base_argument_t<string_t> >();
+    }
 }
 
 /* Splits up a string via a delimiter string, returning a list of some string type */
@@ -179,7 +176,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     const string_t usage_str(usage, usage + strlen(usage));
     
     std::vector<error_t<string_t> > errors;
-    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, &errors);
+    argument_parser_t<string_t> parser = argument_parser_t<string_t>(usage_str, &errors);
     
     if (! errors.empty()) {
         err("Test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
@@ -188,7 +185,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
         }
     } else {
         /* Get the suggested arguments, then sort and join them */
-        std::vector<string_t> suggestions = parser->suggest_next_argument(argv, flags_default);
+        std::vector<string_t> suggestions = parser.suggest_next_argument(argv, flags_default);
         sort(suggestions.begin(), suggestions.end());
         const string_t sugg_string = join(suggestions, ", ");
         
@@ -317,17 +314,15 @@ static void run_1_condition_test(const char *usage, const char *variable, const 
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, NULL);
+    argument_parser_t<string_t> parser(usage_str, NULL);
     
     const string_t var_string(variable, variable + strlen(variable));
-    const string_t condition_string = parser->conditions_for_variable(var_string);
+    const string_t condition_string = parser.conditions_for_variable(var_string);
     const string_t expected_condition_string(expected_condition, expected_condition + strlen(expected_condition));
     
     if (expected_condition_string != condition_string) {
         err("Test %lu.%lu: Wrong condition. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_condition_string), wide(condition_string));
     }
-    
-    delete parser;
 }
 
 template<typename string_t>
@@ -336,7 +331,7 @@ static void run_1_usage_err_test(const char *usage, int expected_error_code, siz
     
     /* Perform the parsing */
     std::vector<error_t<string_t> > error_list;
-    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, &error_list);
+    argument_parser_t<string_t> parser(usage_str, &error_list);
     
     /* Check errors */
     do_test(! error_list.empty());
@@ -344,10 +339,6 @@ static void run_1_usage_err_test(const char *usage, int expected_error_code, siz
         if (error_list.front().code != expected_error_code) {
             err("Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
         }
-    }
-    
-    if (parser) {
-        delete parser;
     }
 }
 
@@ -364,11 +355,10 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
     
     /* Perform the parsing */
     std::vector<error_t<string_t> > error_list;
-    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, &error_list);
-    do_test(parser != NULL);
+    argument_parser_t<string_t> parser(usage_str, &error_list);
     
     /* Check arguments */
-    parser->parse_arguments(argv, flag_resolve_unambiguous_prefixes, &error_list);
+    parser.parse_arguments(argv, flag_resolve_unambiguous_prefixes, &error_list);
     
     /* Check errors */
     do_test(! error_list.empty());
@@ -376,10 +366,6 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
         if (error_list.front().code != expected_error_code) {
             err("Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
         }
-    }
-    
-    if (parser) {
-        delete parser;
     }
 }
 
@@ -390,17 +376,15 @@ static void run_1_description_test(const char *usage, const char *option, const 
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, NULL);
+    argument_parser_t<string_t> parser(usage_str, NULL);
     
     const string_t option_string(option, option + strlen(option));
-    const string_t description_string = parser->description_for_option(option_string);
+    const string_t description_string = parser.description_for_option(option_string);
     const string_t expected_description_string(expected_description, expected_description + strlen(expected_description));
     
     if (expected_description_string != description_string) {
         err("Test %lu.%lu: Wrong description. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_description_string), wide(description_string));
     }
-    
-    delete parser;
 }
 
 struct args_t {
@@ -1996,15 +1980,11 @@ void test_fuzzing() {
             
             // Try to parse it
             // We should not crash or loop forever, and either parser should be non-null or we should have an error
-            argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(storage, &errors);
-            if (parser == NULL && errors.empty()) {
+            argument_parser_t<string_t> parser;
+            bool parsed = parser.set_doc(storage, &errors);
+            if (! parsed && errors.empty()) {
                 err("No error generated for fuzz string '%ls'\n", wide(storage));
             }
-            if (parser) {
-                delete parser;
-            }
-            
-
         }
         //fprintf(stderr, "Fuzzed %u / %u\n", tokens_in_string, max_fuzz);
     }

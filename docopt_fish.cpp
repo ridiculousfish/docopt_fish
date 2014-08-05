@@ -1697,10 +1697,9 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
 /* Parses the docopt, etc. Returns true on success, false on error */
 bool preflight() {
     /* Clean up from any prior run */
-    if (this->parse_tree) {
-        delete this->parse_tree;
-        this->parse_tree = NULL;
-    }
+    delete this->parse_tree; // may be null
+    this->parse_tree = NULL;
+
     this->shortcut_options.clear();
     this->all_options.clear();
     this->all_variables.clear();
@@ -1992,31 +1991,6 @@ static int simple_test() {
 // close the class
 CLOSE_DOCOPT_IMPL;
 
-
-template<typename string_t>
-argument_parser_t<string_t> *argument_parser_t<string_t>::create(const string_t &doc, std::vector<error_t<string_t> > *out_errors)
-{
-    /* Optimistically create the parser */
-    argument_parser_t<string_t> *result = new argument_parser_t<string_t>();
-    result->src = doc;
-    
-    /* Make and store its guts */
-    result->impl = new docopt_impl<string_t>(result->src);
-    
-    bool preflighted = result->impl->preflight();
-    
-    if (out_errors != NULL) {
-        *out_errors = result->impl->errors;
-    }
-
-    if (! preflighted) {
-        /* D'oh. Note that argument_parser_t's destructor will clean up the impl.  */
-        delete result;
-        return NULL;
-    }
-    return result;
-}
-
 template<typename string_t>
 std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const
 {
@@ -2057,33 +2031,45 @@ std::map<string_t, base_argument_t<string_t> >
 argument_parser_t<string_t>::parse_arguments(const std::vector<string_t> &argv,
                                             parse_flags_t flags,
                                             std::vector<error_t<string_t> > *out_errors,
-                                            std::vector<size_t> *out_unused_arguments)
-{
+                                            std::vector<size_t> *out_unused_arguments) {
     return impl->best_assignment_for_argv(argv, flags, out_errors, out_unused_arguments);
+}
+
+
+template<typename string_t>
+bool argument_parser_t<string_t>::set_doc(const string_t &doc, std::vector<error_t<string_t> > *out_errors) {
+    docopt_impl<string_t> *new_impl = new docopt_impl<string_t>(doc);
+    
+    bool preflighted = new_impl->preflight();
+    
+    if (out_errors) {
+        out_errors->insert(out_errors->end(), new_impl->errors.begin(), new_impl->errors.end());
+    }
+    
+    if (! preflighted) {
+        delete new_impl;
+    } else {
+        delete this->impl; // may be null
+        this->impl = new_impl;
+    }
+    return preflighted;
 }
 
 /* Constructor */
 template<typename string_t>
-argument_parser_t<string_t>::argument_parser_t() {}
+argument_parser_t<string_t>::argument_parser_t() : impl(NULL) {}
+
+template<typename string_t>
+argument_parser_t<string_t>::argument_parser_t(const string_t &doc, error_list_t *out_errors) : impl(NULL) {
+    this->set_doc(doc, out_errors);
+}
 
 /* Destructor */
 template<typename string_t>
 argument_parser_t<string_t>::~argument_parser_t<string_t>() {
     /* Clean up guts */
     docopt_impl<string_t> *typed_impl = static_cast<docopt_impl<string_t> *>(this->impl);
-    if (typed_impl != NULL) {
-        delete typed_impl;
-    }
-}
-
-std::map<std::string, argument_t> docopt_parse(const std::string &usage_doc, const std::vector<std::string> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
-    docopt_impl<std::string> impl(usage_doc);
-    return impl.best_assignment(argv, flags, out_unused_arguments);
-}
-
-std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &usage_doc, const std::vector<std::wstring> &argv, parse_flags_t flags, index_list_t *out_unused_arguments) {
-    docopt_impl<std::wstring> impl(usage_doc);
-    return impl.best_assignment(argv, flags, out_unused_arguments);
+    delete typed_impl; // may be null
 }
 
 // close the namespace

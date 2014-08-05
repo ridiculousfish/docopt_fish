@@ -77,15 +77,16 @@ namespace docopt_fish
     template<typename string_t>
     class argument_parser_t {
         /* Guts */
-        string_t src;
         docopt_impl<string_t> *impl;
         
         public:
         
         typedef base_argument_t<string_t> argument_t;
         typedef std::map<string_t, argument_t> argument_map_t;
+        typedef std::vector<error_t<string_t> > error_list_t;
         
-        static argument_parser_t *create(const string_t &doc, std::vector<error_t<string_t> > *out_errors);
+        /* Sets the docopt doc for this parser. Returns any parse errors by reference. Returns true if successful. */
+        bool set_doc(const string_t &doc, error_list_t *out_errors);
         
         /* Given a list of arguments, this returns a corresponding parallel array validating the arguments */
         std::vector<argument_status_t> validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const;
@@ -102,20 +103,13 @@ namespace docopt_fish
         /* Given a list of arguments (argv), parse them, producing a map from option names to values */
         argument_map_t parse_arguments(const std::vector<string_t> &argv,
                         parse_flags_t flags,
-                        std::vector<error_t<string_t> > *out_errors = NULL,
+                        error_list_t *out_errors = NULL,
                         std::vector<size_t> *out_unused_arguments = NULL);
 
         argument_parser_t();
+        argument_parser_t(const string_t &doc, error_list_t *out_errors);
         ~argument_parser_t();
     };
-    
-    
-    /* Result of a docopt operation is a map from keys to values */
-    std::map<std::string, argument_t> docopt_parse(const std::string &doc, const std::vector<std::string> &argv, parse_flags_t flags, std::vector<size_t> *out_unused_arguments = NULL);
-
-    /* Wide variant */
-    std::map<std::wstring, wargument_t> docopt_wparse(const std::wstring &doc, const std::vector<std::wstring> &argv, parse_flags_t flags, std::vector<size_t> *out_unused_arguments = NULL);
-    
 };
 
 #endif
