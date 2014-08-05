@@ -32,48 +32,24 @@ namespace docopt_fish
     /* Represents an error. */
     template<typename string_t>
     struct error_t {
-        /* Location of the token where the error occurred */
+        /* Location of the token where the error occurred, in either the docopt doc or the argument */
         size_t location;
         
-        /* Text of the error */
-        string_t text;
+        /* If the error occurred in an argument (i.e. argv), the index of the argument; otherwise -1 */
+        size_t argument_index;
         
         /* Internal code, for use in the tests */
         int code;
         
-        error_t() : code(0)
+        /* Text of the error */
+        string_t text;
+        
+        error_t() : argument_index(-1), code(0)
         {}
     };
     
     /* A processed docopt file is called an argument parser. */
     template<typename string_t> class docopt_impl;
-    
-    template<typename string_t>
-    class argument_parser_t {
-        /* Guts */
-        string_t src;
-        docopt_impl<string_t> *impl;
-        
-        public:
-        static argument_parser_t *create(const string_t &doc, std::vector<error_t<string_t> > *out_errors);
-        
-        /* Given a list of arguments, this returns a corresponding parallel array validating the arguments */
-        std::vector<argument_status_t> validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const;
-        
-        /* Given a list of arguments, returns an array of potential next values. A value may be either a literal flag -foo, or a variable; these may be distinguished by the <> surrounding the variable. */
-        std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const;
-        
-        /* Given a variable name, returns the conditions for that variable, or the empty string if none. */
-        string_t conditions_for_variable(const string_t &var) const;
-        
-        /* Given an option name like --foo, returns the description of that option name, or the empty string if none. */
-        string_t description_for_option(const string_t &option) const;
-
-        
-        argument_parser_t();
-        ~argument_parser_t();
-    };
-    
     
     /* Represents an argument in the result */
     template<typename string_t>
@@ -96,6 +72,43 @@ namespace docopt_fish
     /* Concrete types */
     typedef base_argument_t<std::string> argument_t;
     typedef base_argument_t<std::wstring> wargument_t;
+    
+    
+    template<typename string_t>
+    class argument_parser_t {
+        /* Guts */
+        string_t src;
+        docopt_impl<string_t> *impl;
+        
+        public:
+        
+        typedef base_argument_t<string_t> argument_t;
+        typedef std::map<string_t, argument_t> argument_map_t;
+        
+        static argument_parser_t *create(const string_t &doc, std::vector<error_t<string_t> > *out_errors);
+        
+        /* Given a list of arguments, this returns a corresponding parallel array validating the arguments */
+        std::vector<argument_status_t> validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const;
+        
+        /* Given a list of arguments, returns an array of potential next values. A value may be either a literal flag -foo, or a variable; these may be distinguished by the <> surrounding the variable. */
+        std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const;
+        
+        /* Given a variable name, returns the conditions for that variable, or the empty string if none. */
+        string_t conditions_for_variable(const string_t &var) const;
+        
+        /* Given an option name like --foo, returns the description of that option name, or the empty string if none. */
+        string_t description_for_option(const string_t &option) const;
+        
+        /* Given a list of arguments (argv), parse them, producing a map from option names to values */
+        argument_map_t parse_arguments(const std::vector<string_t> &argv,
+                        parse_flags_t flags,
+                        std::vector<error_t<string_t> > *out_errors = NULL,
+                        std::vector<size_t> *out_unused_arguments = NULL);
+
+        argument_parser_t();
+        ~argument_parser_t();
+    };
+    
     
     /* Result of a docopt operation is a map from keys to values */
     std::map<std::string, argument_t> docopt_parse(const std::string &doc, const std::vector<std::string> &argv, parse_flags_t flags, std::vector<size_t> *out_unused_arguments = NULL);

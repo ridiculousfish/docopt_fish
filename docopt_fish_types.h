@@ -243,12 +243,13 @@ struct option_t {
 typedef std::vector<option_t> option_list_t;
 
 template <typename string_t>
-static void append_error(std::vector<error_t<string_t> > *errors, size_t where, int code, const char *txt) {
+static void append_error(std::vector<error_t<string_t> > *errors, size_t where, int code, const char *txt, size_t arg_idx = -1) {
     if (errors != NULL) {
         errors->resize(errors->size() + 1);
         error_t<string_t> *error = &errors->back();
         error->location = where;
         error->code = code;
+        error->argument_index = arg_idx;
         assign_narrow_string_to_string(txt, &error->text);
     }
 }
@@ -262,16 +263,25 @@ enum {
 /* Error codes */
 enum {
     error_none,
-    error_excessive_dashes,
-    error_excessive_equal_signs,
-    error_bad_option_separator,
-    error_invalid_option_name,
-    error_missing_close_bracket_in_default,
-    error_one_variable_multiple_conditions,
-    error_option_duplicated_in_options_section,
-    error_missing_usage_section,
-    error_excessive_usage_sections,
-    error_missing_program_name,
+    
+    /* Errors that may occur in a docopt description */
+    error_excessive_dashes, // Three or more dashes in an option: prog ---foo
+    error_excessive_equal_signs, // Two or more equal signs: --foo==bar
+    error_bad_option_separator, // Bad separator between option and value: --foo<bar>
+    error_invalid_option_name, // Bad option name: Options: foo
+    error_missing_close_bracket_in_default, // No close bracket. Options: --send <msg> Specifies message [default: none
+    error_one_variable_multiple_conditions, // Two conditions for same var. Conditions: <msg> foo \n <msg> foo
+    error_option_duplicated_in_options_section, // Options: --foo, --foo
+    error_missing_usage_section, // No Usage:
+    error_excessive_usage_sections, // More than one Usage:
+    error_missing_program_name, // Forgot the program name. Usage: --foo
+    error_trailing_vertical_bar, // Usage: prog foo | bar |
+    
+    // Errors that may occur in arguments (argv)
+    error_unknown_option, // Option is not present in usage
+    error_option_has_missing_argument, // Option expects an argument, but none was given in argv
+    error_option_unexpected_argument, // Option does not expect an argument, but one was given in argv
+    error_ambiguous_prefix_match // Prefix matching was requested and the result was ambiguous
 };
 
 CLOSE_DOCOPT_IMPL

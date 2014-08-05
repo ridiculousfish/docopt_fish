@@ -331,7 +331,7 @@ static void run_1_condition_test(const char *usage, const char *variable, const 
 }
 
 template<typename string_t>
-static void run_1_err_test(const char *usage, int expected_error_code, size_t test_idx, size_t arg_idx) {
+static void run_1_usage_err_test(const char *usage, int expected_error_code, size_t test_idx, size_t arg_idx) {
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
@@ -341,13 +341,48 @@ static void run_1_err_test(const char *usage, int expected_error_code, size_t te
     /* Check errors */
     do_test(! error_list.empty());
     if (! error_list.empty()) {
-        do_test(error_list.at(0).code == expected_error_code);
+        if (error_list.front().code != expected_error_code) {
+            err("Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
+        }
     }
     
     if (parser) {
         delete parser;
     }
 }
+
+template<typename string_t>
+static void run_1_argv_err_test(const char *usage, const char *joined_argv, int expected_error_code, size_t test_idx, size_t arg_idx) {
+    /* Separate argv by spaces */
+    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    
+    /* Prepend the program name for every argument */
+    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    
+    /* Usage as a string */
+    const string_t usage_str(usage, usage + strlen(usage));
+    
+    /* Perform the parsing */
+    std::vector<error_t<string_t> > error_list;
+    argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(usage_str, &error_list);
+    do_test(parser != NULL);
+    
+    /* Check arguments */
+    parser->parse_arguments(argv, flag_resolve_unambiguous_prefixes, &error_list);
+    
+    /* Check errors */
+    do_test(! error_list.empty());
+    if (! error_list.empty()) {
+        if (error_list.front().code != expected_error_code) {
+            err("Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
+        }
+    }
+    
+    if (parser) {
+        delete parser;
+    }
+}
+
 
 template<typename string_t>
 static void run_1_description_test(const char *usage, const char *option, const char *expected_description, size_t test_idx, size_t arg_idx) {
@@ -376,11 +411,6 @@ struct args_t {
 struct testcase_t {
     const char *usage;
     args_t args[8];
-};
-
-struct err_testcase_t {
-    const char *usage;
-    int expected_error;
 };
 
 template<typename string_t>
@@ -1535,6 +1565,24 @@ static void test_correctness()
                 },
             },
         },
+        /* Case 82 */
+        {   "Usage: prog [options]\n"
+            "Options: -D<def>\n",
+            {
+                {   "-DNDEBUG", // argv
+                    "-D:NDEBUG\n"
+                },
+            },
+        },
+        /* Case 83 */
+        {   "Usage: prog [options]\n"
+            "Options: -d\n",
+            {
+                {   "-d", // argv
+                    "-d:True\n"
+                },
+            },
+        },
         {NULL, {}}
     }
     ;
@@ -1760,6 +1808,7 @@ static void test_conditions()
                 },
             }
         },
+        {NULL, {}}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const testcase_t *testcase = &testcases[testcase_idx];
@@ -1771,9 +1820,12 @@ static void test_conditions()
 }
 
 template<typename string_t>
-static void test_errors()
+static void test_errors_in_usage()
 {
-    const err_testcase_t testcases[] =
+    const struct usage_err_testcase_t {
+        const char *usage;
+        int expected_error;
+    } testcases[] =
     {   /* Case 0 */
         {   "Usage: prog ---foo\n",
             error_excessive_dashes
@@ -1835,15 +1887,128 @@ static void test_errors()
         {   "Usage: | foo\n",
             error_missing_program_name
         },
+        /* Case 12 */
+        {   "Usage: prog foo | bar | \n",
+            error_trailing_vertical_bar
+        },
         {NULL, 0}
         
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
-        const err_testcase_t *testcase = &testcases[testcase_idx];
-        run_1_err_test<string_t>(testcase->usage, testcase->expected_error, testcase_idx, 0);
+        const usage_err_testcase_t *testcase = &testcases[testcase_idx];
+        run_1_usage_err_test<string_t>(testcase->usage, testcase->expected_error, testcase_idx, 0);
     }
 }
 
+template<typename string_t>
+static void test_errors_in_argv()
+{
+    const struct argv_err_testcase_t {
+        const char *usage;
+        const char *argv;
+        int expected_error;
+    } testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog --foo\n"
+            "       prog --fort",
+            "--fo", // argv
+            error_ambiguous_prefix_match
+        },
+        /* Case 1 */
+        {   "Usage: prog --foo\n",
+            "--bar", // argv
+            error_unknown_option
+        },
+        /* Case 2 */
+        {   "Usage: prog --foo <bar>\n",
+            "--foo", // argv
+            error_option_has_missing_argument
+        },
+        /* Case 3 */
+        {   "Usage: prog --foo\n",
+            "--foo=bar", // argv
+            error_option_unexpected_argument
+        },
+        /* Case 4 */
+        {   "Usage: prog [options]\n"
+            "Options: -d\n"
+            "         -x\n",
+            "-d", // argv
+            error_unknown_option
+        },
+        {NULL, 0}
+        
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const argv_err_testcase_t *testcase = &testcases[testcase_idx];
+        run_1_argv_err_test<string_t>(testcase->usage, testcase->argv, testcase->expected_error, testcase_idx, 0);
+    }
+}
+
+
+// Doesn't have to be fast since exp is low
+static uint32_t unsigned_power(uint32_t base, uint32_t exp) {
+    uint32_t result = 1;
+    while (exp--) {
+        result *= base;
+    }
+    return result;
+}
+
+template<typename string_t>
+void test_fuzzing() {
+    const char *tokens[] =
+    {
+        "--foo",
+        "bar",
+        "<baz>",
+        "[options]",
+        "...",
+        ",",
+        "  ",
+        "Usage:",
+        "Options:",
+        "Conditions:",
+        "[",
+        "]",
+        "(",
+        ")",
+        "|",
+        "="
+    };
+    string_t storage;
+    std::vector<error_t<string_t> > errors;
+    const uint32_t token_count = sizeof tokens / sizeof *tokens;
+    const uint32_t max_fuzz = 3; //could be raised up to 6 at the cost of some slowdown
+    for (uint32_t tokens_in_string=0; tokens_in_string <= max_fuzz; tokens_in_string++) {
+        uint32_t max_permutation = unsigned_power(token_count, tokens_in_string);
+        for (uint32_t permutation = 0; permutation < max_permutation; permutation++) {
+            // Construct 'storage'
+            storage.clear();
+            errors.clear();
+            uint32_t perm_cursor = permutation;
+            for (size_t i=0; i < tokens_in_string; i++) {
+                size_t token_idx = perm_cursor % token_count;
+                perm_cursor /= token_count;
+                if (i > 0) storage.push_back(' ');
+                storage.insert(storage.end(), tokens[token_idx], tokens[token_idx] + strlen(tokens[token_idx]));
+            }
+            
+            // Try to parse it
+            // We should not crash or loop forever, and either parser should be non-null or we should have an error
+            argument_parser_t<string_t> *parser = argument_parser_t<string_t>::create(storage, &errors);
+            if (parser == NULL && errors.empty()) {
+                err("No error generated for fuzz string '%ls'\n", wide(storage));
+            }
+            if (parser) {
+                delete parser;
+            }
+            
+
+        }
+        //fprintf(stderr, "Fuzzed %u / %u\n", tokens_in_string, max_fuzz);
+    }
+}
 
 template<typename string_t>
 void do_all_tests() {
@@ -1852,7 +2017,9 @@ void do_all_tests() {
     test_suggestions<string_t>();
     test_descriptions<string_t>();
     test_conditions<string_t>();
-    test_errors<string_t>();
+    test_errors_in_usage<string_t>();
+    test_errors_in_argv<string_t>();
+    test_fuzzing<string_t>();
 }
 
 int main(int argc, const char** argv)

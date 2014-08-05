@@ -166,6 +166,14 @@ struct parse_context_t {
         return ! tok->range.empty();
     }
     
+    bool peek(const char *s) {
+        const range_t saved_range = remaining_range;
+        token_t tok;
+        bool result = scan(s, &tok);
+        remaining_range = saved_range;
+        return result;
+    }
+    
     token_t peek_word() {
         const range_t saved_range = remaining_range;
         token_t tok;
@@ -266,10 +274,10 @@ struct parse_context_t {
             if (al.get()) {
                 result = new or_continuation_t(bar, al);
             } else {
-                // TODO: generate an error about trailing bar
-                fprintf(stderr, "Trailing bar\n");
+                append_error(&this->errors, bar.range.start, error_trailing_vertical_bar, "Extra vertical bar");
             }
-        } else {
+        }
+        if (! result) {
             result = new or_continuation_t();
         }
         return result;
@@ -386,6 +394,9 @@ struct parse_context_t {
         } else if (this->scan("...", &token)) {
             // Indicates leading ellipsis
             // TODO: generate error
+        } else if (this->peek("|")) {
+            // End of an alternation list
+            result = NULL;
         } else {
             auto_ptr<simple_clause_t> simple_clause(parse<simple_clause_t>());
             if (simple_clause.get()) {
