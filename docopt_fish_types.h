@@ -242,6 +242,17 @@ struct option_t {
 };
 typedef std::vector<option_t> option_list_t;
 
+template <typename string_t>
+static void append_error(std::vector<error_t<string_t> > *errors, size_t where, int code, const char *txt) {
+    if (errors != NULL) {
+        errors->resize(errors->size() + 1);
+        error_t<string_t> *error = &errors->back();
+        error->location = where;
+        error->code = code;
+        assign_narrow_string_to_string(txt, &error->text);
+    }
+}
+
 /* Internal flags */
 enum {
     /* When matching, if we run out of positionals or options, instead of failing, return a match containing a suggestion */
@@ -252,7 +263,15 @@ enum {
 enum {
     error_none,
     error_excessive_dashes,
-    error_excessive_equal_signs
+    error_excessive_equal_signs,
+    error_bad_option_separator,
+    error_invalid_option_name,
+    error_missing_close_bracket_in_default,
+    error_one_variable_multiple_conditions,
+    error_option_duplicated_in_options_section,
+    error_missing_usage_section,
+    error_excessive_usage_sections,
+    error_missing_program_name,
 };
 
 CLOSE_DOCOPT_IMPL

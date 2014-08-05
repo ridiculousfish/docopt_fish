@@ -1778,6 +1778,63 @@ static void test_errors()
         {   "Usage: prog ---foo\n",
             error_excessive_dashes
         },
+        /* Case 1 */
+        {   "Usage: prog --foo==bar\n",
+            error_excessive_equal_signs
+        },
+        /* Case 2 */
+        {   "Usage: prog --foo<bar>\n",
+            error_bad_option_separator
+        },
+        /* Case 3 */
+        {   "Usage: prog [options]\n"
+            "Options: --foo <var>  Do something [default: 10 blah blah",
+            error_missing_close_bracket_in_default
+        },
+        /* Case 4 */
+        {   "Usage: prog [options]\n"
+            "Options: foo",
+            error_invalid_option_name
+        },
+        /* Case 5 */
+        {   "Usage: prog <var>\n"
+            "Conditions: <var>  cond1\n"
+            "            <var>  cond2\n",
+            error_one_variable_multiple_conditions
+        },
+        /* Case 6 */
+        {   "Usage: prog [options]\n"
+            "Options: --foo\n"
+            "         --foo",
+            error_option_duplicated_in_options_section,
+        },
+        /* Case 7 */
+        {   "Usage: prog [options]\n"
+            "Options: -foo\n"
+            "         -foo",
+            error_option_duplicated_in_options_section,
+        },
+        /* Case 8 */
+        {   "Usage: prog [options]\n"
+            "Options: -f, --foo\n"
+            "         -f",
+            error_option_duplicated_in_options_section,
+        },
+        /* Case 9 */
+        {   "Dosage: prog [options]\n"
+            "Options: -f, --foo\n",
+            error_missing_usage_section
+        },
+        /* Case 10 */
+        {   "Usage: prog [options]\n"
+            "Usage: prog [options]\n"
+            "Options: -f, --foo\n",
+            error_excessive_usage_sections
+        },
+        /* Case 11 */
+        {   "Usage: | foo\n",
+            error_missing_program_name
+        },
         {NULL, 0}
         
     };

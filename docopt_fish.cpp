@@ -57,17 +57,6 @@ static size_t find_case_insensitive(const std::wstring &haystack, const char *ne
     return std::wstring::npos;
 }
 
-template <typename string_t>
-static void append_error(std::vector<error_t<string_t> > *errors, size_t where, int code, const char *txt) {
-    if (errors != NULL) {
-        errors->resize(errors->size() + 1);
-        error_t<string_t> *error = &errors->back();
-        error->location = where;
-        error->code = code;
-        assign_narrow_string_to_string(txt, &error->text);
-    }
-}
-
 // TODO: This is just the non-code taking version. Eliminate it.
 template <typename string_t>
 static void append_error(std::vector<error_t<string_t> > *errors, size_t where, const char *txt) {
@@ -193,7 +182,7 @@ option_t option_t::parse_from_string(const string_t &str, range_t *remaining, st
     
     // TODO: generate an error on long options with no separators (--foo<bar>). Only short options support these.
     if (separator == option_t::sep_none && (leading_dash_range.length > 1 || name_range.length > 1)) {
-        append_error(errors, name_range.start, "Long options must use a space or equals separator");
+        append_error(errors, name_range.start, error_bad_option_separator, "Long options must use a space or equals separator");
     }
     
     // Create and return the option
@@ -551,7 +540,7 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
             size_t default_value_end = this->source.find(char_t(']'), default_value_start);
             if (default_value_end >= description_range.end()) {
                 // Note: The above check covers npos too
-                append_error(errors, default_prefix_loc, "Missing ']'");
+                append_error(errors, default_prefix_loc, error_missing_close_bracket_in_default, "Missing ']'");
             } else {
                 default_value_range.start = default_value_start;
                 default_value_range.length = default_value_end - default_value_start;
@@ -568,7 +557,7 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
     while (! remaining.empty()) {
     
         if (this->source.at(remaining.start) != char_t('-')) {
-            append_error(errors, remaining.start, "Not an option");
+            append_error(errors, remaining.start, error_invalid_option_name, "Not an option");
             break;
         }
     
@@ -683,7 +672,9 @@ option_list_t parse_options_spec(error_list_t *errors) const {
             // The description may span multiple lines.
 
             // Check to see if this line starts with a -
-            if (line_contains_option_spec(this->source, line_range)) {
+            if (! line_contains_option_spec(this->source, line_range)) {
+                append_error(errors, line_range.start, error_invalid_option_name, "Invalid option name. Options must start with a leading space and a dash.");
+            } else {
                 // It's a new option. Determine how long its description goes.
                 range_t option_spec_range = line_range;
                 range_t local_range = line_range;
@@ -735,7 +726,7 @@ condition_map_t parse_conditions_spec(error_list_t *errors) const {
                 value = trim_whitespace(value, this->source);
                 const string_t key_str(this->source, key.start, key.length);
                 if (! result.insert(typename condition_map_t::value_type(key_str, value)).second) {
-                    append_error(errors, key.start, "Variable already has a condition");
+                    append_error(errors, key.start, error_one_variable_multiple_conditions, "Variable already has a condition");
                 }
             }
         }
@@ -750,7 +741,7 @@ bool options_have_same_name(const option_t &opt1, const option_t &opt2) const {
 }
 
 /* Given a list of options, verify that any duplicate options are in agreement, and remove all but one. TODO: make this not N^2. */
-void uniqueize_options(option_list_t *options, error_list_t *errors UNUSED) const {
+void uniqueize_options(option_list_t *options, bool error_on_duplicates, error_list_t *errors) const {
     std::vector<size_t> matching_indexes;
     for (size_t cursor=0; cursor < options->size(); cursor++) {
         // Determine the set of matches
@@ -762,6 +753,10 @@ void uniqueize_options(option_list_t *options, error_list_t *errors UNUSED) cons
             const option_t &current_match = options->at(best_match_idx);
             const option_t &maybe_match = options->at(match_cursor);
             if (this->options_have_same_name(current_match, maybe_match)) {
+                if (error_on_duplicates) {
+                    // Generate an error, and then continue on
+                    append_error(errors, maybe_match.name.start, error_option_duplicated_in_options_section, "Option specified more than once");
+                }
                 // This index matched
                 matching_indexes.push_back(match_cursor);
                 
@@ -837,7 +832,7 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
         }
         if (prefix_matches.size() > 1) {
             // Todo: need to specify the argument index
-            append_error(out_errors, -1, "Option specified too many times");
+            append_error(out_errors, -1, "Ambiguous prefix match");
         } else if (prefix_matches.size() == 1) {
             // We have one unambiguous prefix match. Swap it into the true matches array, which is currently empty.
             matches.swap(prefix_matches);
@@ -852,9 +847,9 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
 
     bool success = false;
     size_t match_count = matches.size();
-    if (match_count > 1) {
-        append_error(out_errors, matches.at(0).name.start, "Option specified too many times");
-    } else if (match_count < 1) {
+    // Our option de-duplication ensures we should never have more than one match
+    assert(match_count <= 1);
+    if (match_count < 1) {
         append_error(out_errors, -1, "Unknown option");
     } else {
         bool errored = false;
@@ -923,11 +918,10 @@ bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const optio
             }
         }
     }
-
-    if (matches.size() > 1) {
-        // This is an error in the usage - should catch this earlier?
-        append_error(out_errors, matches.at(0).name.start, "Option specified too many times");
-    } else if (matches.size() == 1) {
+    
+    // Our option de-duplication should ensure we should never have more than one match
+    assert(matches.size() <= 1);
+    if (matches.size() == 1) {
         // Try to extract the value. This is very simple: it starts at index 2 and goes to the end of the arg.
         const option_t &match = matches.at(0);
         if (arg.size() <= 2) {
@@ -1709,20 +1703,21 @@ bool preflight() {
 
     const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
     if (usage_ranges.empty()) {
-        append_error(&this->errors, npos, "Unable to find Usage: section");
+        append_error(&this->errors, npos, error_missing_usage_section, "Missing Usage: section");
         return false;
     } else if (usage_ranges.size() > 1) {
-        append_error(&this->errors, npos, "More than one Usage: section");
+        append_error(&this->errors, npos, error_excessive_usage_sections, "More than one Usage: section");
         return false;
     }
     
     // Extract options from the options section
     this->shortcut_options = this->parse_options_spec(&this->errors);
-    this->uniqueize_options(&this->shortcut_options, &this->errors);
+    this->uniqueize_options(&this->shortcut_options, true /* error on duplicates */, &this->errors);
     
     this->parse_tree = parse_usage<string_t>(this->source, usage_ranges.at(0), this->shortcut_options, &this->errors);
     if (! this->parse_tree) {
-        append_error(&this->errors, npos, "Failed to parse");
+        // Should always produce an error here!
+        assert(! this->errors.empty());
         return false;
     }
     
@@ -1734,7 +1729,7 @@ bool preflight() {
     this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
     this->all_options.insert(this->all_options.end(), usage_options.begin(), usage_options.end());
     this->all_options.insert(this->all_options.end(), this->shortcut_options.begin(), this->shortcut_options.end());
-    this->uniqueize_options(&this->all_options, &this->errors);
+    this->uniqueize_options(&this->all_options, false /* do not error on duplicates */, &this->errors);
 
     /* Hackish. Consider the following usage:
        usage: prog [options] [-a]
@@ -1918,8 +1913,9 @@ string_t description_for_option(const string_t &given_option_name) const {
 static int simple_test() {
     const std::string usage =
 #if 1
-    "Usage: prog --status\n"
-    "       prog jump [--height <in>]";
+    "Usage: prog [options]\n"
+    "Options: --foo\n"
+    "         --foo\n";
 #else
     "Naval Fate.\n"
     "\n"
@@ -1942,7 +1938,7 @@ static int simple_test() {
     
     const char *args[] = {
 #if 1
-        "prog"
+        "prog --foo"
 #else
         "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
 #endif

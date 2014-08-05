@@ -238,9 +238,10 @@ struct parse_context_t {
         
         usage_t *result = NULL;
         
-        // TODO: generate error for missing word name
         token_t word;
-        if (this->scan_word(&word)) {
+        if (! this->scan_word(&word)) {
+            append_error(&this->errors, this->remaining_range.start, error_missing_program_name, "Missing program name");
+        } else {
             auto_ptr<alternation_list_t> el(parse<alternation_list_t>());
             // Consume as many newlines as we can, and then try to generate the tail
             while (this->scan('\n')) {
@@ -253,7 +254,6 @@ struct parse_context_t {
             } else {
                 result = new usage_t(word, next);
             }
-
         }
         return result;
     }
@@ -404,6 +404,8 @@ usage_t *parse_usage(const string_t &src, const range_t &src_range, const option
 {
     parse_context_t<string_t> ctx(src, src_range, shortcut_options);
     usage_t *result = ctx.template parse<usage_t>();
+    // If we get NULL back, we should always have an error
+    assert(! (result == NULL && ctx.errors.empty()));
     if (out_errors) {
         out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
     }
