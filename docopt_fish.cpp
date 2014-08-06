@@ -57,12 +57,6 @@ static size_t find_case_insensitive(const std::wstring &haystack, const char *ne
     return std::wstring::npos;
 }
 
-// TODO: This is just the non-code taking version. Eliminate it.
-template <typename string_t>
-static void append_error(std::vector<error_t<string_t> > *errors, size_t where, const char *txt) {
-    append_error(errors, where, 0, txt);
-}
-
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 template <typename string_t>
 static void append_argv_error(std::vector<error_t<string_t> > *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
@@ -887,13 +881,13 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
                     out_suggestion->assign(this->source, match.value.start, match.value.length);
                     errored = true;
                 } else {
-                    append_error(out_errors, *idx, error_option_has_missing_argument, "Option expects an argument");
+                    append_argv_error(out_errors, *idx, error_option_has_missing_argument, "Option expects an argument");
                     errored = true;
                 }
             }
         } else if (arg_as_option.has_value()) {
             // A value was specified as --foo=bar, but none was expected
-            append_error(out_errors, *idx, error_option_unexpected_argument, "Option does not expect an argument");
+            append_argv_error(out_errors, *idx, error_option_unexpected_argument, "Option does not expect an argument");
             errored = true;
         }
         if (! errored) {
@@ -935,7 +929,7 @@ bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const optio
         // Try to extract the value. This is very simple: it starts at index 2 and goes to the end of the arg.
         const option_t &match = matches.at(0);
         if (arg.size() <= 2) {
-            append_error(out_errors, *idx, error_option_has_missing_argument, "Option expects an argument");
+            append_argv_error(out_errors, *idx, error_option_has_missing_argument, "Option expects an argument");
         } else {
             // Got one
             size_t name_idx = *idx;
@@ -977,11 +971,10 @@ bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, co
         }
         
         size_t match_count = matches.size();
-        if (match_count > 1) {
-            append_error(out_errors, matches.at(0).name.start, "Option specified too many times");
-            errored = true;
-        } else if (match_count < 1) {
-            append_argv_error(out_errors, *idx, error_unknown_option, "Unknown short option");
+        // We should catch all duplicates during the preflight phase
+        assert(match_count <= 1);
+        if (match_count < 1) {
+            append_argv_error(out_errors, *idx, error_unknown_option, "Unknown short option", idx_in_arg);
             errored = true;
         } else {
             // Just one match, add it to the global array
@@ -999,8 +992,8 @@ bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, co
                     last_option_has_argument = true;
                 } else {
                     // This is not the last option
-                    // TODO: this location (opt.name.start) is the location in the usage doc. It ought to be the location in the argument.
-                    append_error(out_errors, opt.name.start, "Option requires an argument");
+                    // This i+1 is the position in the argument and needs some explanation. Since we have a leading dash and then an argument, which is parsed into short options - one per character (except for the dash). Hence we can map from index-in-option to index-in-argument, unless there was an unknown option error above. In that case this will be wrong (but we typically only show the first error anyways).
+                    append_argv_error(out_errors, *idx, error_option_unexpected_argument, "Option may not have a value unless it is the last option", i + 1);
                 }
             }
         }
@@ -1022,7 +1015,7 @@ bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, co
             out_suggestion->assign(this->source, match.value.start, match.value.length);
             errored = true;
         } else {
-            append_error(out_errors, options_for_argument.back().value.start, "Option expects an argument");
+            append_argv_error(out_errors, *idx, error_option_has_missing_argument, "Option expects an argument");
             errored = true;
         }
     }

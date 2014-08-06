@@ -1989,7 +1989,7 @@ void do_all_tests() {
     test_fuzzing<string_t>();
 }
 
-int main(int argc, const char** argv)
+int main(void)
 {
     do_all_tests<string>();
     do_all_tests<wstring>();
