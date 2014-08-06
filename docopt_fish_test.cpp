@@ -65,21 +65,6 @@ string_t to_string(const char *x) {
 #define do_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 #define do_arg_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 
-template <typename string_t>
-map<string_t, base_argument_t<string_t> >
-generic_docopt_parse(const string_t &doc,
-                     const vector<string_t> &argv,
-                     parse_flags_t flags,
-                     vector<size_t> *out_unused_arguments)
-{
-    argument_parser_t<string_t> parser;
-    if (parser.set_doc(doc, NULL)) {
-        return parser.parse_arguments(argv, flags, NULL, out_unused_arguments);
-    } else {
-        return map<string_t, base_argument_t<string_t> >();
-    }
-}
-
 /* Splits up a string via a delimiter string, returning a list of some string type */
 template<typename string_t>
 static vector<string_t> split(const string_t &str, const char *delim) {
@@ -215,11 +200,17 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
+    arg_map_t results;
+    std::vector<error_t<string_t> > error_list;
     vector<size_t> unused_args;
-    arg_map_t results = generic_docopt_parse(usage_str, argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &unused_args);
+    argument_parser_t<string_t> parser;
+    bool parse_success = parser.set_doc(usage_str, &error_list);
+    if (parse_success) {
+        results = parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &error_list, &unused_args);
+    }
     
     bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
-    bool did_error = ! unused_args.empty();
+    bool did_error = ! parse_success || ! unused_args.empty();
     
     if (expects_error && ! did_error) {
         err("Test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
@@ -286,7 +277,8 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
     
     /* Perform the parsing */
     vector<size_t> unused_arg_idxs;
-    arg_map_t results = generic_docopt_parse(usage_str, argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &unused_arg_idxs);
+    argument_parser_t<string_t> parser(usage_str, NULL);
+    arg_map_t results = parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, NULL, &unused_arg_idxs);
     
     /* Construct unused argument string */
     vector<string_t> unused_args_vec;
