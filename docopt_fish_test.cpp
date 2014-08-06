@@ -281,7 +281,7 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
     /* Perform the parsing */
     vector<size_t> unused_arg_idxs;
     argument_parser_t<string_t> parser(usage_str, NULL);
-    arg_map_t results = parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, NULL, &unused_arg_idxs);
+    parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, NULL, &unused_arg_idxs);
     
     /* Construct unused argument string */
     vector<string_t> unused_args_vec;

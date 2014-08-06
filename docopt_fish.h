@@ -44,7 +44,7 @@ namespace docopt_fish
         /* Text of the error */
         string_t text;
         
-        error_t() : argument_index(-1), code(0)
+        error_t() : location(-1), argument_index(-1), code(0)
         {}
     };
     

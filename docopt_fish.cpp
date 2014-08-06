@@ -1329,7 +1329,6 @@ match_state_list_t match(const expression_list_t &node, match_state_t *state, ma
 }
 
 match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx) const {
-    match_state_list_t result;
     if (node.expression_list.get()) {
         return match(*node.expression_list, state, ctx);
     } else {
@@ -1801,66 +1800,6 @@ option_map_t best_assignment_for_argv(const string_list_t &argv, parse_flags_t f
     return result;
 }
 
-option_map_t best_assignment(const string_list_t &argv, parse_flags_t flags, index_list_t *out_unused_arguments, bool log_stuff = false) {
-    // Preflight
-    if (! this->preflight()) {
-        return option_map_t();
-    }
-
-    // Dump options
-    if (log_stuff) {
-        for (size_t i=0; i < all_options.size(); i++) {
-            fprintf(stderr, "Option %lu: %ls\n", i, widen(all_options.at(i).describe(this->source)).c_str());
-        }
-    }
-
-    if (log_stuff) {
-        std::cerr << node_dumper_t::dump_tree(*this->parse_tree, this->source) << "\n";
-    }
-    
-    positional_argument_list_t positionals;
-    resolved_option_list_t resolved_options;
-    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, &this->errors);
-
-    if (log_stuff) {
-        for (size_t i=0; i < positionals.size(); i++) {
-            size_t arg_idx = positionals.at(i).idx_in_argv;
-            fprintf(stderr, "positional %lu: %ls\n", i, widen(argv.at(arg_idx)).c_str());
-        }
-
-        for (size_t i=0; i < resolved_options.size(); i++) {
-            resolved_option_t &opt = resolved_options.at(i);
-            range_t range = opt.option.name;
-            const string_t name = string_t(this->source, range.start, range.length);
-                std::wstring value_str;
-                if (opt.value_idx_in_argv != npos) {
-                    const range_t &value_range = opt.value_range_in_arg;
-                    value_str = widen(string_t(argv.at(opt.value_idx_in_argv), value_range.start, value_range.length));
-                }
-                fprintf(stderr, "Resolved %lu: %ls (%ls) <%lu, %lu>\n", i, widen(name).c_str(), value_str.c_str(), opt.option.name.start, opt.option.name.length);
-        }
-    }
-
-    option_map_t result = this->match_argv(argv, flags, positionals, resolved_options, all_options, all_variables, out_unused_arguments, log_stuff);
-    
-    if (log_stuff) {
-        for (typename option_map_t::const_iterator iter = result.begin(); iter != result.end(); ++iter) {
-            const string_t &name = iter->first;
-            const arg_t &arg = iter->second;
-            fprintf(stderr, "\t%ls: ", widen(name).c_str());
-            for (size_t j=0; j < arg.values.size(); j++) {
-                if (j > 0) {
-                    fprintf(stderr, ", ");
-                }
-                fprintf(stderr, "%ls", widen(arg.values.at(j)).c_str());
-            }
-            std::cerr << '\n';
-        }
-    }
-    
-    return result;
-}
-
 string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const
 {
     /* Set internal flags to generate suggestions */
@@ -1946,57 +1885,6 @@ string_t description_for_option(const string_t &given_option_name) const {
     return result;
 }
 
-#if SIMPLE_TEST
-static int simple_test() {
-    const std::string usage =
-#if 1
-    "Usage: prog [options]\n"
-    "Options: --foo\n"
-    "         --foo\n";
-#else
-    "Naval Fate.\n"
-    "\n"
-    "Usage:\n"
-    "  prog ship new <name>...\n"
-    "  prog ship [<name>] move <x> <y> [--speed=<kn>]\n"
-    "  prog ship shoot <x> <y>\n"
-    "  prog mine (set|remove) <x> <y> [--moored|--drifting]\n"
-    "  prog -h | --help\n"
-    "  prog --version\n"
-    "\n"
-    "Options:\n"
-    "  -h --help     Show this screen.\n"
-    "  --version     Show version.\n"
-    "  --speed=<kn>  Speed in knots [default: 10].\n"
-    "  --moored      Mored (anchored) mine.\n"
-    "  --drifting    Drifting mine.\n"
-#endif
-    ;
-    
-    const char *args[] = {
-#if 1
-        "prog --foo"
-#else
-        "prog", "ship", "Guardian", "move", "150", "300", "--speed=20"
-#endif
-    };
-    
-    size_t arg_count = sizeof args / sizeof *args;
-    std::vector<std::string> argv(args, args + arg_count);
-    
-    docopt_impl<std::string> impl(usage);
-    std::vector<size_t> unused_arguments;
-    option_map_t match = impl.best_assignment(argv, flags_default | flag_generate_empty_args, &unused_arguments, true);
-    
-    for (size_t i=0; i < unused_arguments.size(); i++) {
-        size_t arg_idx = unused_arguments.at(i);
-        fprintf(stderr, "Unused argument: <%s>\n", argv.at(arg_idx).c_str());
-    }
-    
-    return 0;
-}
-#endif
-
 // close the class
 CLOSE_DOCOPT_IMPL;
 
@@ -2007,7 +1895,7 @@ std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(c
     std::vector<argument_status_t> result(arg_count, status_valid);
 
     index_list_t unused_args;
-    impl->best_assignment(argv, flags, &unused_args);
+    impl->best_assignment_for_argv(argv, flags, NULL /* errors */, &unused_args);
     
     // Unused arguments are all invalid
     for (size_t i=0; i < unused_args.size(); i++) {
@@ -2088,10 +1976,4 @@ CLOSE_DOCOPT_IMPL
 template class docopt_fish::argument_parser_t<std::string>;
 template class docopt_fish::argument_parser_t<std::wstring>;
 
-#if SIMPLE_TEST
-int main(void) {
-    using namespace docopt_fish;
-    docopt_impl<std::string>::simple_test();
-    
-}
-#endif
+
