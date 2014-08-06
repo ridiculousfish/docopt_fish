@@ -678,7 +678,11 @@ option_list_t parse_options_spec(error_list_t *errors) const {
             // The description may span multiple lines.
 
             // Check to see if this line starts with a -
-            if (! line_contains_option_spec(this->source, line_range)) {
+            range_t trimmed_line = trim_whitespace(line_range, this->source);
+            if (trimmed_line.empty()) {
+                // Empty line in Options, just skip it
+                continue;
+            } else if (! line_contains_option_spec(this->source, line_range)) {
                 append_error(errors, line_range.start, error_invalid_option_name, "Invalid option name. Options must start with a leading space and a dash.");
             } else {
                 // It's a new option. Determine how long its description goes.
@@ -856,7 +860,7 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
     // Our option de-duplication ensures we should never have more than one match
     assert(match_count <= 1);
     if (match_count < 1) {
-        append_argv_error(out_errors, *idx, error_unknown_option, "Unknown option");
+        append_argv_error(out_errors, *idx, error_unknown_option, "Unknown long option");
     } else {
         bool errored = false;
         assert(match_count == 1);
@@ -977,7 +981,7 @@ bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, co
             append_error(out_errors, matches.at(0).name.start, "Option specified too many times");
             errored = true;
         } else if (match_count < 1) {
-            append_argv_error(out_errors, *idx, error_unknown_option, "Unknown option");
+            append_argv_error(out_errors, *idx, error_unknown_option, "Unknown short option");
             errored = true;
         } else {
             // Just one match, add it to the global array
@@ -1071,16 +1075,21 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
                1. A combined short option: tar -cf ...
                2. A long option with a single dash: -std=c++
                3. A short option with a value: -DNDEBUG
-             Try to parse it as a long option; if that fails try to parse it as a short option
+             Try to parse it as a long option; if that fails try to parse it as a short option.
+             We cache the errors locally so that failing to parse it as a long option doesn't report an error if it parses successfully as a short option. This may result in duplicate error messages.
              */
-            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
+            error_list_t local_errors;
+            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, &local_errors, out_suggestion)) {
                 // parse_long succeeded
-            } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
+            } else if (parse_unseparated_short(argv, &idx, options, out_resolved_options, &local_errors, out_suggestion)) {
                 // parse_unseparated_short will have updated idx and out_resolved_options
-            } else if (parse_short(argv, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
+            } else if (parse_short(argv, flags, &idx, options, out_resolved_options, &local_errors, out_suggestion)) {
                 // parse_short succeeded.
             } else {
                 // Unparseable argument
+                if (out_errors) {
+                    out_errors->insert(out_errors->begin(), local_errors.begin(), local_errors.end());
+                }
                 idx += 1;
             }
         } else {

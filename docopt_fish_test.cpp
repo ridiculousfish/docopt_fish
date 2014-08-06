@@ -164,7 +164,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     argument_parser_t<string_t> parser = argument_parser_t<string_t>(usage_str, &errors);
     
     if (! errors.empty()) {
-        err("Test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
+        err("Suggestion test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
         for (size_t i=0; i < errors.size(); i++) {
             fprintf(stderr, "\t%ls\n", wide(errors.at(i).text));
         }
@@ -210,12 +210,15 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     }
     
     bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
-    bool did_error = ! parse_success || ! unused_args.empty();
+    bool did_error = ! parse_success || ! unused_args.empty() || ! error_list.empty();
     
     if (expects_error && ! did_error) {
-        err("Test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
+        err("Correctness test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
     } else if (did_error && ! expects_error) {
-        err("Test %lu.%lu was expected to succeed, but instead errored", test_idx, arg_idx);
+        err("Correctness test %lu.%lu was expected to succeed, but instead errored", test_idx, arg_idx);
+        for (size_t i=0; i < error_list.size(); i++) {
+            fprintf(stderr, "\t%ls\n", wide(error_list.at(i).text));
+        }
     } else if (! did_error && ! expects_error) {
         /* joined_expected_results is a newline-delimited "map" of the form key:value */
         const string_map_t expected = parse_expected_results<string_t>(joined_expected_results);
@@ -226,7 +229,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
             const string_t &val = iter->second;
             typename arg_map_t::const_iterator arg_iter = results.find(key);
             if (arg_iter == results.end()) {
-                err("Test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, wide(key), wide(val));
+                err("Correctness test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, wide(key), wide(val));
             } else {
                 const base_argument_t<string_t> &arg = arg_iter->second;
                 /* The value here can be interpreted a few ways. If it is "True" or "False", it means we expect the argument to have no values, and to have a count of 1 or 0, respectively. If it is % followed by a one-digit number, it represents the count of the argument; values is expected to be empty. Otherwise, split the value about ', '; those are the values we expect. */
@@ -353,11 +356,10 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
     parser.parse_arguments(argv, flag_resolve_unambiguous_prefixes, &error_list);
     
     /* Check errors */
-    do_test(! error_list.empty());
-    if (! error_list.empty()) {
-        if (error_list.front().code != expected_error_code) {
-            err("Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
-        }
+    if (error_list.empty()) {
+        err("Argv Err Test %lu.%lu: No errors reported for '%s' with argv '%s'. Expected error '%d'.", test_idx, arg_idx, usage, joined_argv, expected_error_code);
+    } else if (error_list.front().code != expected_error_code) {
+        err("Argv Err Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
     }
 }
 
@@ -1909,7 +1911,7 @@ static void test_errors_in_argv()
         {   "Usage: prog [options]\n"
             "Options: -d\n"
             "         -x\n",
-            "-d", // argv
+            "-df", // argv
             error_unknown_option
         },
         {NULL, 0}
@@ -1919,16 +1921,6 @@ static void test_errors_in_argv()
         const argv_err_testcase_t *testcase = &testcases[testcase_idx];
         run_1_argv_err_test<string_t>(testcase->usage, testcase->argv, testcase->expected_error, testcase_idx, 0);
     }
-}
-
-
-// Doesn't have to be fast since exp is low
-static uint32_t unsigned_power(uint32_t base, uint32_t exp) {
-    uint32_t result = 1;
-    while (exp--) {
-        result *= base;
-    }
-    return result;
 }
 
 template<typename string_t>
@@ -1956,8 +1948,8 @@ void test_fuzzing() {
     std::vector<error_t<string_t> > errors;
     const uint32_t token_count = sizeof tokens / sizeof *tokens;
     const uint32_t max_fuzz = 3; //could be raised up to 6 at the cost of some slowdown
+    unsigned max_permutation = 1;
     for (uint32_t tokens_in_string=0; tokens_in_string <= max_fuzz; tokens_in_string++) {
-        uint32_t max_permutation = unsigned_power(token_count, tokens_in_string);
         for (uint32_t permutation = 0; permutation < max_permutation; permutation++) {
             // Construct 'storage'
             storage.clear();
@@ -1977,6 +1969,9 @@ void test_fuzzing() {
             if (! parsed && errors.empty()) {
                 err("No error generated for fuzz string '%ls'\n", wide(storage));
             }
+            
+            // The next time around, we will have token_count times more permutations
+            max_permutation *= token_count;
         }
         //fprintf(stderr, "Fuzzed %u / %u\n", tokens_in_string, max_fuzz);
     }
