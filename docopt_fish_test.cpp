@@ -1561,6 +1561,15 @@ static void test_correctness()
                 },
             },
         },
+        /* Case 83 */
+        {   "   Usage: prog [options]\n"
+            "       Options: -d\n",
+            {
+                {   "-d", // argv
+                    "-d:True\n"
+                },
+            },
+        },
         {NULL, {}}
     }
     ;

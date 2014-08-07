@@ -616,20 +616,27 @@ static bool line_contains_option_spec(const string_t &str, const range_t &range)
     return space.length > 0 && dashes.length > 0;
 }
 
-/* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. */
+/* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. We allow the section names to be indented, but must be less idented than the previous line */
 range_list_t source_ranges_for_section(const char *name) const {
     range_list_t result;
     bool in_desired_section = false;
     range_t line_range;
+    size_t current_header_indent = -1; //note: is huge
     while (get_next_line(this->source, &line_range)) {
-        size_t line_start = line_range.start;
-        // It's a header line if the first character is not whitespace
-        bool is_header = ! isspace(source.at(line_start));
+        range_t trimmed_line_range = trim_whitespace(line_range, this->source);
+        assert(trimmed_line_range.start >= line_range.start);
+        size_t line_start = trimmed_line_range.start;
+        size_t line_indent = line_start - line_range.start;
+        
+        // It's a header line if its indent is not greater than the previous header and it's empty
+        bool is_header = (! trimmed_line_range.empty() && line_indent <= current_header_indent);
         if (is_header) {
+            current_header_indent = line_indent;
+            
             // Check to see if the name is found before the first colon
             // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
             size_t name_pos = find_case_insensitive(source, name, line_start);
-            size_t line_end = line_range.end();
+            size_t line_end = trimmed_line_range.end();
             in_desired_section = (name_pos < line_end && name_pos < source.find(':', line_start));
 
             if (in_desired_section) {
