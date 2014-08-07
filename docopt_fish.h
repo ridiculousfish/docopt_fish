@@ -106,9 +106,13 @@ namespace docopt_fish
                         error_list_t *out_errors = NULL,
                         std::vector<size_t> *out_unused_arguments = NULL);
 
-        argument_parser_t();
+        // Constructor for when you either know the doc is error-free, or you aren't interested in the results, only the errors
         argument_parser_t(const string_t &doc, error_list_t *out_errors);
+
+        argument_parser_t();
         ~argument_parser_t();
+        argument_parser_t(const argument_parser_t &rhs);
+        argument_parser_t &operator=(const argument_parser_t &rhs);
     };
 };
 

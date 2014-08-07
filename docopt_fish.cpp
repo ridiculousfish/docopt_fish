@@ -1945,7 +1945,7 @@ bool argument_parser_t<string_t>::set_doc(const string_t &doc, std::vector<error
     return preflighted;
 }
 
-/* Constructor */
+/* Constructors */
 template<typename string_t>
 argument_parser_t<string_t>::argument_parser_t() : impl(NULL) {}
 
@@ -1954,12 +1954,34 @@ argument_parser_t<string_t>::argument_parser_t(const string_t &doc, error_list_t
     this->set_doc(doc, out_errors);
 }
 
+template<typename string_t>
+argument_parser_t<string_t>::argument_parser_t(const argument_parser_t &rhs) {
+    if (rhs.impl == NULL) {
+        this->impl = NULL;
+    } else {
+        this->impl = new docopt_impl<string_t>(*rhs.impl);
+    }
+}
+
+template<typename string_t>
+argument_parser_t<string_t> &argument_parser_t<string_t>::operator=(const argument_parser_t &rhs) {
+    if (this != &rhs) {
+        delete this->impl;
+        if (rhs.impl == NULL) {
+            this->impl = NULL;
+        } else {
+            this->impl = new docopt_impl<string_t>(*rhs.impl);
+        }
+    }
+    return *this;
+}
+
+
 /* Destructor */
 template<typename string_t>
 argument_parser_t<string_t>::~argument_parser_t<string_t>() {
     /* Clean up guts */
-    docopt_impl<string_t> *typed_impl = static_cast<docopt_impl<string_t> *>(this->impl);
-    delete typed_impl; // may be null
+    delete impl; // may be null
 }
 
 // close the namespace
