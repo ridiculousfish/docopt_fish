@@ -1562,7 +1562,8 @@ static void test_correctness()
             },
         },
         /* Case 83 */
-        {   "   Usage: prog [options]\n"
+        {   "\n"
+            "   Usage: prog [options]\n"
             "       Options: -d\n",
             {
                 {   "-d", // argv
@@ -1877,6 +1878,14 @@ static void test_errors_in_usage()
         /* Case 12 */
         {   "Usage: prog foo | bar | \n",
             error_trailing_vertical_bar
+        },
+        /* Case 13 */
+        {   "Usage: prog (foo \n",
+            error_missing_close_paren
+        },
+        /* Case 14 */
+        {   "Usage: prog [foo \n",
+            error_missing_close_bracket
         },
         {NULL, 0}
         

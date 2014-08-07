@@ -388,7 +388,12 @@ struct parse_context_t {
                     assert(ellipsis.get() != NULL); // should never fail
                     result = new expression_t(token, is_paren, contents, close_token, ellipsis);
                 } else {
-                    // TODO: generate error of unclosed paren
+                    // No closing bracket or paren
+                    if (is_paren) {
+                        append_error(&this->errors, token.range.start, error_missing_close_paren, "Missing ')' to match opening '('");
+                    } else {
+                        append_error(&this->errors, token.range.start, error_missing_close_bracket, "Missing ']' to match opening '['");
+                    }
                 }
             }
         } else if (this->scan("...", &token)) {

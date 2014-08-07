@@ -540,7 +540,7 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
             size_t default_value_end = this->source.find(char_t(']'), default_value_start);
             if (default_value_end >= description_range.end()) {
                 // Note: The above check covers npos too
-                append_error(errors, default_prefix_loc, error_missing_close_bracket_in_default, "Missing ']'");
+                append_error(errors, default_prefix_loc, error_missing_close_bracket_in_default, "Missing ']' to match opening '['");
             } else {
                 default_value_range.start = default_value_start;
                 default_value_range.length = default_value_end - default_value_start;
