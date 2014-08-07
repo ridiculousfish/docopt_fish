@@ -1,11 +1,7 @@
-PY_TEST_SRC_FILES=docopt_fish.cpp run_testcase.cpp
-TEST_SRC_FILES=docopt_fish.cpp docopt_fish_test.cpp
-HEADERS=docopt_fish.h
+TEST_SRC_FILES=docopt_fish.cpp docopt_fish_test.cpp docopt_fish_parse_tree.cpp
+HEADERS=docopt_fish.h docopt_fish_grammar.h docopt_fish_types.h
 CXX=clang++
 CXXFLAGS=-O0 -g -W -Wall
-
-simple_test: docopt_fish.cpp ${HEADERS}
-	${CXX} ${CXXFLAGS} -DSIMPLE_TEST=1 docopt_fish.cpp -o $@
 
 test: docopt_test
 	./docopt_test

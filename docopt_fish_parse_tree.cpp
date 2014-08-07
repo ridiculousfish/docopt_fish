@@ -217,22 +217,22 @@ struct parse_context_t {
         return this->parse(dummy);
     }
     
-    alternation_list_t *parse(alternation_list_t *dummy)
+    alternation_list_t *parse(alternation_list_t *dummy UNUSED)
     {
         return parse_2<alternation_list_t, expression_list_t, or_continuation_t>();
     }
     
-    expression_list_t *parse(expression_list_t *dummy)
+    expression_list_t *parse(expression_list_t *dummy UNUSED)
     {
         return parse_2<expression_list_t, expression_t, opt_expression_list_t>();
     }
     
-    opt_expression_list_t *parse(opt_expression_list_t *dummy)
+    opt_expression_list_t *parse(opt_expression_list_t *dummy UNUSED)
     {
         return parse_1_or_empty<opt_expression_list_t, expression_list_t>();
     }
     
-    usage_t *parse(usage_t *dummy)
+    usage_t *parse(usage_t *dummy UNUSED)
     {
         // Suck up leading newlines
         while (this->scan('\n')) {
@@ -266,7 +266,7 @@ struct parse_context_t {
         return result;
     }
 
-    or_continuation_t *parse(or_continuation_t *dummy) {
+    or_continuation_t *parse(or_continuation_t *dummy UNUSED) {
         or_continuation_t *result = NULL;
         token_t bar;
         if (this->scan('|', &bar)) {
@@ -283,17 +283,17 @@ struct parse_context_t {
         return result;
     }
 
-    opt_ellipsis_t *parse(opt_ellipsis_t *dummy) {
+    opt_ellipsis_t *parse(opt_ellipsis_t *dummy UNUSED) {
         token_t ellipsis;
         this->scan("...", &ellipsis);
         return new opt_ellipsis_t(ellipsis);
     }
     
-    options_shortcut_t *parse(options_shortcut_t *dummy) {
+    options_shortcut_t *parse(options_shortcut_t *dummy UNUSED) {
         return new options_shortcut_t();
     }
     
-    simple_clause_t *parse(simple_clause_t *dummy) {
+    simple_clause_t *parse(simple_clause_t *dummy UNUSED) {
         simple_clause_t *result = NULL;
         token_t word;
         if (this->scan_word(&word)) {
@@ -363,7 +363,7 @@ struct parse_context_t {
         return result;
     }
     
-    expression_t *parse(expression_t *dummy) {
+    expression_t *parse(expression_t *dummy UNUSED) {
         expression_t *result = NULL;
         if (this->is_at_end()) {
             return NULL;

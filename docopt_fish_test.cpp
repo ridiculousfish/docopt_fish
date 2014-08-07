@@ -1932,8 +1932,7 @@ static void test_errors_in_argv()
             "-df", // argv
             error_unknown_option
         },
-        {NULL, 0}
-        
+        {}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const argv_err_testcase_t *testcase = &testcases[testcase_idx];
