@@ -169,7 +169,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
         }
     } else {
         /* Get the suggested arguments, then sort and join them */
-        std::vector<string_t> suggestions = parser.suggest_next_argument(argv, flags_default);
+        std::vector<string_t> suggestions = parser.suggest_next_argument(argv, flag_match_allow_incomplete);
         sort(suggestions.begin(), suggestions.end());
         const string_t sugg_string = join(suggestions, ", ");
         
@@ -361,6 +361,47 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
     } else if (error_list.front().code != expected_error_code) {
         err("Argv Err Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
     }
+}
+
+
+// Here expected_valids is a string containing 0s or 1s to determine which arguments are expected to be valid, i.e. "00101"
+template<typename string_t>
+static void run_1_validation_test(const char *usage, const char *joined_argv, const char *expected_valids_str, size_t test_idx, size_t arg_idx) {
+    /* Separate argv by spaces */
+    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    
+    std::string expected_valids = expected_valids_str;
+    
+    /* Prepend the program name for every argument */
+    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    
+    assert(expected_valids.size() + 1 == argv.size());
+    
+    /* Usage as a string */
+    const string_t usage_str(usage, usage + strlen(usage));
+    
+    /* Perform the parsing */
+    argument_parser_t<string_t> parser(usage_str, NULL);
+    
+    /* Validate arguments */
+    std::vector<argument_status_t> statuses = parser.validate_arguments(argv, flag_resolve_unambiguous_prefixes | flag_match_allow_incomplete);
+    
+    /* Construct a string out of statuses */
+    assert(statuses.size() == argv.size());
+    
+    if (statuses.at(0) != status_valid) {
+        err("Test %lu.%lu: Program name not reported as valid!", test_idx, arg_idx);
+    }
+    
+    std::string actual_valids;
+    for (size_t i=1; i < statuses.size(); i++) {
+        actual_valids.push_back('0' + statuses.at(i));
+    }
+    
+    if (actual_valids != expected_valids) {
+        err("Test %lu.%lu: Wrong validation. Expected '%s', got '%s'", test_idx, arg_idx, expected_valids.c_str(), actual_valids.c_str());
+    }
+    
 }
 
 
@@ -1953,6 +1994,32 @@ static void test_errors_in_argv()
 }
 
 template<typename string_t>
+static void test_validation()
+{
+    const struct validation_testcase_t {
+        const char *usage;
+        const char *argv;
+        const char *valids;
+    } testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog (foo|bar) --baz\n",
+            "foo --baz", // argv
+            "11"
+        },
+        /* Case 1 */
+        {   "Usage: prog (foo|bar) --baz\n",
+            "--baz", // argv
+            "1"
+        },
+        {}
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const validation_testcase_t *testcase = &testcases[testcase_idx];
+        run_1_validation_test<string_t>(testcase->usage, testcase->argv, testcase->valids, testcase_idx, 0);
+    }
+}
+
+template<typename string_t>
 void test_fuzzing() {
     const char *tokens[] =
     {
@@ -2013,6 +2080,7 @@ void do_all_tests() {
     test_suggestions<string_t>();
     test_descriptions<string_t>();
     test_conditions<string_t>();
+    test_validation<string_t>();
     test_errors_in_usage<string_t>();
     test_errors_in_argv<string_t>();
     test_fuzzing<string_t>();

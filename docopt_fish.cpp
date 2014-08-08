@@ -17,7 +17,6 @@ using std::auto_ptr;
 
 static const size_t npos = (size_t)(-1);
 
-
 // Narrow implementation
 static size_t find_case_insensitive(const std::string &haystack, const char *needle, size_t haystack_start) {
     assert(haystack_start < haystack.size());
@@ -1560,12 +1559,10 @@ match_state_list_t match(const option_clause_t &node, match_state_t *state, matc
     if (result.empty()) {
         // Didn't get any options. Maybe we suggest one.
         // We want to return this state if either we were in square brackets (so we don't require a match), OR we are accepting incomplete
-        bool wants_append_state = ctx->is_in_square_brackets;
         if (ctx->flags & flag_generate_suggestions) {
             state->suggested_next_arguments.insert(options_in_doc.back().name_as_string(this->source));
-            wants_append_state = true;
         }
-        if (wants_append_state) {
+        if (ctx->is_in_square_brackets || (ctx->flags & flag_match_allow_incomplete)) {
             state_destructive_append_to(state, &result);
         }
     }
@@ -1588,9 +1585,12 @@ match_state_list_t match(const fixed_clause_t &node, match_state_t *state, match
             state_destructive_append_to(state, &result);
         }
     } else {
-        // No more positionals. Suggest one.
+        // No more positionals. Maybe suggest one.
         if (ctx->flags & flag_generate_suggestions) {
             state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
+        }
+        // Append the state if we are allowing incomplete
+        if (ctx->flags & flag_match_allow_incomplete) {
             state_destructive_append_to(state, &result);
         }
     }
@@ -1612,6 +1612,8 @@ match_state_list_t match(const variable_clause_t &node, match_state_t *state, ma
         // No more positionals. Suggest one.
         if (ctx->flags & flag_generate_suggestions) {
             state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
+        }
+        if (ctx->flags & flag_match_allow_incomplete) {
             state_destructive_append_to(state, &result);
         }
     }

@@ -25,7 +25,7 @@ namespace docopt_fish
     /* Status of an argument */
     enum argument_status_t {
         status_invalid, // the argument doesn't work
-        status_valid, // the argument works fine
+        status_valid, // the argument works
         status_valid_prefix // the argument is a prefix of something that may work
     };
     
