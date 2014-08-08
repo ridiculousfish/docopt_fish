@@ -1891,6 +1891,14 @@ static void test_errors_in_usage()
         {   "Usage: prog --foo= \n",
             error_invalid_variable_name
         },
+        /* Case 16 */
+        {   "Usage: prog --foo=<ba \n",
+            error_invalid_variable_name
+        },
+        /* Case 17 */
+        {   "Usage: prog --foo=<bar>baz \n",
+            error_invalid_variable_name
+        },
         {NULL, 0}
         
     };

@@ -157,19 +157,26 @@ option_t option_t::parse_from_string(const string_t &str, range_t *remaining, st
     if (! open_sign.empty()) {
         range_t variable_name_range = scan_while(str, remaining, char_is_valid_in_bracketed_word<char_t>);
         range_t close_sign = scan_1_char(str, remaining, '>');
-        if (! variable_name_range.empty() && ! close_sign.empty()) {
+        if (variable_name_range.empty()) {
+            append_error(errors, variable_name_range.start, error_invalid_variable_name, "Missing variable name");
+        } else if (close_sign.empty()) {
+            append_error(errors, open_sign.start, error_invalid_variable_name, "Missing '>' to match this '<'");
+        } else {
             variable_range.merge(open_sign);
             variable_range.merge(variable_name_range);
             variable_range.merge(close_sign);
         }
+        
+        // Check to see what the next character is. If it's not whitespace or the end of the string, generate an error.
+        if (! close_sign.empty() && ! remaining->empty() && char_is_valid_in_parameter(str.at(remaining->start))) {
+            append_error(errors, remaining->start, error_invalid_variable_name, "Extra stuff after closing '>'");
+        }
     }
-    // TODO: generate error for wrong-looking variables
     
     // Report an error for cases like --foo=
     if (variable_range.empty() && ! equals_range.empty()) {
         append_error(errors, equals_range.start, error_invalid_variable_name, "Missing variable for this assignment");
     }
-
     
     // Determine the separator type
     // If we got an equals range, it's something like 'foo = <bar>' or 'foo=<bar>'. The separator is equals and the space is ignored.
