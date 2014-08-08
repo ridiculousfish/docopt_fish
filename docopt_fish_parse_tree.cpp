@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <iostream>
 #include <numeric>
+#include <algorithm>
 #include <set>
 
 using std::vector;

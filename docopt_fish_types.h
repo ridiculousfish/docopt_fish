@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <assert.h>
+#include <cstring>
 
 /* Hide open and close brackets to avoid an annoying leading indent inside our class */
 #define OPEN_DOCOPT_IMPL {
@@ -25,7 +26,7 @@ static inline void assign_narrow_string_to_string(const char *s, std::wstring *r
     size_t len = std::strlen(s);
     for (size_t i=0; i < len; i++) {
         char c = s[i];
-        assert(c <= 127); //ASCII only
+        assert(c >= 0 && (unsigned char)c <= 127); //ASCII only
         result->push_back(wchar_t(c));
     }
 }

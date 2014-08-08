@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <iostream>
 #include <numeric>
+#include <algorithm>
 #include <set>
 
 
@@ -308,8 +309,7 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
 };
 
 /* Class representing an error */
-typedef error_t<string_t> error_t;
-typedef std::vector<error_t> error_list_t;
+typedef std::vector<error_t<string_t> > error_list_t;
 
 /* Class representing a map from variable names to conditions */
 typedef std::map<string_t, range_t> condition_map_t;
@@ -1474,7 +1474,7 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
         
         // Skip this option if its key range is already used
         const range_t &key_range = opt_in_doc.corresponding_long_name;
-        if (! key_range.empty() && find(matched_long_ranges.begin(), matched_long_ranges.end(), key_range) != matched_long_ranges.end()) {
+        if (! key_range.empty() && std::find(matched_long_ranges.begin(), matched_long_ranges.end(), key_range) != matched_long_ranges.end()) {
             continue;
         }
 

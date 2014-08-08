@@ -4,6 +4,7 @@
 #include <sstream>
 #include <assert.h>
 #include <stdio.h>
+#include <algorithm>
 
 using namespace docopt_fish;
 using namespace std;
@@ -265,8 +266,6 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
 
 template<typename string_t>
 static void run_1_unused_argument_test(const char *usage, const char *joined_argv, const char *joined_expected_unused, size_t test_idx, size_t arg_idx) {
-    typedef map<string_t, base_argument_t<string_t> > arg_map_t;
-    typedef map<string_t, string_t> string_map_t;
     
     /* Separate argv by spaces */
     vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
@@ -288,7 +287,7 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
         size_t idx = unused_arg_idxs.at(i);
         unused_args_vec.push_back(argv.at(idx));
     }
-    sort(unused_args_vec.begin(), unused_args_vec.end());
+    std::sort(unused_args_vec.begin(), unused_args_vec.end());
     const string_t actual_unused = join(unused_args_vec, ", ");
     
     /* Compare unused arguments */
@@ -1985,7 +1984,7 @@ static void test_errors_in_argv()
             "-df", // argv
             error_unknown_option
         },
-        {}
+        {NULL, NULL, 0}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const argv_err_testcase_t *testcase = &testcases[testcase_idx];
@@ -2011,7 +2010,7 @@ static void test_validation()
             "--baz", // argv
             "1"
         },
-        {}
+        {NULL, NULL, NULL}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const validation_testcase_t *testcase = &testcases[testcase_idx];
