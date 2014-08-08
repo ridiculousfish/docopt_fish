@@ -165,6 +165,12 @@ option_t option_t::parse_from_string(const string_t &str, range_t *remaining, st
     }
     // TODO: generate error for wrong-looking variables
     
+    // Report an error for cases like --foo=
+    if (variable_range.empty() && ! equals_range.empty()) {
+        append_error(errors, equals_range.start, error_invalid_variable_name, "Missing variable for this assignment");
+    }
+
+    
     // Determine the separator type
     // If we got an equals range, it's something like 'foo = <bar>' or 'foo=<bar>'. The separator is equals and the space is ignored.
     // Otherwise, the space matters: 'foo <bar>' is space-separated, and 'foo<bar>' has no separator
@@ -183,6 +189,11 @@ option_t option_t::parse_from_string(const string_t &str, range_t *remaining, st
     // TODO: generate an error on long options with no separators (--foo<bar>). Only short options support these.
     if (separator == option_t::sep_none && (leading_dash_range.length > 1 || name_range.length > 1)) {
         append_error(errors, name_range.start, error_bad_option_separator, "Long options must use a space or equals separator");
+    }
+    
+    // Generate errors
+    if (name_range.empty()) {
+        append_error(errors, name_range.start, error_invalid_option_name, "Missing option name");
     }
     
     // Create and return the option
@@ -266,31 +277,29 @@ public:
 };
 
 
-/* Helper class for collecting options from a tree */
-template<typename NODE_TYPE>
-struct node_collector_t : public node_visitor_t<node_collector_t<NODE_TYPE> > {
-    std::vector<const NODE_TYPE *> results;
+/* Helper class for collecting clauses from a tree */
+struct clause_collector_t : public node_visitor_t<clause_collector_t> {
+    option_list_t options;
+    range_list_t fixeds;
+    range_list_t variables;
     
-    // The requested type we capture
-    void accept(const NODE_TYPE& node) {
-        results.push_back(&node);
+    // The requested types we capture
+    void accept(const option_clause_t& node) {
+        options.push_back(node.option);
+    }
+    
+    void accept(const fixed_clause_t& node) {
+        fixeds.push_back(node.word.range);
+    }
+    
+    void accept(const variable_clause_t& node) {
+        variables.push_back(node.word.range);
     }
     
     // Other types we ignore
     template<typename IGNORED_TYPE>
     void accept(const IGNORED_TYPE& t UNUSED) {}
 };
-
-
-/* Helper class for collecting all nodes of a given type */
-template<typename ENTRY_TYPE, typename TYPE_TO_COLLECT>
-std::vector<const TYPE_TO_COLLECT *> collect_nodes(const ENTRY_TYPE &entry) const {
-    node_collector_t<TYPE_TO_COLLECT> collector;
-    collector.begin(entry);
-    std::vector<const TYPE_TO_COLLECT *> result;
-    result.swap(collector.results);
-    return result;
-}
 
 /* Class representing an error */
 typedef error_t<string_t> error_t;
@@ -456,20 +465,13 @@ bool token_substr_equals(const token_t &tok, const char *str, size_t len) const 
 /* Collects options, i.e. tokens of the form --foo */
 template<typename ENTRY_TYPE>
 void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_options, range_list_t *out_variables, range_list_t *out_static_arguments) const {
-    std::vector<const simple_clause_t *> nodes = collect_nodes<ENTRY_TYPE, simple_clause_t>(entry);
-    for (size_t i=0; i < nodes.size(); i++) {
-        const token_t &tok = nodes.at(i)->word;
-        if (this->token_substr_equals(tok, "-", 1)) {
-            // It's an option
-            out_options->push_back(option_t::parse_from_string(this->source, tok.range));
-        } else if (this->token_substr_equals(tok, "<", 1)) {
-            // It's a variable
-            out_variables->push_back(tok.range);
-        } else {
-            // It's a static arg
-            out_static_arguments->push_back(tok.range);
-        }
-    }
+    clause_collector_t collector;
+    collector.begin(entry);
+    
+    // "Return" the values
+    out_options->swap(collector.options);
+    out_variables->swap(collector.variables);
+    out_static_arguments->swap(collector.fixeds);
 }
 
 /* Like parse_option_from_string, but parses an argument (as in argv) */
@@ -907,7 +909,7 @@ bool parse_long(const string_list_t &argv, option_t::type_t type, parse_flags_t 
 }
 
 // Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator. TODO: Use out_suggestion
-bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion) const {
+bool parse_unseparated_short(const string_list_t &argv, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion UNUSED) const {
     const string_t &arg = argv.at(*idx);
     assert(substr_equals("-", arg, 1));
     assert(arg.size() > 1); // must not be just a single dash
@@ -1533,63 +1535,77 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
 }
 
 match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) const {
-    // Check to see if this is an argument or a variable
+    if (node.option.get()) {
+        return try_match(node.option, state, ctx);
+    } else if (node.fixed.get()) {
+        return try_match(node.fixed, state, ctx);
+    } else if (node.variable.get()) {
+        return try_match(node.variable, state, ctx);
+    } else {
+        assert(0 && "Bug in docopt parser: No children of simple_clause.");
+        return match_state_list_t();
+    }
+}
+
+match_state_list_t match(const option_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+    option_list_t options_in_doc(1, node.option);
+    match_state_list_t result = this->match_options(options_in_doc, state, ctx);
+    if (result.empty()) {
+        // Didn't get any options. Maybe we suggest one.
+        // We want to return this state if either we were in square brackets (so we don't require a match), OR we are accepting incomplete
+        bool wants_append_state = ctx->is_in_square_brackets;
+        if (ctx->flags & flag_generate_suggestions) {
+            state->suggested_next_arguments.insert(options_in_doc.back().name_as_string(this->source));
+            wants_append_state = true;
+        }
+        if (wants_append_state) {
+            state_destructive_append_to(state, &result);
+        }
+    }
+    return result;
+}
+
+match_state_list_t match(const fixed_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+    // Fixed argument
+    // Compare the next positional to this static argument
     match_state_list_t result;
     const range_t &range = node.word.range;
-    char_t first_char = this->source.at(range.start);
-
-    if (first_char == char_t('<')) {
-        if (ctx->has_more_positionals(state)) {
-            // Variable argument. Modify the state.
-            // Note we retain the brackets <> in the variable name
-            const string_t name = string_t(this->source, range.start, range.length);
+    if (ctx->has_more_positionals(state)) {
+        const positional_argument_t &positional = ctx->next_positional(state);
+        const string_t &name = ctx->argv.at(positional.idx_in_argv);
+        if (name.size() == range.length && this->range_equals_string(range, name)) {
+            // The static argument matches
             arg_t *arg = &state->option_map[name];
-            const positional_argument_t &positional = ctx->acquire_next_positional(state);
-            arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
+            arg->count += 1;
+            ctx->acquire_next_positional(state);
             state_destructive_append_to(state, &result);
-        } else {
-            // No more positionals. Suggest one.
-            if (ctx->flags & flag_generate_suggestions) {
-                state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
-                state_destructive_append_to(state, &result);
-            }
-        }
-    } else if (first_char == char_t('-') && range.length > 1) {
-        // Option. Use match_options() on an array containing exactly this option.
-        option_list_t options_in_doc;
-        options_in_doc.push_back(option_t::parse_from_string(this->source, range));
-        result = this->match_options(options_in_doc, state, ctx);
-        if (result.empty()) {
-            // Didn't get any options. Maybe we suggest one.
-            // We want to return this state if either we were in square brackets (so we don't require a match), OR we are accepting incomplete
-            bool wants_append_state = ctx->is_in_square_brackets;
-            if (ctx->flags & flag_generate_suggestions) {
-                state->suggested_next_arguments.insert(options_in_doc.back().name_as_string(this->source));
-                wants_append_state = true;
-            }
-            if (wants_append_state) {
-                state_destructive_append_to(state, &result);
-            }
         }
     } else {
-        // Fixed argument
-        // Compare the next positional to this static argument
-        if (ctx->has_more_positionals(state)) {
-            const positional_argument_t &positional = ctx->next_positional(state);
-            const string_t &name = ctx->argv.at(positional.idx_in_argv);
-            if (name.size() == range.length && this->range_equals_string(range, name)) {
-                // The static argument matches
-                arg_t *arg = &state->option_map[name];
-                arg->count += 1;
-                ctx->acquire_next_positional(state);
-                state_destructive_append_to(state, &result);
-            }
-        } else {
-            // No more positionals. Suggest one.
-            if (ctx->flags & flag_generate_suggestions) {
-                state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
-                state_destructive_append_to(state, &result);
-            }
+        // No more positionals. Suggest one.
+        if (ctx->flags & flag_generate_suggestions) {
+            state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
+            state_destructive_append_to(state, &result);
+        }
+    }
+    return result;
+}
+
+match_state_list_t match(const variable_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+    // Variable argument
+    match_state_list_t result;
+    const range_t &range = node.word.range;
+    if (ctx->has_more_positionals(state)) {
+        // Note we retain the brackets <> in the variable name
+        const string_t name = string_t(this->source, range.start, range.length);
+        arg_t *arg = &state->option_map[name];
+        const positional_argument_t &positional = ctx->acquire_next_positional(state);
+        arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
+        state_destructive_append_to(state, &result);
+    } else {
+        // No more positionals. Suggest one.
+        if (ctx->flags & flag_generate_suggestions) {
+            state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
+            state_destructive_append_to(state, &result);
         }
     }
     return result;

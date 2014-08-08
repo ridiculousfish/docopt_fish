@@ -34,8 +34,14 @@ using std::vector;
               OPEN_SQUARE alternation_list CLOSE_SQUARE opt_ellipsis
               options_shortcut
  
- simple_clause = WORD
- 
+ simple_clause = option_clause |
+                 fixed_clause |
+                 variable_clause
+                 
+ option_clause = WORD
+ fixed_clause = WORD
+ variable_clause = WORD
+                 
  opt_ellipsis = <empty> |
  ELLIPSIS
  
@@ -54,6 +60,9 @@ struct expression_t;
 struct or_continuation_t;
 struct simple_clause_t;
 struct opt_ellipsis_t;
+struct option_clause_t;
+struct fixed_clause_t;
+struct variable_clause_t;
 
 /* Base class of all intermediate states */
 struct base_t {
@@ -184,15 +193,20 @@ struct options_shortcut_t : public base_t {
 };
 
 struct simple_clause_t : public base_t {
-    token_t word;
+    auto_ptr<option_clause_t> option;
+    auto_ptr<fixed_clause_t> fixed;
+    auto_ptr<variable_clause_t> variable;
     
-    simple_clause_t(const token_t &t) : word(t)
-    {}
+    simple_clause_t(auto_ptr<option_clause_t> &o) : base_t(0), option(o) {}
+    simple_clause_t(auto_ptr<fixed_clause_t> &f) : base_t(1), fixed(f) {}
+    simple_clause_t(auto_ptr<variable_clause_t> &v) : base_t(2), variable(v) {}
     
     std::string name() const { return "simple_clause"; }
     template<typename T>
     void visit_children(T *v) const {
-        v->visit(word);
+        v->visit(option);
+        v->visit(fixed);
+        v->visit(variable);
     }
     
 };
@@ -235,6 +249,43 @@ struct expression_t : public base_t {
         v->visit(options_shortcut);
     }
 };
+
+// An option like '--track', optionally with a value
+struct option_clause_t : public base_t {
+    const token_t word;
+    const option_t option;
+    option_clause_t(const token_t &t, const option_t &o) : word(t), option(o) {}
+    std::string name() const { return "option"; }
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(word);
+    }
+};
+
+// Fixed like 'checkout'
+struct fixed_clause_t : public base_t {
+    const token_t word;
+    fixed_clause_t(const token_t &t) : word(t) {}
+    std::string name() const { return "fixed"; }
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(word);
+    }
+
+};
+
+// Variable like '<branch>'
+struct variable_clause_t : public base_t {
+    const token_t word;
+    variable_clause_t(const token_t &t) : word(t) {}
+    std::string name() const { return "variable"; }
+    template<typename T>
+    void visit_children(T *v) const {
+        v->visit(word);
+    }
+};
+
+
 
 template<typename string_t>
 usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors);

@@ -197,6 +197,16 @@ struct parse_context_t {
     }
 
     template<typename PARENT, typename CHILD>
+    PARENT *parse_1() {
+        PARENT *result = NULL;
+        auto_ptr<CHILD> child(parse<CHILD>());
+        if (child.get()) {
+            result = new PARENT(child);
+        }
+        return result;
+    }
+
+    template<typename PARENT, typename CHILD>
     PARENT *parse_1_or_empty() {
         PARENT *result = NULL;
         auto_ptr<CHILD> child(parse<CHILD>());
@@ -294,7 +304,24 @@ struct parse_context_t {
     }
     
     simple_clause_t *parse(simple_clause_t *dummy UNUSED) {
-        simple_clause_t *result = NULL;
+        token_t word = this->peek_word();
+        if (word.range.empty()) {
+            return NULL;
+        }
+        
+        char_t c = this->source->at(word.range.start);
+        if (c == '<') {
+            return parse_1<simple_clause_t, variable_clause_t>();
+        } else if (c == '-' && word.range.length > 1) {
+            // A naked '-', is to be treated as a fixed value
+            return parse_1<simple_clause_t, option_clause_t>();
+        } else {
+            return parse_1<simple_clause_t, fixed_clause_t>();
+        }
+    }
+    
+    option_clause_t *parse(option_clause_t *dummy UNUSED) {
+        option_clause_t *result = NULL;
         token_t word;
         if (this->scan_word(&word)) {
             /* Hack to support specifying parameter names inline.
@@ -353,15 +380,37 @@ struct parse_context_t {
                             bool scanned = this->scan_word(&variable);
                             assert(scanned); // Should always succeed, since we peeked at the word
                             word.range.merge(variable.range);
+                            opt.value = variable.range;
                         }
                     }
                 }
+                
+                result = new option_clause_t(word, opt);
             }
-            
-            result = new simple_clause_t(word);
         }
         return result;
     }
+    
+    fixed_clause_t *parse(fixed_clause_t *dummy UNUSED) {
+        fixed_clause_t *result = NULL;
+        token_t word;
+        if (this->scan_word(&word)) {
+            // TODO: handle invalid commands like foo<bar>
+            result = new fixed_clause_t(word);
+        }
+        return result;
+    }
+    
+    variable_clause_t *parse(variable_clause_t *dummy UNUSED) {
+        variable_clause_t *result = NULL;
+        token_t word;
+        if (this->scan_word(&word)) {
+            // TODO: handle invalid variables like foo<bar>
+            result = new variable_clause_t(word);
+        }
+        return result;
+    }
+
     
     expression_t *parse(expression_t *dummy UNUSED) {
         expression_t *result = NULL;

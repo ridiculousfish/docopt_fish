@@ -269,6 +269,7 @@ enum {
     error_excessive_equal_signs, // Two or more equal signs: --foo==bar
     error_bad_option_separator, // Bad separator between option and value: --foo<bar>
     error_invalid_option_name, // Bad option name: Options: foo
+    error_invalid_variable_name, // Bad variable name: Options: --foo=
     error_missing_close_paren, // Missing ): prog (foo
     error_missing_close_bracket, // Missing ]:  prog [foo
     error_missing_close_bracket_in_default, // No close bracket. Options: --send <msg> Specifies message [default: none

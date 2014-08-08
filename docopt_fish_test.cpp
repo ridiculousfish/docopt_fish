@@ -62,7 +62,6 @@ string_t to_string(const char *x) {
 }
 
 
-#define do_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 #define do_arg_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 
 /* Splits up a string via a delimiter string, returning a list of some string type */
@@ -329,8 +328,9 @@ static void run_1_usage_err_test(const char *usage, int expected_error_code, siz
     argument_parser_t<string_t> parser(usage_str, &error_list);
     
     /* Check errors */
-    do_test(! error_list.empty());
-    if (! error_list.empty()) {
+    if (error_list.empty()) {
+        err("Usage Err Test %lu.%lu: No errors reported for '%s'. Expected error '%d'.", test_idx, arg_idx, usage, expected_error_code);
+    } else {
         if (error_list.front().code != expected_error_code) {
             err("Test %lu.%lu: Wrong error code for '%s'. Expected '%d', got '%d' with text %ls", test_idx, arg_idx, usage, expected_error_code, error_list.front().code, wide(error_list.front().text));
         }
@@ -1886,6 +1886,10 @@ static void test_errors_in_usage()
         /* Case 14 */
         {   "Usage: prog [foo \n",
             error_missing_close_bracket
+        },
+        /* Case 15 */
+        {   "Usage: prog --foo= \n",
+            error_invalid_variable_name
         },
         {NULL, 0}
         
