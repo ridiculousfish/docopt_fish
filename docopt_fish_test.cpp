@@ -161,7 +161,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     const string_t usage_str(usage, usage + strlen(usage));
     
     std::vector<error_t<string_t> > errors;
-    argument_parser_t<string_t> parser = argument_parser_t<string_t>(usage_str, &errors);
+    argument_parser_t<string_t> parser(usage_str, &errors);
     
     if (! errors.empty()) {
         err("Suggestion test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
@@ -2019,6 +2019,43 @@ static void test_validation()
 }
 
 template<typename string_t>
+static void test_command_names()
+{
+    const struct cmd_testcase_t {
+        const char *usage;
+        const char *expected_names;
+    } testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog -foo",
+            "prog"
+        },
+        /* Case 1 */
+        {   "Usage: prog (foo|bar) --baz\n"
+            "       prog --baz\n"
+            "       prog2",
+            "prog,prog2"
+        },
+        /* Case 2 */
+        {   "Usage: prog (foo|bar) --baz\n"
+            "       prog2"
+            "       prog --baz\n",
+            "prog,prog2"
+        },
+        {NULL, NULL}
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const cmd_testcase_t *testcase = &testcases[testcase_idx];
+        string_t doc(testcase->usage, testcase->usage + strlen(testcase->usage));
+        string_t actual_cmds = join(argument_parser_t<string_t>(doc, NULL).get_command_names(), ",");
+        string_t expected_cmds = string_t(testcase->expected_names, testcase->expected_names + strlen(testcase->expected_names));
+        if (actual_cmds != expected_cmds) {
+            err("Command test %lu.%lu expected '%ls', but instead got '%ls'", testcase_idx, 0LU, wide(expected_cmds), wide(actual_cmds));
+        }
+    }
+}
+
+
+template<typename string_t>
 void test_fuzzing() {
     const char *tokens[] =
     {
@@ -2082,6 +2119,7 @@ void do_all_tests() {
     test_validation<string_t>();
     test_errors_in_usage<string_t>();
     test_errors_in_argv<string_t>();
+    test_command_names<string_t>();
     test_fuzzing<string_t>();
 }
 

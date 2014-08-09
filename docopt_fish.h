@@ -100,13 +100,16 @@ namespace docopt_fish
         /* Given an option name like --foo, returns the description of that option name, or the empty string if none. */
         string_t description_for_option(const string_t &option) const;
         
+        /* Returns the list of command names (i.e. prog in `Usage: prog [options]`. Duplicate names are only returned once. */
+        std::vector<string_t> get_command_names() const;
+        
         /* Given a list of arguments (argv), parse them, producing a map from option names to values */
         argument_map_t parse_arguments(const std::vector<string_t> &argv,
                         parse_flags_t flags,
                         error_list_t *out_errors = NULL,
                         std::vector<size_t> *out_unused_arguments = NULL);
 
-        // Constructor for when you either know the doc is error-free, or you aren't interested in the results, only the errors
+        /* Constructor for when you either know the doc is error-free, or you aren't interested in the results, only the errors */
         argument_parser_t(const string_t &doc, error_list_t *out_errors);
 
         argument_parser_t();

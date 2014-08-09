@@ -1910,6 +1910,25 @@ string_t description_for_option(const string_t &given_option_name) const {
     return result;
 }
 
+std::vector<string_t> get_command_names() const {
+    /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
+    std::vector<string_t> result;
+    std::set<string_t> seen;
+    usage_t *cursor = this->parse_tree;
+    while (cursor != NULL) {
+        range_t name_range = cursor->prog_name.range;
+        if (! name_range.empty()) {
+            const string_t name(this->source, name_range.start, name_range.length);
+            if (seen.insert(name).second) {
+                result.push_back(name);
+            }
+        }
+        cursor = cursor->next_usage.get();
+    }
+    return result;
+
+}
+
 // close the class
 CLOSE_DOCOPT_IMPL;
 
@@ -1946,6 +1965,12 @@ template<typename string_t>
 string_t argument_parser_t<string_t>::description_for_option(const string_t &option) const
 {
     return impl->description_for_option(option);
+}
+
+template<typename string_t>
+std::vector<string_t> argument_parser_t<string_t>::get_command_names() const
+{
+    return impl->get_command_names();
 }
 
 template<typename string_t>
