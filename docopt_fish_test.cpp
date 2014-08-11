@@ -1823,15 +1823,23 @@ static void test_conditions()
 {
     const testcase_t testcases[] =
     {   /* Case 0 */
-        {   "Usage: prog <pid> <grp>\n"
+        {   "Usage: prog <pid> <grp> <uid> <gid>\n"
             "Conditions: <pid>  get_a_pid\n"
-            "            <grp>  (echo groups)",
+            "            <grp>  (echo groups)\n"
+            "            <uid>   1 2\n 3 4\n"
+            "            <gid>   \n1 2\n 3 4\n",
             {
                 {   "<pid>", // variable
                     "get_a_pid"
                 },
                 {   "<grp>", // variable
                     "(echo groups)"
+                },
+                {   "<uid>", // variable
+                    "1 2\n 3 4"
+                },
+                {   "<gid>", // variable
+                    "1 2\n 3 4"
                 },
             }
         },
@@ -1969,6 +1977,11 @@ static void test_errors_in_usage()
         },
         /* Case 17 */
         {   "Usage: prog --foo=<bar>baz \n",
+            error_invalid_variable_name
+        },
+        /* Case 17 */
+        {   "Usage: prog --foo=<bar> \n"
+            "Conditions: gibberish",
             error_invalid_variable_name
         },
         {NULL, 0}

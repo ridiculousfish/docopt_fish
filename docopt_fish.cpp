@@ -624,8 +624,31 @@ static bool line_contains_option_spec(const string_t &str, const range_t &range)
     return space.length > 0 && dashes.length > 0;
 }
 
-/* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. We allow the section names to be indented, but must be less idented than the previous line */
-range_list_t source_ranges_for_section(const char *name) const {
+// Returns true if the source line contains a condition spec, that is, has at least one leading space and then a <
+static bool line_contains_condition_spec(const string_t &str, const range_t &range) {
+    range_t remaining = range;
+    range_t space = scan_while(str, &remaining, isspace);
+    range_t open_bracket = scan_while(str, &remaining, it_equals<'<'>);
+    return space.length > 0 && open_bracket.length > 0;
+}
+
+// Returns the index of the first colon within the given range, or npos if not found
+static size_t find_colon(const range_t &r, const string_t &src) {
+    typename string_t::const_iterator istart = src.begin();
+    size_t colon_pos = std::find(istart + r.start, istart + r.end(), ':') - istart;
+    assert(colon_pos >= r.start && colon_pos <= r.end());
+    return colon_pos < r.end() ? colon_pos : npos;
+}
+
+/* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. We allow the section names to be indented, but must be less idented than the previous line. If include_unindented_lines is true, then non-header lines that are less indented are included:
+
+  Usage: foo
+  OTHER JUNK
+
+With include_unindented_lines set to false, OTHER JUNK is treated as a header line and so not included in Usage:. If set to true, it is.
+
+ */
+range_list_t source_ranges_for_section(const char *name, bool include_other_top_level = false) const {
     range_list_t result;
     bool in_desired_section = false;
     range_t line_range;
@@ -637,15 +660,27 @@ range_list_t source_ranges_for_section(const char *name) const {
         size_t line_indent = line_start - line_range.start;
         
         // It's a header line if its indent is not greater than the previous header and it's empty
-        bool is_header = (! trimmed_line_range.empty() && line_indent <= current_header_indent);
-        if (is_header) {
+        size_t colon_pos = npos;
+        bool is_header = false;
+        bool is_other_top_level = false;
+        if (! trimmed_line_range.empty() && line_indent <= current_header_indent)
+        {
+            colon_pos = find_colon(trimmed_line_range, this->source);
+            is_header = (colon_pos != npos);
+            is_other_top_level = (colon_pos == npos);
+        }
+        if (is_other_top_level && ! include_other_top_level) {
+            // Other top level junk, end the section
+            in_desired_section = false;
+        } else if (is_header) {
+            assert(colon_pos != npos && colon_pos >= line_range.start && colon_pos < line_range.end());
             current_header_indent = line_indent;
             
             // Check to see if the name is found before the first colon
             // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
             size_t name_pos = find_case_insensitive(source, name, line_start);
             size_t line_end = trimmed_line_range.end();
-            in_desired_section = (name_pos < line_end && name_pos < source.find(':', line_start));
+            in_desired_section = (name_pos < line_end && name_pos < colon_pos);
 
             if (in_desired_section) {
                 // Append a new empty range. We will add to it.
@@ -717,35 +752,66 @@ option_list_t parse_options_spec(error_list_t *errors) const {
     return result;
 }
 
-/* Parses the conditions specification at the given location */
+/* Parses the conditions specification at the given location. TODO: refactor this with parse_options_spec */
 condition_map_t parse_conditions_spec(error_list_t *errors) const {
     condition_map_t result;
     
-    const range_list_t section_ranges = source_ranges_for_section("Conditions:");
+    /* The 'true' here means to include other top-level lines as conditions, e.g.:
+          Usage: prog <pid>
+          Conditions: <pid>
+          1
+          2
+          3
+     
+        This can come about during e.g. variable expansion in fish.
+    */
+    
+    const range_list_t section_ranges = source_ranges_for_section("Conditions:", true);
     for (size_t range_idx = 0; range_idx < section_ranges.size(); range_idx++) {
         const range_t section_range = section_ranges.at(range_idx);
         const size_t section_end = section_range.end();
         range_t line_range(section_range.start, 0);
         while (get_next_line(this->source, &line_range, section_end)) {
-            // A specification look like this:
-            // <pid>  stuff
-            // Two spaces are the separator. But make sure we skip leading spaces!
-            // TODO: actual error reporting, etc.
-            range_t trimmed_line_range = trim_whitespace(line_range, this->source);
-            const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
-            size_t sep = this->source.find(two_spaces, trimmed_line_range.start);
-            if (sep < trimmed_line_range.end())
-            {
-                range_t key(trimmed_line_range.start, sep - trimmed_line_range.start);
-                range_t value(sep, trimmed_line_range.end() - sep);
-                
-                // Trim whitespace off of both sides and then populate our map
-                // TODO: verify that the variable was found
-                key = trim_whitespace(key, this->source);
-                value = trim_whitespace(value, this->source);
-                const string_t key_str(this->source, key.start, key.length);
-                if (! result.insert(typename condition_map_t::value_type(key_str, value)).second) {
-                    append_error(errors, key.start, error_one_variable_multiple_conditions, "Variable already has a condition");
+            range_t trimmed_line = trim_whitespace(line_range, this->source);
+            if (trimmed_line.empty()) {
+                // Empty line in Conditions, just skip it
+                continue;
+            } else if (! line_contains_condition_spec(this->source, line_range)) {
+                append_error(errors, line_range.start, error_invalid_variable_name, "Invalid condition. Conditions must start with a variable like <var>.");
+            } else {
+                // It's a new condition. Determine how long it goes.
+                range_t condition_spec_range = line_range;
+                range_t local_range = line_range;
+                while (get_next_line(this->source, &local_range, section_end)) {
+                    if (line_contains_condition_spec(this->source, local_range)) {
+                        break;
+                    } else {
+                        condition_spec_range.merge(local_range);
+                        // Set our outermost lines to this line, so we'll skip past it next iteration
+                        line_range = local_range;
+                    }
+                }
+
+                // Got the condition spec
+                // A specification look like this:
+                // <pid>  stuff
+                // Two spaces are the separator. But make sure we skip leading spaces!
+                condition_spec_range = trim_whitespace(condition_spec_range, this->source);
+                const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
+                size_t sep = this->source.find(two_spaces, condition_spec_range.start);
+                if (sep < condition_spec_range.end())
+                {
+                    range_t key(condition_spec_range.start, sep - condition_spec_range.start);
+                    range_t value(sep, condition_spec_range.end() - sep);
+                    
+                    // Trim whitespace off of both sides and then populate our map
+                    // TODO: verify that the variable was found
+                    key = trim_whitespace(key, this->source);
+                    value = trim_whitespace(value, this->source);
+                    const string_t key_str(this->source, key.start, key.length);
+                    if (! result.insert(typename condition_map_t::value_type(key_str, value)).second) {
+                        append_error(errors, key.start, error_one_variable_multiple_conditions, "Variable already has a condition");
+                    }
                 }
             }
         }
