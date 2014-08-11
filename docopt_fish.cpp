@@ -1929,6 +1929,29 @@ std::vector<string_t> get_command_names() const {
 
 }
 
+std::vector<string_t> get_variables() const {
+    std::vector<string_t> result;
+    
+    // Include explicit variables
+    for (size_t i=0; i < this->all_variables.size(); i++) {
+        const range_t &r = this->all_variables.at(i);
+        result.push_back(string_t(this->source, r.start, r.length));
+    }
+    
+    // Include variables that are part of options
+    for (size_t i=0; i < this->all_options.size(); i++) {
+        const range_t &r = this->all_options.at(i).value;
+        if (! r.empty()) {
+            result.push_back(string_t(this->source, r.start, r.length));
+        }
+    }
+    
+    // Sort and remove duplicates
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
 // close the class
 CLOSE_DOCOPT_IMPL;
 
@@ -1971,6 +1994,12 @@ template<typename string_t>
 std::vector<string_t> argument_parser_t<string_t>::get_command_names() const
 {
     return impl->get_command_names();
+}
+
+template<typename string_t>
+std::vector<string_t> argument_parser_t<string_t>::get_variables() const
+{
+    return impl->get_variables();
 }
 
 template<typename string_t>

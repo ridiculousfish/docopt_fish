@@ -57,8 +57,7 @@ static const wchar_t *wide(const string &t) {
 
 template<typename string_t>
 string_t to_string(const char *x) {
-    string_t result;
-    result.insert(result.begin(), x, x + strlen(x));
+    string_t result(x, x + strlen(x));
     return result;
 }
 
@@ -1848,6 +1847,39 @@ static void test_conditions()
 }
 
 template<typename string_t>
+static void test_get_variables()
+{
+    const struct var_testcase_t {
+        const char *usage;
+        const char *expected_vars;
+    } testcases[] =
+    {   /* Case 0 */
+        {   "Usage: prog <pid> <grp> [options]\n"
+            "Options: -foo\n"
+            "         -bar <uid>",
+            "<grp>,<pid>,<uid>"
+        },
+        /* Case 1 */
+        {   "Usage: prog [options]\n"
+            "Options: -foo\n"
+            "         -bar",
+            "" // no options
+        },
+        {NULL, NULL}
+    };
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+        const var_testcase_t *testcase = &testcases[testcase_idx];
+        string_t doc(to_string<string_t>(testcase->usage));
+        string_t actual_vars = join(argument_parser_t<string_t>(doc, NULL).get_variables(), ",");
+        string_t expected_vars = to_string<string_t>(testcase->expected_vars);
+        if (actual_vars != expected_vars) {
+            err("Variable test %lu.%lu expected '%ls', but instead got '%ls'", testcase_idx, 0LU, wide(expected_vars), wide(actual_vars));
+        }
+    }
+}
+
+
+template<typename string_t>
 static void test_errors_in_usage()
 {
     const struct usage_err_testcase_t {
@@ -2045,9 +2077,9 @@ static void test_command_names()
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const cmd_testcase_t *testcase = &testcases[testcase_idx];
-        string_t doc(testcase->usage, testcase->usage + strlen(testcase->usage));
+        string_t doc(to_string<string_t>(testcase->usage));
         string_t actual_cmds = join(argument_parser_t<string_t>(doc, NULL).get_command_names(), ",");
-        string_t expected_cmds = string_t(testcase->expected_names, testcase->expected_names + strlen(testcase->expected_names));
+        string_t expected_cmds = to_string<string_t>(testcase->expected_names);
         if (actual_cmds != expected_cmds) {
             err("Command test %lu.%lu expected '%ls', but instead got '%ls'", testcase_idx, 0LU, wide(expected_cmds), wide(actual_cmds));
         }
@@ -2120,6 +2152,7 @@ void do_all_tests() {
     test_errors_in_usage<string_t>();
     test_errors_in_argv<string_t>();
     test_command_names<string_t>();
+    test_get_variables<string_t>();
     test_fuzzing<string_t>();
 }
 
