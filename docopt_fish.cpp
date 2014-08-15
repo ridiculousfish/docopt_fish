@@ -640,6 +640,31 @@ static size_t find_colon(const range_t &r, const string_t &src) {
     return colon_pos < r.end() ? colon_pos : npos;
 }
 
+// Computes the indent for a line starting at start and extending len. Tabs are treated as 4 spaces. newlines are unexpected, and treated as one space.
+static size_t compute_indent(const string_t &src, size_t start, size_t len)
+{
+    const size_t tabstop = 4;
+    assert(src.size() >= len);
+    assert(start + len >= start); // no overflow
+    size_t result = 0;
+    for (size_t i=start; i < start + len; i++)
+    {
+        char_t c = src.at(i);
+        if (c != L'\t')
+        {
+            // not a tab
+            result += 1;
+        }
+        else
+        {
+            // is a tab. Round up to the next highest multiple of tabstop.
+            // If we're already a multiple of tabstop, we want to go bigger.
+            result = (result + tabstop) / tabstop * tabstop;
+        }
+    }
+    return result;
+}
+
 /* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. We allow the section names to be indented, but must be less idented than the previous line. If include_unindented_lines is true, then non-header lines that are less indented are included:
 
   Usage: foo
@@ -656,8 +681,8 @@ range_list_t source_ranges_for_section(const char *name, bool include_other_top_
     while (get_next_line(this->source, &line_range)) {
         range_t trimmed_line_range = trim_whitespace(line_range, this->source);
         assert(trimmed_line_range.start >= line_range.start);
-        size_t line_start = trimmed_line_range.start;
-        size_t line_indent = line_start - line_range.start;
+        size_t trimmed_line_start = trimmed_line_range.start;
+        size_t line_indent = compute_indent(this->source, line_range.start, trimmed_line_start - line_range.start);
         
         // It's a header line if its indent is not greater than the previous header and it's empty
         size_t colon_pos = npos;
@@ -678,7 +703,7 @@ range_list_t source_ranges_for_section(const char *name, bool include_other_top_
             
             // Check to see if the name is found before the first colon
             // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
-            size_t name_pos = find_case_insensitive(source, name, line_start);
+            size_t name_pos = find_case_insensitive(source, name, trimmed_line_start);
             size_t line_end = trimmed_line_range.end();
             in_desired_section = (name_pos < line_end && name_pos < colon_pos);
 

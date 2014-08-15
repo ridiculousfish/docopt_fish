@@ -1610,6 +1610,19 @@ static void test_correctness()
                 },
             },
         },
+        /* Case 84. Mixed tabs/spaces. Tabs are treated as 4 spaces. */
+        {   "    Usage: prog [options]\n"
+            "\tOptions: -d\n"
+            "\t\t-x\n"
+            "\t -y\n",
+            {
+                {   "-dx", // argv
+                    "-d:True\n"
+                    "-x:True\n"
+                    "-y:False"
+                },
+            },
+        },
         {NULL, {}}
     }
     ;
@@ -1841,6 +1854,22 @@ static void test_conditions()
                 {   "<gid>", // variable
                     "1 2\n 3 4"
                 },
+            }
+        },
+        /* Case 1 */
+        {   "Usage: prog <arg> <val>\n"
+            "Conditions:\n"
+            "  <pid>\n"
+            "    get_a_pid\n"
+            "  <val>\n"
+            "    get_a_val",
+            {
+                {   "<pid>", // variable
+                    "get_a_pid"
+                },
+                {   "<val>", // variable
+                    "get_a_val"
+                }
             }
         },
         {NULL, {}}
