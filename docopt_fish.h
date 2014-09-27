@@ -19,6 +19,9 @@ namespace docopt_fish
         
         /* If set, long options may be resolved using unambiguous prefixes. */
         flag_resolve_unambiguous_prefixes = 1U << 2,
+        
+        /* If set, short options that accept values must have the separator as specified in the usage, that is, -DNDEBUG and -D NDEBUG are not both allowed. */
+        flag_short_options_strict_separators = 1U << 3
     };
     typedef unsigned int parse_flags_t;
     

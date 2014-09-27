@@ -351,7 +351,7 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
     argument_parser_t<string_t> parser(usage_str, &error_list);
     
     /* Check arguments */
-    parser.parse_arguments(argv, flag_resolve_unambiguous_prefixes, &error_list);
+    parser.parse_arguments(argv, flag_resolve_unambiguous_prefixes | flag_short_options_strict_separators, &error_list);
     
     /* Check errors */
     if (error_list.empty()) {
@@ -1600,7 +1600,7 @@ static void test_correctness()
                 },
             },
         },
-        /* Case 83 */
+        /* Case 84 */
         {   "\n"
             "   Usage: prog [options]\n"
             "       Options: -d\n",
@@ -1610,7 +1610,7 @@ static void test_correctness()
                 },
             },
         },
-        /* Case 84. Mixed tabs/spaces. Tabs are treated as 4 spaces. */
+        /* Case 85. Mixed tabs/spaces. Tabs are treated as 4 spaces. */
         {   "    Usage: prog [options]\n"
             "\tOptions: -d\n"
             "\t\t-x\n"
@@ -1620,6 +1620,28 @@ static void test_correctness()
                     "-d:True\n"
                     "-x:True\n"
                     "-y:False"
+                },
+            },
+        },
+        /* Case 86. Relaxed separator handling. */
+        {   "Usage: prog -D<val>\n",
+            {
+                {   "-Dx1", // argv
+                    "-D:x1\n"
+                },
+                {   "-D x2", // argv
+                    "-D:x2\n"
+                },
+            },
+        },
+        /* Case 87. Relaxed separator handling. */
+        {   "Usage: prog --line=<val>\n",
+            {
+                {   "--line=x1", // argv
+                    "--line:x1\n"
+                },
+                {   "--line x2", // argv
+                    "--line:x2\n"
                 },
             },
         },
@@ -2058,6 +2080,17 @@ static void test_errors_in_argv()
             "-df", // argv
             error_unknown_option
         },
+        /* Case 5 */
+        {   "Usage: prog -D<val>\n",
+            "-D", // argv
+            error_option_has_missing_argument
+        },
+        /* Case 6. This uses strict separators so we require the = sign */
+        {   "Usage: prog --line=<val>\n",
+            "--line val", // argv
+            error_wrong_separator
+        },
+
         {NULL, NULL, 0}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
@@ -2153,7 +2186,7 @@ void test_fuzzing() {
     string_t storage;
     std::vector<error_t<string_t> > errors;
     const uint32_t token_count = sizeof tokens / sizeof *tokens;
-    const uint32_t max_fuzz = 3; //could be raised up to 6 at the cost of some slowdown
+    const uint32_t max_fuzz = 4; //could be raised up to 6 at the cost of some slowdown
     unsigned max_permutation = 1;
     for (uint32_t tokens_in_string=0; tokens_in_string <= max_fuzz; tokens_in_string++) {
         for (uint32_t permutation = 0; permutation < max_permutation; permutation++) {
@@ -2175,10 +2208,9 @@ void test_fuzzing() {
             if (! parsed && errors.empty()) {
                 err("No error generated for fuzz string '%ls'\n", wide(storage));
             }
-            
-            // The next time around, we will have token_count times more permutations
-            max_permutation *= token_count;
         }
+        // The next time around, we will have token_count times more permutations
+        max_permutation *= token_count;
         //fprintf(stderr, "Fuzzed %u / %u\n", tokens_in_string, max_fuzz);
     }
 }

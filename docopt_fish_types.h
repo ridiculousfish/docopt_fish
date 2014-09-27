@@ -282,10 +282,12 @@ enum {
     error_trailing_vertical_bar, // Usage: prog foo | bar |
     
     // Errors that may occur in arguments (argv)
-    error_unknown_option, // Option is not present in usage
-    error_option_has_missing_argument, // Option expects an argument, but none was given in argv
+    // Lower values are more "likely" errors
+    error_option_has_missing_argument = 100, // Option expects an argument, but none was given in argv
     error_option_unexpected_argument, // Option does not expect an argument, but one was given in argv
-    error_ambiguous_prefix_match // Prefix matching was requested and the result was ambiguous
+    error_ambiguous_prefix_match, // Prefix matching was requested and the result was ambiguous
+    error_unknown_option, // Option is not present in usage
+    error_wrong_separator // Wrong sort of separator
 };
 
 CLOSE_DOCOPT_IMPL
