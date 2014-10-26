@@ -113,7 +113,7 @@ namespace docopt_fish
         argument_map_t parse_arguments(const std::vector<string_t> &argv,
                         parse_flags_t flags,
                         error_list_t *out_errors = NULL,
-                        std::vector<size_t> *out_unused_arguments = NULL);
+                        std::vector<size_t> *out_unused_arguments = NULL) const;
 
         /* Constructor for when you either know the doc is error-free, or you aren't interested in the results, only the errors */
         argument_parser_t(const string_t &doc, error_list_t *out_errors);

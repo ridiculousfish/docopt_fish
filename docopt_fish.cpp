@@ -2115,7 +2115,7 @@ std::map<string_t, base_argument_t<string_t> >
 argument_parser_t<string_t>::parse_arguments(const std::vector<string_t> &argv,
                                             parse_flags_t flags,
                                             std::vector<error_t<string_t> > *out_errors,
-                                            std::vector<size_t> *out_unused_arguments) {
+                                            std::vector<size_t> *out_unused_arguments) const {
     return impl->best_assignment_for_argv(argv, flags, out_errors, out_unused_arguments);
 }
 
