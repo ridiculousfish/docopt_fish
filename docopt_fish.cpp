@@ -1906,6 +1906,13 @@ bool preflight() {
     // Extract conditions from the conditions section
     this->variables_to_conditions = this->parse_conditions_spec(&this->errors);
     
+    // Example of how to dump
+    if (0)
+    {
+        std::string dumped = node_dumper_t::dump_tree(*this->parse_tree, this->source);
+        fprintf(stderr, "%s\n", dumped.c_str());
+    }
+    
     /* Successfully preflighted */
     return true;
 }
