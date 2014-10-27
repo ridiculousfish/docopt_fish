@@ -299,7 +299,7 @@ struct node_visitor_t {
     {
         T *derived_this = static_cast<T *>(this);
         derived_this->accept(node);
-        node.visit_children(this);
+        node.visit_children(derived_this);
     }
     
     
