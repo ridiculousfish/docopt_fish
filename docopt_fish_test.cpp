@@ -1645,6 +1645,18 @@ static void test_correctness()
                 },
             },
         },
+        /* Case 88. Lists weren't working. */
+        {   "Usage:\n"
+            "    jobs [options] [<pid>...]\n"
+            "Options:\n"
+            "    -p, --pid  prints the process ID for each process in all jobs.\n",
+            {
+                {   "123 456", // argv
+                    "<pid>:123, 456\n"
+                    "--pid:False"
+                }
+            },
+        },
         {NULL, {}}
     }
     ;
