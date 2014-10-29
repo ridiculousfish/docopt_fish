@@ -31,4 +31,12 @@ fish_docopt usage specification syntax has the following differences from docopt
 3. docopt has relaxed separator semantics: `--foo <var>` may be written in argv as either `--foo var` or `--foo=var`. fish_docopt has strict semantics: argv must use the separator style specified in the usage spec. Rationale: most commands require one or the other style, and the usage spec must be able to express that.
 4. Unambiguous-prefix abbreviation is not supported (e.g. `--ver` for `--version`). Rationale: most external commands do not support this, and docopt is [likely to remove it](https://github.com/docopt/docopt/issues/104#issuecomment-17539841).
 5. Positional arguments after options are treated as values. For example: `prog [-m <msg>]` is assumed to be an option that takes a value `<msg>`. docopt instead treats this as a bare option, followed by a positional argument. Rationale: this seems more natural and more likely to be what the user expects.
-6. 'Conditions' metadata. A section "Conditions:" can be used to describe what values are allowed for variables. For example, in `cd <dir>`, there would be a condition on `<dir>` that expresses that only directory paths are allowed. docopt_fish does not itself use the conditions, but does parse them and expose them to the app. Rationale: fish needs this.
+6. Long usage specs may be broken across lines, by increasing the indent on subsequent lines. For example:
+
+          	   Usage: prog [--some-long-option <some_value>]
+          	               [--another-long-option <another_value>]
+          		      prog --help
+
+	Tabstops are currently fixed at 4.
+	Rationale: Long usage specs are common in man pages.
+7. 'Conditions' metadata. A section "Conditions:" can be used to describe what values are allowed for variables. For example, in `cd <dir>`, there would be a condition on `<dir>` that expresses that only directory paths are allowed. docopt_fish does not itself use the conditions, but does parse them and expose them to the app. Rationale: fish needs this.
