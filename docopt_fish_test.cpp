@@ -1657,6 +1657,18 @@ static void test_correctness()
                 }
             },
         },
+        /* Case 89. Ensure that Usage can be broken across lines. */
+        {   "Usage:\n"
+            "    bind [-m <MODE>]\n"
+            "         <SEQUENCE>\n",
+            {
+                {   "-m abc def", // argv
+                    "-m:abc\n"
+                    "<SEQUENCE>:def"
+                }
+            },
+        },
+
         {NULL, {}}
     }
     ;
@@ -1665,7 +1677,9 @@ static void test_correctness()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_correctness_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            if (testcase_idx == 35){
+                run_1_correctness_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            }
         }
     }
 }

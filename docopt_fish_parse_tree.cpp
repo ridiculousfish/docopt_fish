@@ -87,20 +87,95 @@ struct parse_context_t {
      // Note unowned pointer reference. A parse context is stack allocated and transient.
     const string_t *source;
     const option_list_t *shortcut_options;
+    
+    // How much of source remains to be parsed
     range_t remaining_range;
+    
+    // The initial indent for the usage_t that we are parsing. If we reach a line that is indented further than this, we treat it as a continuation of the previous line.
+    size_t initial_indent;
+    
+    // Errors we generate
     vector<error_t<string_t> > errors;
     
-    parse_context_t(const string_t &src, const range_t &usage_range, const option_list_t &shortcuts) : source(&src), shortcut_options(&shortcuts), remaining_range(usage_range)
+    parse_context_t(const string_t &src, const range_t &usage_range, const option_list_t &shortcuts) : source(&src), shortcut_options(&shortcuts), remaining_range(usage_range), initial_indent(-1)
     {}
     
-    /* Consume leading whitespace, except newlines, which are meaningful and therefore tokens in their own right */
+    /* Consume leading whitespace. Newlines are meaningful if their associated lines are indented the same or less than initial_indent. If they are indented more, we swallow those. */
     void consume_leading_whitespace() {
-        scan_while(*source, &remaining_range, char_is_space_or_tab);
+        for (;;) {
+            scan_while(*source, &remaining_range, char_is_space_or_tab);
+            const range_t saved_remaining = this->remaining_range;
+            if (scan_1_char(*source, &remaining_range, '\n').empty()) {
+                // Not a newline
+                remaining_range = saved_remaining;
+                break;
+            }
+            
+            // Got a newline. Compare our indent. If we're indented more, we swallow it and keep going!
+            size_t indent = indent_for_current_line();
+            if (indent <= initial_indent) {
+                this->remaining_range = saved_remaining;
+                break;
+            }
+        }
     }
     
     /* Returns true if there are no more next tokens */
     bool is_at_end() const {
         return remaining_range.length == 0;
+    }
+    
+    /* Rounds a value up to the next tabstop */
+    static size_t round_to_next_tabstop(size_t val) {
+        const size_t tabstop = 4;
+        return (val + tabstop) / tabstop * tabstop;
+    }
+
+    /* Returns how much the current line is indented. The tabstop is 4. If the line is empty, we return -1 (which is huge, since we're unsigned).
+       This needs to look backwards in the string, even outside our range. Consider:
+       
+           Usage: prog foo
+                  prog bar
+       
+       The indent of "prog foo" must be 7.
+    */
+    size_t indent_for_current_line() const {
+        size_t result = 0;
+        
+        // Walk backwards until we hit the string beginning, or a newline, then sum until we hit the range start
+        // We can't sum backwards because we can't compute the tabstops
+        size_t start = remaining_range.start;
+        while (start > 0 && source->at(start - 1) != '\n')
+        {
+            start -= 1;
+        }
+        for (size_t idx = start; idx < remaining_range.start; idx++)
+        {
+            char_t c = source->at(idx);
+            if (c == '\t') {
+                result = round_to_next_tabstop(result);
+            } else {
+                result += 1;
+            }
+        }
+        
+        // Walk forwards until we hit the next newline
+        for (size_t idx = remaining_range.start; idx < remaining_range.end(); idx++) {
+            char_t c = source->at(idx);
+            if (c == '\t') {
+                result = round_to_next_tabstop(result);
+            } else if (c == ' ') {
+                result += 1;
+            } else if (c == '\n') {
+                // Empty line
+                result = -1;
+                break;
+            } else {
+                // Not a whitespace character.
+                break;
+            }
+        }
+        return result;
     }
     
     bool scan(char_t c, token_t *tok = NULL) {
@@ -245,25 +320,28 @@ struct parse_context_t {
     
     usage_t *parse(usage_t *dummy UNUSED)
     {
-        // Suck up leading newlines
-        while (this->scan('\n')) {
-            ;
+        // Suck up empty lines.
+        // If we reach the end, we return an empty usage
+        while (scan('\n')) {
+            continue;
         }
         
-        // If we reach the end, we return an empty usage
+        /* Determine the initial indent before consuming whitespace. Lines that are indented less than this are considered part of the existing usage */
+        this->initial_indent = this->indent_for_current_line();
+        
+        consume_leading_whitespace();
         if (this->is_at_end()) {
             return new usage_t();
         }
         
         usage_t *result = NULL;
-        
         token_t word;
         if (! this->scan_word(&word)) {
             append_error(&this->errors, this->remaining_range.start, error_missing_program_name, "Missing program name");
         } else {
             auto_ptr<alternation_list_t> el(parse<alternation_list_t>());
             // Consume as many newlines as we can, and then try to generate the tail
-            while (this->scan('\n')) {
+            while (scan('\n')) {
                 continue;
             }
             auto_ptr<usage_t> next(parse<usage_t>());
