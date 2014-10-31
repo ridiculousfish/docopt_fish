@@ -435,36 +435,40 @@ struct parse_context_t {
             */
             const string_t &src = *this->source;
             range_t range = word.range;
-            // TODO: don't match '--'
-            if (range.length > 1 && src.at(range.start) == '-') {
+            // This second test is to avoid matching '--'
+            if (range.length > 1 && src.at(range.start) == '-' && ! (range.length == 2 && src.at(range.start + 1) == '-')) {
                 // It's an option
-                option_t opt = option_t::parse_from_string(src, &range, &this->errors);
-                if (opt.name.length > 0 && opt.separator == option_t::sep_space) {
+                option_t opt_from_usage_section = option_t::parse_from_string(src, &range, &this->errors);
+                
+                // See if we have a corresponding option in the options section
+                const option_t *opt_from_options_section = NULL;
+                for (size_t i=0; i < this->shortcut_options->size(); i++) {
+                    const option_t &test_op = this->shortcut_options->at(i);
+                    if (opt_from_usage_section.has_same_name(test_op, src)) {
+                        opt_from_options_section = &test_op;
+                        break;
+                    }
+                }
+                
+                // We may have to parse a variable
+                if (opt_from_usage_section.name.length > 0 && opt_from_usage_section.separator == option_t::sep_space) {
                     // Looks like an option without a separator. See if the next token is a variable
                     range_t next = this->peek_word().range;
                     if (next.length > 2 && src.at(next.start) == '<' && src.at(next.end() - 1) == '>') {
                         // It's a variable. See if we have a presence in options.
-                        const option_t *opt_from_options_section = NULL;
-                        for (size_t i=0; i < this->shortcut_options->size(); i++) {
-                            const option_t &test_op = this->shortcut_options->at(i);
-                            if (opt.has_same_name(test_op, src)) {
-                                opt_from_options_section = &test_op;
-                                break;
-                            }
-                        }
                         bool options_section_implies_no_value = (opt_from_options_section && opt_from_options_section->value.empty());
-                        
                         if (! options_section_implies_no_value) {
                             token_t variable;
                             bool scanned = this->scan_word(&variable);
                             assert(scanned); // Should always succeed, since we peeked at the word
                             word.range.merge(variable.range);
-                            opt.value = variable.range;
+                            opt_from_usage_section.value = variable.range;
                         }
                     }
                 }
                 
-                result = new option_clause_t(word, opt);
+                // Use the option from the Options section in preference to the one from the Usage section, since the options one has more information like the corresponding long name and description
+                result = new option_clause_t(word, opt_from_options_section ? *opt_from_options_section : opt_from_usage_section);
             }
         }
         return result;

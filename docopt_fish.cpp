@@ -871,7 +871,7 @@ void uniqueize_options(option_list_t *options, bool error_on_duplicates, error_l
                 matching_indexes.push_back(match_cursor);
                 
                 // This argument matches.
-                // x: verify agreement in the parameters, etc.
+                // TODO: verify agreement in the parameters, etc.
                 if (maybe_match.description_range.length > current_match.description_range.length) {
                     // The second one has a better description. Keep it.
                     best_match_idx = match_cursor;
@@ -1662,6 +1662,7 @@ match_state_list_t match(const simple_clause_t &node, match_state_t *state, matc
 }
 
 match_state_list_t match(const option_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+    // Matching an option like --foo
     option_list_t options_in_doc(1, node.option);
     match_state_list_t result = this->match_options(options_in_doc, state, ctx);
     if (result.empty()) {
@@ -1733,7 +1734,6 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     if (! (flags & flag_generate_empty_args)) {
         return map;
     }
-    
     
     // For each option, fill in the value in the map
     // This could be made more efficient via a single call to insert()

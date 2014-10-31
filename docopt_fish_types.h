@@ -179,6 +179,11 @@ struct option_t {
         string_t tmp;
         
         result.append(src, name.start, name.length);
+        if (! corresponding_long_name.empty()){
+            result.push_back('/');
+            result.append(src, corresponding_long_name.start, corresponding_long_name.length);
+        }
+
         if (! value.empty()) {
             result.push_back(':');
             result.push_back(' ');

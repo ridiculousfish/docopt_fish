@@ -1355,7 +1355,7 @@ static void test_correctness()
         },
         /* Case 61 */
         {   "usage: prog\n"
-            "           prog <a> <b>",
+            "       prog <a> <b>",
             {
                 {   "1 2", // argv
                     "<a>:1\n"
@@ -1369,7 +1369,7 @@ static void test_correctness()
         },
         /* Case 62 */
         {   "usage: prog <a> <b>\n"
-            "           prog",
+            "       prog",
             {
                 {   "", // argv
                     "<a>:None\n"
@@ -1499,7 +1499,7 @@ static void test_correctness()
         },
         /* Case 75 */
         {   "usage: prog good [options]\n"
-            "           prog fail [options]\n"
+            "       prog fail [options]\n"
             "\n"
             "options: --loglevel=<N>",
             {
@@ -1528,7 +1528,7 @@ static void test_correctness()
         },
         /* Case 78 */
         {   "Usage: prog --foo\n"
-            "           prog --bar\n"
+            "       prog --bar\n"
             "NOT PART OF SECTION",
             {
                 {   "--foo", // argv
@@ -1668,6 +1668,25 @@ static void test_correctness()
                 }
             },
         },
+        /* Case 90. Key uniquing was broken. */
+        {   "Usage:\n"
+            "    bind [-M <MODE> | --mode <MODE>] [-m <NEW_MODE> | --sets-mode <NEW_MODE>]\n"
+            "         [-k | --key] <SEQUENCE> <COMMAND>...\n"
+            "Options:\n"
+            "        -k, --key                              Specify a key name\n"
+            "        -M <MODE>, --mode <MODE>               Specify a bind mode\n"
+            "        -m <NEW_MODE>, --sets-mode <NEW_MODE>  Specify a bind mode",
+            {
+                {   "-k down down-or-search", // argv
+                    "--key:True\n"
+                    "<SEQUENCE>:down\n"
+                    "<COMMAND>:down-or-search\n"
+                    "--mode:False\n"
+                    "--sets-mode:False"
+                }
+            },
+        },
+
 
         {NULL, {}}
     }
@@ -1677,9 +1696,7 @@ static void test_correctness()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            if (testcase_idx == 35){
-                run_1_correctness_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
-            }
+            run_1_correctness_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
