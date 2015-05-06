@@ -47,20 +47,24 @@ static double timef()
 }
 
 
-int main(void)
+int main(int argc, char *argv[])
 {
+    size_t amt = 5000;
+    if (argc > 1) {
+        amt = strtoul(argv[1], NULL, 0);
+    }
+    
     argument_parser_t<string> parser;
     bool parsed = parser.set_doc(g_bind_usage, NULL);
     assert(parsed);
 
-    vector<string> argv;
-    argv.push_back("abc");
-    argv.push_back("forward-word");
+    vector<string> doc_argv;
+    doc_argv.push_back("abc");
+    doc_argv.push_back("forward-word");
     
     double before = timef();
-    size_t amt = 5000;
     for (size_t i=0; i < amt; i++) {
-        parser.parse_arguments(argv, flags_default, NULL, NULL);
+        parser.parse_arguments(doc_argv, flags_default, NULL, NULL);
     }
     double after = timef();
     fprintf(stderr, "msec per: %f\n", (after - before) * (1000.0) / amt);
