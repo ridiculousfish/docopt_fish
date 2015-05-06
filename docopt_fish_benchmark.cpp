@@ -58,7 +58,7 @@ int main(void)
     argv.push_back("forward-word");
     
     double before = timef();
-    size_t amt = 1000;
+    size_t amt = 5000;
     for (size_t i=0; i < amt; i++) {
         parser.parse_arguments(argv, flags_default, NULL, NULL);
     }

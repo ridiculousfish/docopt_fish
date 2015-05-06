@@ -1372,33 +1372,32 @@ void try_match(T& ptr, match_state_t *state, match_context_t *ctx, match_state_l
 // TODO: comment me
 template<typename T>
 void try_match(T& ptr, match_state_list_t *state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
-    if (ptr.get()) {
-        match_state_list_t child_result;
+    if (ptr.get() && ! state_list->empty()) {
         for (size_t i=0; i < state_list->size(); i++) {
             match_state_t *state = &state_list->at(i);
             /* If we require that this makes progress, then get the current progress so we can compare */
             size_t init_progress = npos;
+            size_t init_size = -1;
             if (require_progress) {
                 init_progress = state->progress();
+                init_size = resulting_states->size();
             }
             
-            this->match(*ptr, state, ctx, &child_result);
+            this->match(*ptr, state, ctx, resulting_states);
             
             if (require_progress) {
-                /* Keep only those results that have increased in progress */
-                size_t idx = child_result.size();
-                while (idx--) {
-                    size_t new_progress = child_result.at(idx).progress();
+                /* Keep only those results that have increased in progress. States after init_size are new. */
+                size_t idx = resulting_states->size();
+                assert(idx >= init_size);
+                while (idx-- > init_size) { // last processed idx will be init_size
+                    size_t new_progress = resulting_states->at(idx).progress();
                     assert(new_progress >= init_progress); // should never go backwards
                     if (new_progress == init_progress) {
                         // No progress was made, toss this state
-                        child_result.erase(child_result.begin() + idx);
+                        resulting_states->erase(resulting_states->begin() + idx);
                     }
                 }
             }
-            
-            state_list_destructive_append_to(&child_result, resulting_states);
-            child_result.clear();
         }
     }
 }
