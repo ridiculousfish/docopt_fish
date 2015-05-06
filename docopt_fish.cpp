@@ -1260,8 +1260,6 @@ struct match_state_t {
 
 typedef std::vector<match_state_t> match_state_list_t;
 
-static match_state_list_t no_match() { return match_state_list_t(); }
-
 struct match_context_t {
     const parse_flags_t flags;
     
@@ -1365,28 +1363,26 @@ static void state_destructive_append_to(match_state_t *state, match_state_list_t
 }
 
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_t *state, match_context_t *ctx) const {
-    match_state_list_t result;
+void try_match(T& ptr, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     if (ptr.get()) {
-        result = this->match(*ptr, state, ctx);
+        this->match(*ptr, state, ctx, resulting_states);
     }
-    return result;
 }
 
 // TODO: comment me
 template<typename T>
-match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_context_t *ctx, bool require_progress = false) const {
-    match_state_list_t total_result;
+void try_match(T& ptr, match_state_list_t *state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
     if (ptr.get()) {
-        for (size_t i=0; i < state_list.size(); i++) {
-            match_state_t *state = &state_list.at(i);
+        match_state_list_t child_result;
+        for (size_t i=0; i < state_list->size(); i++) {
+            match_state_t *state = &state_list->at(i);
             /* If we require that this makes progress, then get the current progress so we can compare */
             size_t init_progress = npos;
             if (require_progress) {
                 init_progress = state->progress();
             }
             
-            match_state_list_t child_result = this->match(*ptr, state, ctx);
+            this->match(*ptr, state, ctx, &child_result);
             
             if (require_progress) {
                 /* Keep only those results that have increased in progress */
@@ -1401,22 +1397,22 @@ match_state_list_t try_match(T& ptr, match_state_list_t &state_list, match_conte
                 }
             }
             
-            state_list_destructive_append_to(&child_result, &total_result);
+            state_list_destructive_append_to(&child_result, resulting_states);
+            child_result.clear();
         }
     }
-    return total_result;
 }
 
 /* Match overrides */
-match_state_list_t match(const usage_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const usage_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     if (! ctx->has_more_positionals(state)) {
         // todo: error handling
-        return no_match();
+        return;
     }
     
     if (node.prog_name.empty()) {
         // This is the final terminating usage. It does not match anything.
-        return no_match();
+        return;
     }
     
     /* Must duplicate the state for the next usage */
@@ -1425,53 +1421,47 @@ match_state_list_t match(const usage_t &node, match_state_t *state, match_contex
     // Program name
     ctx->acquire_next_positional(state);
     
-    match_state_list_t main_branch;
     if (node.alternation_list.get()) {
         // Match against our contents
-        main_branch = try_match(node.alternation_list, state, ctx);
+        try_match(node.alternation_list, state, ctx, resulting_states);
     } else {
         // Usage is just the program name
         // Merely append this state
-        state_destructive_append_to(state, &main_branch);
+        state_destructive_append_to(state, resulting_states);
     }
-    match_state_list_t next_branch = try_match(node.next_usage, &copied_state, ctx);
-    state_list_destructive_append_to(&next_branch, &main_branch);
-    return main_branch;
+    // Next branch
+    try_match(node.next_usage, &copied_state, ctx, resulting_states);
 }
 
-match_state_list_t match(const expression_list_t &node, match_state_t *state, match_context_t *ctx) const {
-    match_state_list_t intermed_state_list = try_match(node.expression, state, ctx);
-    return try_match(node.opt_expression_list, intermed_state_list, ctx);
+void match(const expression_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
+    match_state_list_t intermed_state_list;
+    try_match(node.expression, state, ctx, &intermed_state_list);
+    try_match(node.opt_expression_list, &intermed_state_list, ctx, resulting_states);
 }
 
-match_state_list_t match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     if (node.expression_list.get()) {
-        return match(*node.expression_list, state, ctx);
+        match(*node.expression_list, state, ctx, resulting_states);
     } else {
         // end of the list
-        return match_state_list_t(1, *state);
+        state_destructive_append_to(state, resulting_states);
     }
 }
 
-match_state_list_t match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Must duplicate the state for the second branch
     match_state_t copied_state = *state;
-    match_state_list_t result1 = try_match(node.expression_list, state, ctx);
-    match_state_list_t result2 = try_match(node.or_continuation, &copied_state, ctx);
-
-    // Combine the two lists into result1
-    state_list_destructive_append_to(&result2, &result1);
-    return result1;
+    try_match(node.expression_list, state, ctx, resulting_states);
+    try_match(node.or_continuation, &copied_state, ctx, resulting_states);
 }
 
-match_state_list_t match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx) const {
-    return try_match(node.alternation_list, state, ctx);
+void match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
+    try_match(node.alternation_list, state, ctx, resulting_states);
 }
 
-match_state_list_t match(const expression_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const expression_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
-    match_state_list_t result;
     
     // We may modify is_in_square_brackets if we represent square brackets (yes) or parens (no). In that case we need to restore the value to what it was on entry. Save off that value here.
     const bool saved_isb = ctx->is_in_square_brackets;
@@ -1486,14 +1476,14 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
                match one time, two times, three times...
                We stop when we get no more matches, which usually happens when we run out of positionals.
             */
-            
-            result = try_match(node.simple_clause, state, ctx);
+            size_t prior_state_count = resulting_states->size();
+            try_match(node.simple_clause, state, ctx, resulting_states);
+            /* Now we know that all states starting at state_count_before are newly added. If we have ellipsis, go until we run out. */
             if (has_ellipsis) {
-                match_state_list_t intermediate_states = result;
-                while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.simple_clause, intermediate_states, ctx, true /* require progress */);
-                    result.insert(result.end(), next_states.begin(), next_states.end());
-                    intermediate_states.swap(next_states);
+                while (prior_state_count < resulting_states->size()) {
+                    match_state_list_t intermediate_states(resulting_states->begin() + prior_state_count, resulting_states->end());
+                    prior_state_count = resulting_states->size();
+                    try_match(node.simple_clause, &intermediate_states, ctx, resulting_states, true /* require progress */);
                 }
             }
             break;
@@ -1506,13 +1496,13 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
                TODO: this may loop forever with states that do not consume any values, e.g. ([foo])...
             */
             ctx->is_in_square_brackets = false;
-            result = try_match(node.alternation_list, state, ctx);
+            size_t prior_state_count = resulting_states->size();
+            try_match(node.alternation_list, state, ctx, resulting_states);
             if (has_ellipsis) {
-                match_state_list_t intermediate_states = result;
-                while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx, true /* require progress */);
-                    result.insert(result.end(), next_states.begin(), next_states.end());
-                    intermediate_states.swap(next_states);
+                while (prior_state_count < resulting_states->size()) {
+                    match_state_list_t intermediate_states(resulting_states->begin() + prior_state_count, resulting_states->end());
+                    prior_state_count = resulting_states->size();
+                    try_match(node.alternation_list, &intermediate_states, ctx, resulting_states, true /* require progress */);
                 }
             }
             break;
@@ -1524,50 +1514,45 @@ match_state_list_t match(const expression_t &node, match_state_t *state, match_c
                Same algorithm as the simple clause above, except that we also append the initial state as a not-taken branch.
             */
             ctx->is_in_square_brackets = true;
-            match_state_t not_taken_branch = *state;
-            result = try_match(node.alternation_list, state, ctx);
+            resulting_states->push_back(*state); // append the not-taken-branch
+            size_t prior_state_count = resulting_states->size();
+            try_match(node.alternation_list, state, ctx, resulting_states);
             if (has_ellipsis) {
-                match_state_list_t intermediate_states = result;
-                while (! intermediate_states.empty()) {
-                    match_state_list_t next_states = try_match(node.alternation_list, intermediate_states, ctx, true /* require progress */);
-                    result.insert(result.end(), next_states.begin(), next_states.end());
-                    intermediate_states.swap(next_states);
+                while (prior_state_count < resulting_states->size()) {
+                    match_state_list_t intermediate_states(resulting_states->begin() + prior_state_count, resulting_states->end());
+                    prior_state_count = resulting_states->size();
+                    try_match(node.alternation_list, &intermediate_states, ctx, resulting_states, true /* require progress */);
                 }
             }
-            // Append the not taken branch
-            state_destructive_append_to(&not_taken_branch, &result);
             break;
         }
 
         case 3:
         {
             // This is the [options] clause. It does not have ellipsis.
-            result = this->match_options(this->shortcut_options, state, ctx);
-            if (result.empty()) {
-                // Matches are not required
+            
+            if (! this->match_options(this->shortcut_options, state, ctx, resulting_states)) {
+                // No match, but matches are not required
                 if (ctx->flags & flag_generate_suggestions) {
                     for (size_t i=0; i < this->shortcut_options.size(); i++) {
                         const option_t &opt = this->shortcut_options.at(i);
                         state->suggested_next_arguments.insert(opt.name_as_string(this->source));
                     }
                 }
-                state_destructive_append_to(state, &result);
+                state_destructive_append_to(state, resulting_states);
             }
             break;
         }
 
         default:
             assert(0 && "unknown production");
-            return no_match();
     }
     ctx->is_in_square_brackets = saved_isb;
-    return result;
 }
 
 // Match the options in the options list, updating the state
-// This returns success (i.e. a non-empty state list) if we match at least one
-match_state_list_t match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx) const {
-    match_state_list_t result;
+// This returns true if we match at least one
+bool match_options(const option_list_t &options_in_doc, match_state_t *state, const match_context_t *ctx, match_state_list_t *resulting_states) const {
     bool successful_match = false;
     bool made_suggestion = false;
     
@@ -1641,47 +1626,44 @@ match_state_list_t match_options(const option_list_t &options_in_doc, match_stat
         }
     }
 
-    
-    if (successful_match || made_suggestion) {
-        state_destructive_append_to(state, &result);
+    bool matched_something = successful_match || made_suggestion;
+    if (matched_something) {
+        state_destructive_append_to(state, resulting_states);
     }
-    return result;
+    return matched_something;
 }
 
-match_state_list_t match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     if (node.option.get()) {
-        return try_match(node.option, state, ctx);
+        return try_match(node.option, state, ctx, resulting_states);
     } else if (node.fixed.get()) {
-        return try_match(node.fixed, state, ctx);
+        return try_match(node.fixed, state, ctx, resulting_states);
     } else if (node.variable.get()) {
-        return try_match(node.variable, state, ctx);
+        return try_match(node.variable, state, ctx, resulting_states);
     } else {
         assert(0 && "Bug in docopt parser: No children of simple_clause.");
-        return match_state_list_t();
     }
 }
 
-match_state_list_t match(const option_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const option_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Matching an option like --foo
     option_list_t options_in_doc(1, node.option);
-    match_state_list_t result = this->match_options(options_in_doc, state, ctx);
-    if (result.empty()) {
+    bool matched = this->match_options(options_in_doc, state, ctx, resulting_states);
+    if (! matched) {
         // Didn't get any options. Maybe we suggest one.
         // We want to return this state if either we were in square brackets (so we don't require a match), OR we are accepting incomplete
         if (ctx->flags & flag_generate_suggestions) {
             state->suggested_next_arguments.insert(options_in_doc.back().name_as_string(this->source));
         }
         if (ctx->is_in_square_brackets || (ctx->flags & flag_match_allow_incomplete)) {
-            state_destructive_append_to(state, &result);
+            state_destructive_append_to(state, resulting_states);
         }
     }
-    return result;
 }
 
-match_state_list_t match(const fixed_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Fixed argument
     // Compare the next positional to this static argument
-    match_state_list_t result;
     const range_t &range = node.word.range;
     if (ctx->has_more_positionals(state)) {
         const positional_argument_t &positional = ctx->next_positional(state);
@@ -1691,7 +1673,7 @@ match_state_list_t match(const fixed_clause_t &node, match_state_t *state, match
             arg_t *arg = &state->option_map[name];
             arg->count += 1;
             ctx->acquire_next_positional(state);
-            state_destructive_append_to(state, &result);
+            state_destructive_append_to(state, resulting_states);
         }
     } else {
         // No more positionals. Maybe suggest one.
@@ -1700,15 +1682,13 @@ match_state_list_t match(const fixed_clause_t &node, match_state_t *state, match
         }
         // Append the state if we are allowing incomplete
         if (ctx->flags & flag_match_allow_incomplete) {
-            state_destructive_append_to(state, &result);
+            state_destructive_append_to(state, resulting_states);
         }
     }
-    return result;
 }
 
-match_state_list_t match(const variable_clause_t &node, match_state_t *state, match_context_t *ctx) const {
+void match(const variable_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Variable argument
-    match_state_list_t result;
     const range_t &range = node.word.range;
     if (ctx->has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
@@ -1716,17 +1696,16 @@ match_state_list_t match(const variable_clause_t &node, match_state_t *state, ma
         arg_t *arg = &state->option_map[name];
         const positional_argument_t &positional = ctx->acquire_next_positional(state);
         arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
-        state_destructive_append_to(state, &result);
+        state_destructive_append_to(state, resulting_states);
     } else {
         // No more positionals. Suggest one.
         if (ctx->flags & flag_generate_suggestions) {
             state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
         }
         if (ctx->flags & flag_match_allow_incomplete) {
-            state_destructive_append_to(state, &result);
+            state_destructive_append_to(state, resulting_states);
         }
     }
-    return result;
 }
 
 option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options, const range_list_t &all_variables, parse_flags_t flags) {
@@ -1776,7 +1755,8 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
     match_context_t ctx(flags, positionals, resolved_options, argv);
     match_state_t init_state;
     init_state.consumed_options.resize(resolved_options.size(), false);
-    match_state_list_t result = match(*this->parse_tree, &init_state, &ctx);
+    match_state_list_t result;
+    match(*this->parse_tree, &init_state, &ctx, &result);
 
     if (log_stuff) {
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
@@ -1958,7 +1938,8 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
     match_context_t ctx(flags, positionals, resolved_options, argv);
     match_state_t init_state;
     init_state.consumed_options.resize(resolved_options.size(), false);
-    match_state_list_t states = match(*this->parse_tree, &init_state, &ctx);
+    match_state_list_t states;
+    match(*this->parse_tree, &init_state, &ctx, &states);
     
     /* Find the state(s) with the fewest unused arguments, and then insert all of their suggestions into a list */
     string_list_t all_suggestions;
