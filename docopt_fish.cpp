@@ -1219,7 +1219,6 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
 
 /* The result of parsing argv */
 typedef std::map<string_t, base_argument_t<string_t> > option_map_t;
-typedef std::vector<option_map_t> option_map_list_t;
 
 struct match_state_t {
     // Map from option names to arguments
@@ -1337,24 +1336,6 @@ struct match_context_t {
     match_context_t(parse_flags_t f, const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : flags(f), positionals(p), resolved_options(r), argv(av), is_in_square_brackets(false)
     {}
 };
-
-static void state_list_destructive_append_to(match_state_list_t *source, match_state_list_t *dest) {
-    size_t src_count = source->size();
-    size_t dst_init_count = dest->size();
-
-    // Add a bunch of empty maps to the destination
-    dest->resize(dst_init_count + src_count);
-
-    // Swap corresponding empty maps
-    for (size_t i=0; i < src_count; i++) {
-        match_state_t &src_state = source->at(i);
-        match_state_t &dst_state = dest->at(i + dst_init_count);
-        dst_state.swap(src_state);
-    }
-
-    // Clean up source since it's now useless
-    source->clear();
-}
 
 // TODO: yuck
 static void state_destructive_append_to(match_state_t *state, match_state_list_t *dest) {
