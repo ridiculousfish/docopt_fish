@@ -59,6 +59,7 @@ int main(int argc, char *argv[])
     assert(parsed);
 
     vector<string> doc_argv;
+    doc_argv.push_back("bind");
     doc_argv.push_back("abc");
     doc_argv.push_back("forward-word");
     
