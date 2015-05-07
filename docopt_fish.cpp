@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <set>
 
-
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
@@ -1352,10 +1351,10 @@ void try_match(T& ptr, match_state_t *state, match_context_t *ctx, match_state_l
 
 // TODO: comment me
 template<typename T>
-void try_match(T& ptr, match_state_list_t *state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
-    if (ptr.get() && ! state_list->empty()) {
-        for (size_t i=0; i < state_list->size(); i++) {
-            match_state_t *state = &state_list->at(i);
+void try_match(T& ptr, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
+    if (ptr.get() && ! incoming_state_list->empty()) {
+        for (size_t i=0; i < incoming_state_list->size(); i++) {
+            match_state_t *state = &incoming_state_list->at(i);
             /* If we require that this makes progress, then get the current progress so we can compare */
             size_t init_progress = npos;
             size_t init_size = -1;
@@ -1615,11 +1614,11 @@ bool match_options(const option_list_t &options_in_doc, match_state_t *state, co
 
 void match(const simple_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     if (node.option.get()) {
-        return try_match(node.option, state, ctx, resulting_states);
+        match(*node.option, state, ctx, resulting_states);
     } else if (node.fixed.get()) {
-        return try_match(node.fixed, state, ctx, resulting_states);
+        match(*node.fixed, state, ctx, resulting_states);
     } else if (node.variable.get()) {
-        return try_match(node.variable, state, ctx, resulting_states);
+        match(*node.variable, state, ctx, resulting_states);
     } else {
         assert(0 && "Bug in docopt parser: No children of simple_clause.");
     }
@@ -1627,7 +1626,7 @@ void match(const simple_clause_t &node, match_state_t *state, match_context_t *c
 
 void match(const option_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Matching an option like --foo
-    option_list_t options_in_doc(1, node.option);
+    const option_list_t options_in_doc(1, node.option);
     bool matched = this->match_options(options_in_doc, state, ctx, resulting_states);
     if (! matched) {
         // Didn't get any options. Maybe we suggest one.
