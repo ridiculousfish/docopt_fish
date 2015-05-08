@@ -263,7 +263,10 @@ static void append_error(std::vector<error_t<string_t> > *errors, size_t where, 
 /* Internal flags */
 enum {
     /* When matching, if we run out of positionals or options, instead of failing, return a match containing a suggestion */
-    flag_generate_suggestions = 1U << 16
+    flag_generate_suggestions = 1U << 16,
+    
+    /* When matching, if we consume all positionals and options, stop searching. */
+    flag_stop_after_consuming_everything = 1U << 17
 };
 
 /* Error codes */
