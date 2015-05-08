@@ -257,71 +257,80 @@ struct parse_context_t {
         remaining_range = saved_range;
         return tok;
     }
-    
+
     /* Helpers to parse when the productions are fixed. */
-    template<typename PARENT, typename CHILD1, typename CHILD2>
-    PARENT *parse_2() {
-        PARENT *result = NULL;
-        auto_ptr<CHILD1> child1(parse<CHILD1>());
-        if (child1.get()) {
-            auto_ptr<CHILD2> child2(parse<CHILD2>());
-            if (child2.get()) {
-                result = new PARENT(child1, child2);
-            }
+    
+    template<typename PARENT, typename REQ_CHILD, typename OPT_CHILD>
+    bool parse_required_then_optional(auto_ptr<PARENT> *result) {
+        auto_ptr<REQ_CHILD> child1;
+        if (! parse(&child1)) {
+            return false;
         }
-        return result;
+        if (child1.get() == NULL) {
+            return true;
+        }
+        
+        auto_ptr<OPT_CHILD> child2;
+        if (! parse(&child2)) {
+            return false;
+        }
+        result->reset(new PARENT(child1, child2));
+        return true;
     }
 
     template<typename PARENT, typename CHILD>
-    PARENT *parse_1() {
-        PARENT *result = NULL;
-        auto_ptr<CHILD> child(parse<CHILD>());
-        if (child.get()) {
-            result = new PARENT(child);
+    bool parse_1_disallowing_null(auto_ptr<PARENT> *result) {
+        bool success = false;
+        auto_ptr<CHILD> child;
+        if (parse(&child)) {
+            // This variant requires that successful parses return non-null
+            assert(child.get() != NULL);
+            result->reset(new PARENT(child));
+            success = true;
         }
         return result;
     }
-
+    
+    // Like parse1, except if the child comes back NULL we provide NULL too
     template<typename PARENT, typename CHILD>
-    PARENT *parse_1_or_empty() {
-        PARENT *result = NULL;
-        auto_ptr<CHILD> child(parse<CHILD>());
-        if (child.get()) {
-            result = new PARENT(child);
-        } else {
-            result = new PARENT();
+    bool parse_1_or_empty(auto_ptr<PARENT> *result) {
+        auto_ptr<CHILD> child;
+        if (! parse(&child)) {
+            return false;
         }
-        return result;
+        if (child.get()) {
+            result->reset(new PARENT(child));
+        }
+        return true;
     }
     
     #pragma mark Parse functions
     
-    template<typename T>
-    T *parse()
-    {
-        T* dummy = NULL;
-        return this->parse(dummy);
+    bool parse(auto_ptr<alternation_list_t> *result) {
+        return parse_required_then_optional<alternation_list_t, expression_list_t, or_continuation_t>(result);
     }
     
-    alternation_list_t *parse(alternation_list_t *dummy UNUSED)
+    bool parse(auto_ptr<expression_list_t> *result)
     {
-        return parse_2<alternation_list_t, expression_list_t, or_continuation_t>();
+        return parse_required_then_optional<expression_list_t, expression_t, opt_expression_list_t>(result);
     }
     
-    expression_list_t *parse(expression_list_t *dummy UNUSED)
+    bool parse(auto_ptr<opt_expression_list_t> *result)
     {
-        return parse_2<expression_list_t, expression_t, opt_expression_list_t>();
+        // Only return if we are able to parse a non-null expression_list
+        auto_ptr<expression_list_t> child;
+        if (! parse(&child)) {
+            return false;
+        }
+        if (child.get()) {
+            result->reset(new opt_expression_list_t(child));
+        }
+        return true;
     }
     
-    opt_expression_list_t *parse(opt_expression_list_t *dummy UNUSED)
-    {
-        return parse_1_or_empty<opt_expression_list_t, expression_list_t>();
-    }
-    
-    usage_t *parse(usage_t *dummy UNUSED)
+    bool parse(auto_ptr<usage_t> *result, bool first)
     {
         // Suck up empty lines.
-        // If we reach the end, we return an empty usage
         while (scan('\n')) {
             continue;
         }
@@ -330,77 +339,81 @@ struct parse_context_t {
         this->initial_indent = this->indent_for_current_line();
         
         consume_leading_whitespace();
-        if (this->is_at_end()) {
-            return new usage_t();
+        if (this->is_at_end() && ! first) {
+            return true;
         }
         
-        usage_t *result = NULL;
+        bool success = false;
         token_t word;
         if (! this->scan_word(&word)) {
             append_error(&this->errors, this->remaining_range.start, error_missing_program_name, "Missing program name");
         } else {
-            auto_ptr<alternation_list_t> el(parse<alternation_list_t>());
+            auto_ptr<alternation_list_t> el;
+            bool parsed_el = parse(&el);
             // Consume as many newlines as we can, and then try to generate the tail
             while (scan('\n')) {
                 continue;
             }
-            auto_ptr<usage_t> next(parse<usage_t>());
-            
-            if (el.get()) {
-                result = new usage_t(word, el, next);
-            } else {
-                result = new usage_t(word, next);
+            auto_ptr<usage_t> next;
+            if (parse(&next, false /* not initial */)) {
+                if (parsed_el) {
+                    result->reset(new usage_t(word, el, next));
+                } else {
+                    result->reset(new usage_t(word, next));
+                }
+                success = true;
             }
         }
-        return result;
+        return success;
     }
 
-    or_continuation_t *parse(or_continuation_t *dummy UNUSED) {
-        or_continuation_t *result = NULL;
+    bool parse(auto_ptr<or_continuation_t> *result) {
         token_t bar;
         if (this->scan('|', &bar)) {
-            auto_ptr<alternation_list_t> al(parse<alternation_list_t>());
-            if (al.get()) {
-                result = new or_continuation_t(bar, al);
+            auto_ptr<alternation_list_t> al;
+            if (parse(&al) && al.get()) {
+                result->reset(new or_continuation_t(bar, al));
             } else {
                 append_error(&this->errors, bar.range.start, error_trailing_vertical_bar, "Extra vertical bar");
+                return false;
             }
         }
-        if (! result) {
-            result = new or_continuation_t();
-        }
-        return result;
+        // result may be left as null if there's no bar
+        return true;
     }
 
-    opt_ellipsis_t *parse(opt_ellipsis_t *dummy UNUSED) {
+    bool parse(auto_ptr<opt_ellipsis_t> *result) {
         token_t ellipsis;
-        this->scan("...", &ellipsis);
-        return new opt_ellipsis_t(ellipsis);
+        if (this->scan("...", &ellipsis)) {
+            result->reset(new opt_ellipsis_t(ellipsis));
+        }
+        return true; // can't fail
     }
     
-    options_shortcut_t *parse(options_shortcut_t *dummy UNUSED) {
-        return new options_shortcut_t();
+    bool parse(auto_ptr<options_shortcut_t> *result) {
+        result->reset(new options_shortcut_t());
+        return true; // can't fail
     }
     
-    simple_clause_t *parse(simple_clause_t *dummy UNUSED) {
+    bool parse(auto_ptr<simple_clause_t> *result) {
         token_t word = this->peek_word();
         if (word.range.empty()) {
-            return NULL;
+            // Nothing remaining to parse
+            return true;
         }
         
         char_t c = this->source->at(word.range.start);
         if (c == '<') {
-            return parse_1<simple_clause_t, variable_clause_t>();
+            return parse_1_disallowing_null<simple_clause_t, variable_clause_t>(result);
         } else if (c == '-' && word.range.length > 1) {
             // A naked '-', is to be treated as a fixed value
-            return parse_1<simple_clause_t, option_clause_t>();
+            return parse_1_disallowing_null<simple_clause_t, option_clause_t>(result);
         } else {
-            return parse_1<simple_clause_t, fixed_clause_t>();
+            return parse_1_disallowing_null<simple_clause_t, fixed_clause_t>(result);
         }
     }
     
-    option_clause_t *parse(option_clause_t *dummy UNUSED) {
-        option_clause_t *result = NULL;
+    bool parse(auto_ptr<option_clause_t> *result) {
         token_t word;
         if (this->scan_word(&word)) {
             /* Hack to support specifying parameter names inline.
@@ -468,57 +481,60 @@ struct parse_context_t {
                 }
                 
                 // Use the option from the Options section in preference to the one from the Usage section, since the options one has more information like the corresponding long name and description
-                result = new option_clause_t(word, opt_from_options_section ? *opt_from_options_section : opt_from_usage_section);
+                result->reset(new option_clause_t(word, opt_from_options_section ? *opt_from_options_section : opt_from_usage_section));
             }
         }
-        return result;
+        return true;
     }
     
-    fixed_clause_t *parse(fixed_clause_t *dummy UNUSED) {
-        fixed_clause_t *result = NULL;
+    bool parse(auto_ptr<fixed_clause_t> *result) {
         token_t word;
         if (this->scan_word(&word)) {
             // TODO: handle invalid commands like foo<bar>
-            result = new fixed_clause_t(word);
+            result->reset(new fixed_clause_t(word));
         }
-        return result;
+        return true;
     }
     
-    variable_clause_t *parse(variable_clause_t *dummy UNUSED) {
-        variable_clause_t *result = NULL;
+    bool parse(auto_ptr<variable_clause_t> *result) {
         token_t word;
         if (this->scan_word(&word)) {
             // TODO: handle invalid variables like foo<bar>
-            result = new variable_clause_t(word);
+            result->reset(new variable_clause_t(word));
         }
-        return result;
+        return true;
     }
 
     
-    expression_t *parse(expression_t *dummy UNUSED) {
-        expression_t *result = NULL;
+    bool parse(auto_ptr<expression_t> *result) {
         if (this->is_at_end()) {
-            return NULL;
+            return true;
         }
         
+        bool success = true;
         token_t token;
         // Note that options must come before trying to parse it as a list, because "[options]" itself looks like a list
         if (this->scan("[options]", &token)) {
-            auto_ptr<options_shortcut_t> shortcut(parse<options_shortcut_t>());
-            if (shortcut.get()) {
-                result = new expression_t(shortcut);
+            auto_ptr<options_shortcut_t> shortcut;
+            if (! parse(&shortcut)) {
+                success = false;
+            } else {
+                result->reset(new expression_t(shortcut));
             }
         } else if (this->scan('(', &token) || this->scan('[', &token)) {
-            auto_ptr<alternation_list_t> contents(parse<alternation_list_t>());
-            if (contents.get()) {
+            auto_ptr<alternation_list_t> contents;
+            if (! parse(&contents)) {
+                success = false;
+            } else {
                 char_t c = this->source->at(token.range.start);
                 assert(c == char_t('(') || c == char_t('['));
                 bool is_paren = (c == char_t('('));
                 token_t close_token;
                 if (this->scan(char_t(is_paren ? ')' : ']'), &close_token)) {
-                    auto_ptr<opt_ellipsis_t> ellipsis(parse<opt_ellipsis_t>());
-                    assert(ellipsis.get() != NULL); // should never fail
-                    result = new expression_t(token, is_paren, contents, close_token, ellipsis);
+                    auto_ptr<opt_ellipsis_t> ellipsis;
+                    bool p = parse(&ellipsis);
+                    assert(p); // should never fail
+                    result->reset(new expression_t(token, is_paren, contents, close_token, ellipsis));
                 } else {
                     // No closing bracket or paren
                     if (is_paren) {
@@ -526,24 +542,20 @@ struct parse_context_t {
                     } else {
                         append_error(&this->errors, token.range.start, error_missing_close_bracket, "Missing ']' to match opening '['");
                     }
+                    success = false;
                 }
             }
         } else if (this->scan("...", &token)) {
             // Indicates leading ellipsis
             // TODO: generate error
+            success = false;
         } else if (this->peek("|")) {
             // End of an alternation list
-            result = NULL;
         } else {
-            auto_ptr<simple_clause_t> simple_clause(parse<simple_clause_t>());
-            if (simple_clause.get()) {
-                auto_ptr<opt_ellipsis_t> ellipsis(parse<opt_ellipsis_t>());
-                assert(ellipsis.get() != NULL); // should never fail
-                result = new expression_t(simple_clause, ellipsis);
-            }
+            success = parse_required_then_optional<expression_t, simple_clause_t, opt_ellipsis_t>(result);
         }
         
-        return result;
+        return success;
     }
 };
 
@@ -551,13 +563,20 @@ template<typename string_t>
 usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors)
 {
     parse_context_t<string_t> ctx(src, src_range, shortcut_options);
-    usage_t *result = ctx.template parse<usage_t>();
+    auto_ptr<usage_t> result;
+    bool parsed = ctx.template parse(&result, true /* initial */);
+    
+    // If we get NULL back, it should return false
+    assert(! (result.get() == NULL && parsed));
     // If we get NULL back, we should always have an error
-    assert(! (result == NULL && ctx.errors.empty()));
+    assert(! (result.get() == NULL && ctx.errors.empty()));
+    
     if (out_errors) {
         out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
     }
-    return result;
+    
+    usage_t *usage = result.release();
+    return usage;
 }
 
 // Force template instantiation

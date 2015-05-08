@@ -1459,8 +1459,14 @@ void match(const usage_t &node, match_state_t *state, match_context_t *ctx, matc
 
 void match(const expression_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     match_state_list_t intermed_state_list;
-    try_match(node.expression, state, ctx, &intermed_state_list);
-    try_match(node.opt_expression_list, &intermed_state_list, ctx, resulting_states);
+    if (node.opt_expression_list.get() == NULL) {
+        // This is the last expression
+        try_match(node.expression, state, ctx, resulting_states);
+    } else {
+        // More to come. We must use an intermediates state list.
+        try_match(node.expression, state, ctx, &intermed_state_list);
+        try_match(node.opt_expression_list, &intermed_state_list, ctx, resulting_states);
+    }
 }
 
 void match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
