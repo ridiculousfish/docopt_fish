@@ -1473,10 +1473,15 @@ void match(const opt_expression_list_t &node, match_state_t *state, match_contex
 }
 
 void match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
-    // Must duplicate the state for the second branch
-    match_state_t copied_state = *state;
-    try_match(node.expression_list, state, ctx, resulting_states);
-    try_match(node.or_continuation, &copied_state, ctx, resulting_states);
+    if (node.or_continuation.get() == NULL) {
+        // No second branch, no need to copy the state
+        try_match(node.expression_list, state, ctx, resulting_states);
+    } else {
+        // Must duplicate the state for the second branch
+        match_state_t copied_state = *state;
+        try_match(node.expression_list, state, ctx, resulting_states);
+        try_match(node.or_continuation, &copied_state, ctx, resulting_states);
+    }
 }
 
 void match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
