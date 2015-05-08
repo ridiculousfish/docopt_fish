@@ -39,4 +39,9 @@ fish_docopt usage specification syntax has the following differences from docopt
 
 	Tabstops are currently fixed at 4.
 	Rationale: Long usage specs are common in man pages.
-7. 'Conditions' metadata. A section "Conditions:" can be used to describe what values are allowed for variables. For example, in `cd <dir>`, there would be a condition on `<dir>` that expresses that only directory paths are allowed. docopt_fish does not itself use the conditions, but does parse them and expose them to the app. Rationale: fish needs this.
+7. Square brackets do apply to the contained sequence, not individual children. For example:
+
+          	   Usage: prog [--option1 --option2]
+			   
+	docopt interprets this as making --option1 and --option2 both independently optional. fish_docopt interprets this as requiring --option1 to be followed by --option2. Rationale: this is more consistent, and it is hard to find commands that depend on the docopt behavior. Independently optional commands should be specified with independent brackets.
+8. 'Conditions' metadata. A section "Conditions:" can be used to describe what values are allowed for variables. For example, in `cd <dir>`, there would be a condition on `<dir>` that expresses that only directory paths are allowed. docopt_fish does not itself use the conditions, but does parse them and expose them to the app. Rationale: fish needs this.

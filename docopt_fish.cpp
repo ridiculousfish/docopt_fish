@@ -1287,9 +1287,6 @@ public:
     const resolved_option_list_t &resolved_options;
     const string_list_t &argv;
     
-    /* Hackish - records whether we are within square brackets. This is because a sequence of options becomes non-required when in square brackets. */
-    bool is_in_square_brackets;
-    
     bool has_more_positionals(const match_state_t *state) const {
         assert(state->next_positional_index <= this->positionals.size());
         return state->next_positional_index < this->positionals.size();
@@ -1353,7 +1350,7 @@ public:
         return positionals.at(state->next_positional_index++);
     }
 
-    match_context_t(parse_flags_t f, const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : flags(f), positionals(p), resolved_options(r), argv(av), is_in_square_brackets(false)
+    match_context_t(parse_flags_t f, const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : flags(f), positionals(p), resolved_options(r), argv(av)
     {}
     
     /* If we want to stop a search and this state has consumed everything, stop the search */
@@ -1490,9 +1487,6 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
     
-    // We may modify is_in_square_brackets if we represent square brackets (yes) or parens (no). In that case we need to restore the value to what it was on entry. Save off that value here.
-    const bool saved_isb = ctx->is_in_square_brackets;
-
     switch (node.production) {
         case 0:
         {
@@ -1522,7 +1516,6 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
                Same algorithm as the simple clause above.
                TODO: this may loop forever with states that do not consume any values, e.g. ([foo])...
             */
-            ctx->is_in_square_brackets = false;
             size_t prior_state_count = resulting_states->size();
             try_match(node.alternation_list, state, ctx, resulting_states);
             if (has_ellipsis) {
@@ -1540,7 +1533,6 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
             /* This is a square-bracketed clause which may have ellipsis, like [foo]...
                Same algorithm as the simple clause above, except that we also append the initial state as a not-taken branch.
             */
-            ctx->is_in_square_brackets = true;
             state_append_to(state, resulting_states);  // append the not-taken-branch
             size_t prior_state_count = resulting_states->size();
             try_match(node.alternation_list, state, ctx, resulting_states);
@@ -1574,7 +1566,6 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
         default:
             assert(0 && "unknown production");
     }
-    ctx->is_in_square_brackets = saved_isb;
 }
 
 // Match the options in the options list, updating the state
@@ -1683,7 +1674,7 @@ void match(const option_clause_t &node, match_state_t *state, match_context_t *c
         if (ctx->flags & flag_generate_suggestions) {
             state->suggested_next_arguments.insert(options_in_doc.back().name_as_string(this->source));
         }
-        if (ctx->is_in_square_brackets || (ctx->flags & flag_match_allow_incomplete)) {
+        if (ctx->flags & flag_match_allow_incomplete) {
             state_destructive_append_to(state, resulting_states);
         }
     }

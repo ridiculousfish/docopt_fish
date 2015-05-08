@@ -1091,7 +1091,7 @@ static void test_correctness()
             },
         },
         /* Case 39 */
-        {   "usage: prog [-o -p -r]",
+        {   "usage: prog [-o] [-p] [-r]",
             {
                 {   "-op", // argv
                     "-o:True\n"
@@ -1121,7 +1121,7 @@ static void test_correctness()
             },
         },
         /* Case 42 */
-        {   "Usage: prog [-v -v]",
+        {   "Usage: prog [-v] [-v]",
             {
                 {   "", // argv
                     "-v:%0"
@@ -1317,7 +1317,7 @@ static void test_correctness()
             },
         },
         /* Case 57 */
-        {   "usage: prog [-o -p -r]",
+        {   "usage: prog [-o] [-p] [-r]",
             {
                 {   "-op", // argv
                     "-o:True\n"
