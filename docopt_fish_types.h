@@ -4,6 +4,7 @@
 #include <vector>
 #include <assert.h>
 #include <cstring>
+#include <stdio.h>
 
 /* Hide open and close brackets to avoid an annoying leading indent inside our class */
 #define OPEN_DOCOPT_IMPL {

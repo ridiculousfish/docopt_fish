@@ -2,9 +2,11 @@
 #include "docopt_fish_types.h"
 
 #include <sstream>
+#include <algorithm>
 #include <assert.h>
 #include <stdio.h>
-#include <algorithm>
+#include <stdarg.h>
+#include <stdint.h>
 
 using namespace docopt_fish;
 using namespace std;

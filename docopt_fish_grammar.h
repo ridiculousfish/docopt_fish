@@ -6,6 +6,7 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <stdint.h>
 
 namespace docopt_fish
 {
