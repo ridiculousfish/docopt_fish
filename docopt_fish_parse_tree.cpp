@@ -288,7 +288,7 @@ struct parse_context_t {
             result->reset(new PARENT(child));
             success = true;
         }
-        return result;
+        return success;
     }
     
     // Like parse1, except if the child comes back NULL we provide NULL too
