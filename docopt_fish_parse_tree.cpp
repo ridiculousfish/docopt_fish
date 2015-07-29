@@ -9,6 +9,7 @@
 #include <numeric>
 #include <algorithm>
 #include <set>
+#include <vector>
 
 using std::vector;
 using std::string;
@@ -35,9 +36,7 @@ OPEN_DOCOPT_IMPL
 
 struct alternation_list;
 struct expression_list_t;
-struct opt_expression_list_t;
 struct expression_t;
-struct or_continuation_t;
 struct simple_clause_t;
 struct opt_ellipsis_t;
 
@@ -307,28 +306,47 @@ struct parse_context_t {
     #pragma mark Parse functions
     
     bool parse(auto_ptr<alternation_list_t> *result) {
-        return parse_required_then_optional<alternation_list_t, expression_list_t, or_continuation_t>(result);
+        std::vector<expression_list_t> alternations;
+        bool first = true;
+        for (;;) {
+            // Scan a vert bar if we're not first
+            token_t bar;
+            if (! first && ! this->scan('|', &bar)) {
+                break;
+            }
+            auto_ptr<expression_list_t> tmp;
+            if (! this->parse(&tmp)) {
+                return false;
+            }
+            if (! tmp.get()) {
+                break;
+            }
+            alternations.push_back(*tmp);
+            first = false;
+        }
+        result->reset(new alternation_list_t());
+        (*result)->alternations.swap(alternations);
+        return true;
     }
     
     bool parse(auto_ptr<expression_list_t> *result)
     {
-        return parse_required_then_optional<expression_list_t, expression_t, opt_expression_list_t>(result);
+        auto_ptr<expression_list_t> expression_list(new expression_list_t());
+        for (;;) {
+            auto_ptr<expression_t> tmp;
+            if (! this->parse(&tmp)) {
+                return false;
+            }
+            if (! tmp.get()) {
+                break;
+            }
+            expression_list->expressions.push_back(*tmp);
+        }
+        *result = expression_list;
+        return result;
     }
     
-    bool parse(auto_ptr<opt_expression_list_t> *result)
-    {
-        // Only return if we are able to parse a non-null expression_list
-        auto_ptr<expression_list_t> child;
-        if (! parse(&child)) {
-            return false;
-        }
-        if (child.get()) {
-            result->reset(new opt_expression_list_t(child));
-        }
-        return true;
-    }
-    
-    bool parse(auto_ptr<usage_t> *result, bool first)
+    bool parse(auto_ptr<usage_t> *result)
     {
         // Suck up empty lines.
         while (scan('\n')) {
@@ -339,7 +357,7 @@ struct parse_context_t {
         this->initial_indent = this->indent_for_current_line();
         
         consume_leading_whitespace();
-        if (this->is_at_end() && ! first) {
+        if (this->is_at_end()) {
             return true;
         }
         
@@ -349,37 +367,39 @@ struct parse_context_t {
             append_error(&this->errors, this->remaining_range.start, error_missing_program_name, "Missing program name");
         } else {
             auto_ptr<alternation_list_t> el;
-            bool parsed_el = parse(&el);
-            // Consume as many newlines as we can, and then try to generate the tail
-            while (scan('\n')) {
-                continue;
-            }
-            auto_ptr<usage_t> next;
-            if (parse(&next, false /* not initial */)) {
-                if (parsed_el) {
-                    result->reset(new usage_t(word, el, next));
-                } else {
-                    result->reset(new usage_t(word, next));
+            if (parse(&el)) {
+                if (el.get()) {
+                    result->reset(new usage_t(word, *el));
                 }
-                success = true;
             }
         }
         return success;
     }
-
-    bool parse(auto_ptr<or_continuation_t> *result) {
-        token_t bar;
-        if (this->scan('|', &bar)) {
-            auto_ptr<alternation_list_t> al;
-            if (parse(&al) && al.get()) {
-                result->reset(new or_continuation_t(bar, al));
-            } else {
-                append_error(&this->errors, bar.range.start, error_trailing_vertical_bar, "Extra vertical bar");
-                return false;
+    
+    bool parse(auto_ptr<usages_t> *result)
+    {
+        vector<usage_t> usages;
+        bool success = true;
+        for (;;) {
+            auto_ptr<usage_t> tmp;
+            if (! this->parse(&tmp)) {
+                success = false;
+                break;
             }
+            if (! tmp.get()) {
+                break;
+            }
+            usages.push_back(*tmp);
         }
-        // result may be left as null if there's no bar
-        return true;
+        if (success && usages.empty()) {
+            append_error(&this->errors, this->remaining_range.start, error_missing_program_name, "Missing program name");
+            success = false;
+        }
+        if (success) {
+            result->reset(new usages_t());
+            result->get()->usages.swap(usages);
+        }
+        return success;
     }
 
     bool parse(auto_ptr<opt_ellipsis_t> *result) {
@@ -560,11 +580,11 @@ struct parse_context_t {
 };
 
 template<typename string_t>
-usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors)
+usages_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors)
 {
     parse_context_t<string_t> ctx(src, src_range, shortcut_options);
-    auto_ptr<usage_t> result;
-    bool parsed = ctx.template parse(&result, true /* initial */);
+    auto_ptr<usages_t> result;
+    bool parsed = ctx.template parse(&result);
     
     // If we get NULL back, it should return false
     assert(! (result.get() == NULL && parsed));
@@ -575,13 +595,13 @@ usage_t *parse_usage(const string_t &src, const range_t &src_range, const option
         out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
     }
     
-    usage_t *usage = result.release();
-    return usage;
+    usages_t *usages = result.release();
+    return usages;
 }
 
 // Force template instantiation
-template usage_t *parse_usage<string>(const string &, const range_t &, const option_list_t &, vector<error_t<string> > *);
-template usage_t *parse_usage<wstring>(const wstring &, const range_t &, const option_list_t &shortcut_options, vector<error_t<wstring> > *);
+template usages_t *parse_usage<string>(const string &, const range_t &, const option_list_t &, vector<error_t<string> > *);
+template usages_t *parse_usage<wstring>(const wstring &, const range_t &, const option_list_t &shortcut_options, vector<error_t<wstring> > *);
 
 
 CLOSE_DOCOPT_IMPL /* namespace */

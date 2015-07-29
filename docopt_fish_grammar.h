@@ -9,26 +9,20 @@
 #include <stdint.h>
 
 namespace docopt_fish
-{
+OPEN_DOCOPT_IMPL
 
-using std::auto_ptr;
 using std::vector;
+using std::auto_ptr;
 
 /* Usage grammar:
  
- usage = <empty> |
-         WORD usage |
-         WORD alternation_list usage
+ usages = [usage]
  
- alternation_list = expression_list or_continuation
+ usage = WORD alternation_list
+
+ alternation_list = [expression_list] # logical ORs of values
  
- or_continuation = <empty> |
-                   VERT_BAR alternation_list
- 
- expression_list = expression opt_expression_list
- 
- opt_expression_list = <empty> |
-                       expression_list
+ expression_list = [expression] # concatenation
  
  expression = simple_clause opt_ellipsis |
               OPEN_PAREN alternation_list CLOSE_PAREN opt_ellipsis |
@@ -56,9 +50,7 @@ using std::vector;
 
 struct alternation_list;
 struct expression_list_t;
-struct opt_expression_list_t;
 struct expression_t;
-struct or_continuation_t;
 struct simple_clause_t;
 struct opt_ellipsis_t;
 struct option_clause_t;
@@ -79,17 +71,18 @@ struct base_t {
 };
 
 struct expression_list_t : public base_t {
-    auto_ptr<expression_t> expression;
-    auto_ptr<opt_expression_list_t> opt_expression_list;
+    vector<expression_t> expressions;
     
     // expression_list = expression opt_expression_list
-    expression_list_t(auto_ptr<expression_t> c1, auto_ptr<opt_expression_list_t> c2) : expression(c1), opt_expression_list(c2) {}
+    expression_list_t() {}
+    expression_list_t(const vector<expression_t> &v) : expressions(v) {}
     std::string name() const { return "expression_list"; }
     
     template<typename T>
     void visit_children(T *v) const {
-        v->visit(expression);
-        v->visit(opt_expression_list);
+        for (size_t i=0; i < expressions.size(); i++) {
+            v->visit(expressions.at(i));
+        }
     }
     
     template<typename T>
@@ -97,49 +90,30 @@ struct expression_list_t : public base_t {
 };
 
 struct alternation_list_t : public base_t {
-    auto_ptr<expression_list_t> expression_list;
-    auto_ptr<or_continuation_t> or_continuation;
+    vector<expression_list_t> alternations;
     
-    alternation_list_t(auto_ptr<expression_list_t> el, auto_ptr<or_continuation_t> o) : expression_list(el), or_continuation(o) {}
+    alternation_list_t() {}
+    alternation_list_t(vector<expression_list_t> v) : alternations(v) {}
     std::string name() const { return "alternation_list"; }
     
     template<typename T>
     void visit_children(T *v) const {
-        v->visit(expression_list);
-        v->visit(or_continuation);
+        for (size_t i=0; i < alternations.size(); i++) {
+            v->visit(alternations.at(i));
+        }
     }
 
-};
-
-struct opt_expression_list_t : public base_t {
-    auto_ptr<expression_list_t> expression_list;
-    
-    // opt_expression_list = empty
-    opt_expression_list_t() {}
-    
-    // opt_expression_list = expression_list
-    opt_expression_list_t(auto_ptr<expression_list_t> c) : base_t(1), expression_list(c) {}
-    std::string name() const { return "opt_expression_list"; }
-    
-    template<typename T>
-    void visit_children(T *v) const {
-        v->visit(expression_list);
-    }
 };
 
 struct usage_t : public base_t {
     token_t prog_name;
-    auto_ptr<alternation_list_t> alternation_list;
-    auto_ptr<usage_t> next_usage;
+    alternation_list_t alternation_list;
     
     // usage = <empty>
     usage_t() : base_t(0) {}
 
-    // usage = word usage
-    usage_t(const token_t &name, auto_ptr<usage_t> next) : base_t(1), prog_name(name), next_usage(next) {}
-    
     // usage = word alternation_list usage
-    usage_t(token_t t, auto_ptr<alternation_list_t> c, auto_ptr<usage_t> next) : base_t(2), prog_name(t), alternation_list(c), next_usage(next) {}
+    usage_t(token_t t, const alternation_list_t &v) : base_t(2), prog_name(t), alternation_list(v) {}
     
     std::string name() const { return "usage"; }
     
@@ -147,26 +121,19 @@ struct usage_t : public base_t {
     void visit_children(T *v) const {
         v->visit(prog_name);
         v->visit(alternation_list);
-        v->visit(next_usage);
     }
 };
 
-struct or_continuation_t : public base_t {
-    token_t vertical_bar;
-    auto_ptr<alternation_list_t> alternation_list;
+struct usages_t : public base_t {
+    vector<usage_t> usages;
     
-    // or_continuation = <empty>
-    or_continuation_t() {}
-    
-    // or_continuation =  VERT_BAR or_clause
-    or_continuation_t(token_t b, auto_ptr<alternation_list_t> al) : base_t(1), vertical_bar(b), alternation_list(al) {}
-    
-    std::string name() const { return "or_continuation"; }
+    std::string name() const { return "usages"; }
     
     template<typename T>
     void visit_children(T *v) const {
-        v->visit(vertical_bar);
-        v->visit(alternation_list);
+        for (size_t i=0; i < this->usages.size(); i++) {
+            v->visit(this->usages.at(i));
+        }
     }
 };
 
@@ -193,14 +160,23 @@ struct options_shortcut_t : public base_t {
     void visit_children(T *v UNUSED) const {}
 };
 
+template<typename P>
+std::auto_ptr<P> auto_copy(const std::auto_ptr<P> &rhs) {
+    if (! rhs.get()) {
+        return std::auto_ptr<P>(NULL);
+    } else {
+        return std::auto_ptr<P>(new P(*rhs));
+    }
+}
+
 struct simple_clause_t : public base_t {
-    auto_ptr<option_clause_t> option;
-    auto_ptr<fixed_clause_t> fixed;
-    auto_ptr<variable_clause_t> variable;
+    std::auto_ptr<option_clause_t> option;
+    std::auto_ptr<fixed_clause_t> fixed;
+    std::auto_ptr<variable_clause_t> variable;
     
-    simple_clause_t(auto_ptr<option_clause_t> &o) : base_t(0), option(o) {}
-    simple_clause_t(auto_ptr<fixed_clause_t> &f) : base_t(1), fixed(f) {}
-    simple_clause_t(auto_ptr<variable_clause_t> &v) : base_t(2), variable(v) {}
+    simple_clause_t(std::auto_ptr<option_clause_t> &o) : base_t(0), option(o) {}
+    simple_clause_t(std::auto_ptr<fixed_clause_t> &f) : base_t(1), fixed(f) {}
+    simple_clause_t(std::auto_ptr<variable_clause_t> &v) : base_t(2), variable(v) {}
     
     std::string name() const { return "simple_clause"; }
     template<typename T>
@@ -210,33 +186,40 @@ struct simple_clause_t : public base_t {
         v->visit(variable);
     }
     
+    simple_clause_t(const simple_clause_t &rhs) : option(auto_copy(rhs.option)), fixed(auto_copy(rhs.fixed)), variable(auto_copy(rhs.variable)) {
+    }
+    
 };
 
 struct expression_t : public base_t {
     // production 0
-    auto_ptr<simple_clause_t> simple_clause;
+    std::auto_ptr<simple_clause_t> simple_clause;
     
     // Collapsed for productions 1 and 2
     token_t open_token;
-    auto_ptr<alternation_list_t> alternation_list;
+    std::auto_ptr<alternation_list_t> alternation_list;
     token_t close_token;
     
     // Collapsed for all
-    auto_ptr<opt_ellipsis_t> opt_ellipsis;
+    std::auto_ptr<opt_ellipsis_t> opt_ellipsis;
     
-    auto_ptr<options_shortcut_t> options_shortcut;
+    std::auto_ptr<options_shortcut_t> options_shortcut;
+    
+    expression_t(const expression_t &rhs) : simple_clause(auto_copy(rhs.simple_clause)), open_token(rhs.open_token), alternation_list(auto_copy(rhs.alternation_list)), close_token(rhs.close_token), opt_ellipsis(auto_copy(rhs.opt_ellipsis)), options_shortcut(auto_copy(rhs.options_shortcut)) {
+        
+    }
     
     //expression = simple_clause
-    expression_t(auto_ptr<simple_clause_t> c, auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
+    expression_t(std::auto_ptr<simple_clause_t> c, std::auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
     
     //expression = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
     //expression = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
-    expression_t(token_t a, bool is_paren, auto_ptr<alternation_list_t> el, token_t b, auto_ptr<opt_ellipsis_t> e)
+    expression_t(token_t a, bool is_paren, std::auto_ptr<alternation_list_t> el, token_t b, std::auto_ptr<opt_ellipsis_t> e)
     : base_t(is_paren ? 1  : 2), open_token(a), alternation_list(el), close_token(b), opt_ellipsis(e)
     {}
     
     //expression = options_shortcut
-    expression_t(auto_ptr<options_shortcut_t> os) : base_t(3), options_shortcut(os)
+    expression_t(std::auto_ptr<options_shortcut_t> os) : base_t(3), options_shortcut(os)
     {}
     
     std::string name() const { return "expression"; }
@@ -286,10 +269,8 @@ struct variable_clause_t : public base_t {
     }
 };
 
-
-
 template<typename string_t>
-usage_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors);
+usages_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors);
 
 // Node visitor class, using CRTP. Child classes should override accept().
 template<typename T>
@@ -303,14 +284,20 @@ struct node_visitor_t {
         node.visit_children(derived_this);
     }
     
+    template<typename NODE_TYPE>
+    void visit_internal(const std::auto_ptr<NODE_TYPE> &node)
+    {
+        if (node.get()) {
+            this->visit_internal(*node);
+        }
+    }
+    
     
     /* Function called from overrides of visit_children. We invoke an override of accept(), and then recurse to children. */
     template<typename NODE_TYPE>
     void visit(const NODE_TYPE &t)
     {
-        if (t.get() != NULL) {
-            this->visit_internal(*t);
-        }
+        this->visit_internal(t);
     }
     
     /* Visit is called from node visit_children implementations. A token has no children. */
@@ -326,6 +313,7 @@ struct node_visitor_t {
 };
 
 
-};
+CLOSE_DOCOPT_IMPL
+
 
 #endif

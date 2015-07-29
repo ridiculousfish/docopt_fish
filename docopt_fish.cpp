@@ -324,7 +324,7 @@ docopt_impl(const string_t &s) : source(s), parse_tree(NULL) {}
 #pragma mark -
 
 /* The usage parse tree */
-usage_t *parse_tree;
+usages_t *parse_tree;
 
 /* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
 option_list_t shortcut_options;
@@ -1375,16 +1375,23 @@ static void state_append_to(const match_state_t *state, match_state_list_t *dest
 
 
 template<typename T>
-void try_match(T& ptr, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
+void try_match(const std::auto_ptr<T> &ptr, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     if (ptr.get()) {
         this->match(*ptr, state, ctx, resulting_states);
     }
 }
 
+template<typename T>
+void try_match(const auto_ptr<T> &ptr, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
+    if (ptr.get()) {
+        try_match(*ptr, incoming_state_list, ctx, resulting_states, require_progress);
+    }
+}
+
 // TODO: comment me
 template<typename T>
-void try_match(T& ptr, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
-    if (ptr.get() && ! incoming_state_list->empty()) {
+void try_match(const T& node, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
+    if (! incoming_state_list->empty()) {
         for (size_t i=0; i < incoming_state_list->size(); i++) {
             match_state_t *state = &incoming_state_list->at(i);
             /* If we require that this makes progress, then get the current progress so we can compare */
@@ -1395,7 +1402,7 @@ void try_match(T& ptr, match_state_list_t *incoming_state_list, match_context_t 
                 init_size = resulting_states->size();
             }
             
-            this->match(*ptr, state, ctx, resulting_states);
+            this->match(node, state, ctx, resulting_states);
             
             if (require_progress) {
                 /* Keep only those results that have increased in progress. States after init_size are new. */
@@ -1411,6 +1418,34 @@ void try_match(T& ptr, match_state_list_t *incoming_state_list, match_context_t 
                 }
             }
         }
+    }
+}
+
+/* Match overrides */
+void match(const usages_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
+    // Elide the copy in the last one
+    size_t count = node.usages.size();
+    if (count == 0) {
+        return;
+    }
+    
+    bool fully_consumed = false;
+    for (size_t i=0; i + 1 < count && ! fully_consumed; i++) {
+        match_state_t copied_state = *state;
+        match(node.usages.at(i), &copied_state, ctx, resulting_states);
+        
+        if (ctx->flags & flag_stop_after_consuming_everything) {
+            size_t idx = resulting_states->size();
+            while (idx--) {
+                if (resulting_states->at(idx).fully_consumed) {
+                    fully_consumed = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (! fully_consumed) {
+        match(node.usages.at(count-1), state, ctx, resulting_states);
     }
 }
 
@@ -1432,67 +1467,42 @@ void match(const usage_t &node, match_state_t *state, match_context_t *ctx, matc
     // Program name
     ctx->acquire_next_positional(state);
     
-    if (node.alternation_list.get()) {
+    if (! node.alternation_list.alternations.empty()) {
         // Match against our contents
-        try_match(node.alternation_list, state, ctx, resulting_states);
+        match(node.alternation_list, state, ctx, resulting_states);
     } else {
         // Usage is just the program name
         // Merely append this state
         state_destructive_append_to(state, resulting_states);
     }
-    
-    // Check to see if we have a perfect match
-    // If not, go to the next branch
-    bool fully_consumed_match = false;
-    if (ctx->flags & flag_stop_after_consuming_everything) {
-        size_t idx = resulting_states->size();
-        while (idx--) {
-            if (resulting_states->at(idx).fully_consumed) {
-                fully_consumed_match = true;
-                break;
-            }
-        }
-    }
-    if (! fully_consumed_match) {
-        try_match(node.next_usage, &copied_state, ctx, resulting_states);
-    }
 }
 
 void match(const expression_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
-    match_state_list_t intermed_state_list;
-    if (node.opt_expression_list.get() == NULL) {
-        // This is the last expression
-        try_match(node.expression, state, ctx, resulting_states);
-    } else {
-        // More to come. We must use an intermediates state list.
-        try_match(node.expression, state, ctx, &intermed_state_list);
-        try_match(node.opt_expression_list, &intermed_state_list, ctx, resulting_states);
+    
+#warning Need to optimize this to avoid copying so much
+    match_state_list_t intermed_state_list(1, *state);
+    size_t count = node.expressions.size();
+    if (count == 0) {
+        return;
     }
-}
-
-void match(const opt_expression_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
-    if (node.expression_list.get()) {
-        try_match(node.expression_list, state, ctx, resulting_states);
-    } else {
-        // end of the list
-        state_destructive_append_to(state, resulting_states);
+    for (size_t i=0; i + 1 < count; i++) {
+        match_state_list_t new_states;
+        try_match(node.expressions.at(i), &intermed_state_list, ctx, &new_states);
+        intermed_state_list.swap(new_states);
     }
+    try_match(node.expressions.at(count-1), &intermed_state_list, ctx, resulting_states);
 }
 
 void match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
-    if (node.or_continuation.get() == NULL) {
-        // No second branch, no need to copy the state
-        try_match(node.expression_list, state, ctx, resulting_states);
-    } else {
-        // Must duplicate the state for the second branch
-        match_state_t copied_state = *state;
-        try_match(node.expression_list, state, ctx, resulting_states);
-        try_match(node.or_continuation, &copied_state, ctx, resulting_states);
+    size_t count = node.alternations.size();
+    if (count == 0) {
+        return;
     }
-}
-
-void match(const or_continuation_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
-    try_match(node.alternation_list, state, ctx, resulting_states);
+    for (size_t i=0; i + 1 < count; i++) {
+        match_state_t copied_state = *state;
+        match(node.alternations.at(i), &copied_state, ctx, resulting_states);
+    }
+    match(node.alternations.at(count-1), state, ctx, resulting_states);
 }
 
 void match(const expression_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
@@ -1902,7 +1912,7 @@ bool preflight() {
        
        What Python docopt does is assert, if an option appears anywhere in any usage, it may not be matched by [options]. This seems reasonable, because it means that that option has more particular use cases. So remove all items from shortcut_options() that appear in usage_options.
        
-       TODO: this currently onlt removes the matched variant. For example, prog -a --alpha would still be allowed.
+       TODO: this currently only removes the matched variant. For example, prog -a --alpha would still be allowed.
     */
     
     for (size_t i=0; i < this->shortcut_options.size(); i++) {
@@ -2044,17 +2054,18 @@ string_t description_for_option(const string_t &given_option_name) const {
 std::vector<string_t> get_command_names() const {
     /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
     std::vector<string_t> result;
-    std::set<string_t> seen;
-    usage_t *cursor = this->parse_tree;
-    while (cursor != NULL) {
-        range_t name_range = cursor->prog_name.range;
-        if (! name_range.empty()) {
-            const string_t name(this->source, name_range.start, name_range.length);
-            if (seen.insert(name).second) {
-                result.push_back(name);
+    if (this->parse_tree) {
+        std::set<string_t> seen;
+        for (size_t i=0; i < this->parse_tree->usages.size(); i++) {
+            const usage_t &usage = this->parse_tree->usages.at(i);
+            range_t name_range = usage.prog_name.range;
+            if (! name_range.empty()) {
+                const string_t name(this->source, name_range.start, name_range.length);
+                if (seen.insert(name).second) {
+                    result.push_back(name);
+                }
             }
         }
-        cursor = cursor->next_usage.get();
     }
     return result;
 
