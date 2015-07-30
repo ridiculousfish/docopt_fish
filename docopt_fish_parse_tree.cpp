@@ -67,16 +67,18 @@ struct parse_context_t {
 
     template<typename T>
     static range_t scan_while(const string_t &str, range_t *remaining, T func) {
-        range_t result(remaining->start, 0);
-        while (result.end() < remaining->end() && func(str.at(result.end()))) {
-            result.length += 1;
-            remaining->start += 1;
-            remaining->length -= 1;
+        size_t idx = remaining->start;
+        const size_t end = remaining->end();
+        assert(end <= str.size());
+        while (idx < end && func(str[idx])) {
+            idx++;
         }
+        range_t result(remaining->start, idx - remaining->start);
+        remaining->start = result.end();
+        remaining->length -= result.length;
         return result;
     }
-
-    
+        
      // Note unowned pointer reference. A parse context is stack allocated and transient.
     const string_t *source;
     const option_list_t *shortcut_options;
@@ -274,6 +276,8 @@ struct parse_context_t {
     parse_result_t parse(alternation_list_t *result) {
         parse_result_t status = parsed_ok;
         bool first = true;
+        // We expect only one alternation, but need to reserve one more for try_parse_appending
+        result->alternations.reserve(2);
         while (status == parsed_ok) {
             // Scan a vert bar if we're not first
             token_t bar;
@@ -302,6 +306,7 @@ struct parse_context_t {
     }
     
     parse_result_t parse(expression_list_t *result) {
+        result->expressions.reserve(6);
         parse_result_t status = parsed_ok;
         size_t count = -1;
         while (status == parsed_ok) {
@@ -340,6 +345,8 @@ struct parse_context_t {
     
     // Parse a usages_t
     parse_result_t parse(usages_t *result) {
+        // Our usages are quite small, but copying them is expensive
+        result->usages.reserve(8);
         parse_result_t status = parsed_ok;
         while (status == parsed_ok) {
             status = try_parse_appending(&result->usages);

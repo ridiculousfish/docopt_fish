@@ -16,28 +16,45 @@ OPEN_DOCOPT_IMPL
 static const size_t npos = (size_t)(-1);
 
 // Narrow implementation
-static size_t find_case_insensitive(const std::string &haystack, const char *needle, size_t haystack_start) {
-    assert(haystack_start < haystack.size());
+static inline size_t find_case_insensitive(const std::string &haystack, const char *needle, const range_t &haystack_range) {
+    size_t start = haystack_range.start, end = haystack_range.end();
+    assert(end <= haystack.size());
     const char *haystack_cstr = haystack.c_str();
-    const char *found = strcasestr(haystack_cstr + haystack_start, needle);
-    return found ? found - haystack_cstr : std::string::npos;
+    char first_down = tolower(needle[0]);
+    char first_up = toupper(needle[0]);
+    for (size_t i = start; i < end; i++) {
+        if (haystack_cstr[i] == first_up || haystack_cstr[i] == first_down) {
+            if (0==strcasecmp(needle + 1, haystack_cstr + i + 1)) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
 }
 
 // Nasty wide implementation
-static size_t find_case_insensitive(const std::wstring &haystack, const char *needle, size_t haystack_start) {
+static inline size_t find_case_insensitive(const std::wstring &haystack, const char *needle, const range_t &haystack_range) {
     // Nasty implementation
     // The assumption here is that needle is always ASCII; thus it suffices to do an ugly tolower comparison
-    assert(haystack_start < haystack.size());
+    assert(haystack_range.end() <= haystack.size());
     const size_t needle_len = strlen(needle);
-    if (needle_len > haystack.size()) {
+    if (needle_len > haystack_range.length) {
         // needle is longer than haystack, no possible match
         return std::wstring::npos;
     }
 
     const wchar_t *haystack_cstr = haystack.c_str();
-    size_t search_end = haystack.size() - needle_len;
+    size_t search_end = haystack_range.end() - needle_len;
+    const char first_down = tolower(needle[0]);
+    const char first_up = toupper(needle[0]);
     
-    for (size_t i=haystack_start; i < search_end; i++) {
+    for (size_t i=haystack_range.start; i <= search_end; i++) {
+        // Common case
+        wchar_t wc = haystack_cstr[i];
+        if (wc != first_down && wc != first_up) {
+            continue;
+        }
+        
         // See if we have a match at i
         size_t j;
         for (j = 0; j < needle_len; j++) {
@@ -532,7 +549,7 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
     if (! description_range.empty()) {
         // TODO: handle the case where there's more than one
         const char *default_prefix = "[default:";
-        size_t default_prefix_loc = find_case_insensitive(this->source, default_prefix, description_range.start);
+        size_t default_prefix_loc = find_case_insensitive(this->source, default_prefix, description_range);
         if (default_prefix_loc < description_range.end()) {
             // Note: the above check handles npos too
             size_t default_value_start = default_prefix_loc + strlen(default_prefix);
@@ -676,9 +693,9 @@ range_list_t source_ranges_for_section(const char *name, bool include_other_top_
     range_t line_range;
     size_t current_header_indent = -1; //note: is huge
     while (get_next_line(this->source, &line_range)) {
-        range_t trimmed_line_range = trim_whitespace(line_range, this->source);
+        const range_t trimmed_line_range = trim_whitespace(line_range, this->source);
         assert(trimmed_line_range.start >= line_range.start);
-        size_t trimmed_line_start = trimmed_line_range.start;
+        const size_t trimmed_line_start = trimmed_line_range.start;
         size_t line_indent = compute_indent(this->source, line_range.start, trimmed_line_start - line_range.start);
         
         // It's a header line if its indent is not greater than the previous header and it's empty
@@ -700,7 +717,7 @@ range_list_t source_ranges_for_section(const char *name, bool include_other_top_
             
             // Check to see if the name is found before the first colon
             // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
-            size_t name_pos = find_case_insensitive(source, name, trimmed_line_start);
+            size_t name_pos = find_case_insensitive(source, name, trimmed_line_range);
             size_t line_end = trimmed_line_range.end();
             in_desired_section = (name_pos < line_end && name_pos < colon_pos);
 
