@@ -1,0 +1,5 @@
+*.o
+docopt_benchmark
+docopt_test
+copy_it.sh
+
