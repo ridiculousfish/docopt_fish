@@ -111,10 +111,7 @@ public:
 #endif
 };
 
-/* Base class of all intermediate states. Does nothing for now. */
-struct base_t {};
-
-struct expression_list_t : public base_t {
+struct expression_list_t {
     vector<expression_t> expressions;
     
     // expression_list = expression opt_expression_list
@@ -132,7 +129,7 @@ struct expression_list_t : public base_t {
     expression_list_t *parse(T *);
 };
 
-struct alternation_list_t : public base_t {
+struct alternation_list_t {
     vector<expression_list_t> alternations;
     
     std::string name() const { return "alternation_list"; }
@@ -146,7 +143,7 @@ struct alternation_list_t : public base_t {
 
 };
 
-struct usage_t : public base_t {
+struct usage_t {
     token_t prog_name;
     alternation_list_t alternation_list;
     
@@ -159,7 +156,7 @@ struct usage_t : public base_t {
     }
 };
 
-struct usages_t : public base_t {
+struct usages_t {
     vector<usage_t> usages;
     
     std::string name() const { return "usages"; }
@@ -172,7 +169,7 @@ struct usages_t : public base_t {
     }
 };
 
-struct opt_ellipsis_t : public base_t {
+struct opt_ellipsis_t {
     bool present;
     token_t ellipsis;
 
@@ -185,7 +182,7 @@ struct opt_ellipsis_t : public base_t {
     }
 };
 
-struct options_shortcut_t : public base_t {
+struct options_shortcut_t {
     // The options shortcut does not need to remember its token, since we never use it
     // It's always assuemd to be present
     bool present;
@@ -196,7 +193,7 @@ struct options_shortcut_t : public base_t {
     void visit_children(T *v UNUSED) const {}
 };
 
-struct simple_clause_t : public base_t {
+struct simple_clause_t {
     deep_ptr<option_clause_t> option;
     deep_ptr<fixed_clause_t> fixed;
     deep_ptr<variable_clause_t> variable;
@@ -210,7 +207,7 @@ struct simple_clause_t : public base_t {
     }
 };
 
-struct expression_t : public base_t {
+struct expression_t {
     // production 0
     deep_ptr<simple_clause_t> simple_clause;
     
@@ -242,7 +239,7 @@ struct expression_t : public base_t {
 };
 
 // An option like '--track', optionally with a value
-struct option_clause_t : public base_t {
+struct option_clause_t {
     token_t word;
     option_t option;
     std::string name() const { return "option"; }
@@ -253,7 +250,7 @@ struct option_clause_t : public base_t {
 };
 
 // Fixed like 'checkout'
-struct fixed_clause_t : public base_t {
+struct fixed_clause_t {
     token_t word;
     std::string name() const { return "fixed"; }
     template<typename T>
@@ -264,7 +261,7 @@ struct fixed_clause_t : public base_t {
 };
 
 // Variable like '<branch>'
-struct variable_clause_t : public base_t {
+struct variable_clause_t {
     token_t word;
     variable_clause_t() {}
     std::string name() const { return "variable"; }
