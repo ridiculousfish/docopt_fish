@@ -37,7 +37,7 @@ using std::vector;
                  
  opt_ellipsis = <empty> | ELLIPSIS
  
- options_shortcut = OPEN_SQUARE WORD CLOSE_SQUARE
+ options_shortcut = "[options]"
  
  */
 
@@ -186,7 +186,7 @@ struct options_shortcut_t {
     // The options shortcut does not need to remember its token, since we never use it
     // It's always assuemd to be present
     bool present;
-    options_shortcut_t() : base_t(), present(true) {}
+    options_shortcut_t() : present(false) {}
     
     std::string name() const { return "options_shortcut"; }
     template<typename T>
@@ -219,9 +219,10 @@ struct expression_t {
     // Collapsed for all
     opt_ellipsis_t opt_ellipsis;
     
-    deep_ptr<options_shortcut_t> options_shortcut;
+    // may or may not be present
+    options_shortcut_t options_shortcut;
     
-    // Invariant: at most one of (simple_clause, alternation_list, options_shortcut) may be set
+    // Invariant: at most one of (simple_clause, alternation_list) may be set
     uint8_t production;
     
     expression_t() : production(-1) {}

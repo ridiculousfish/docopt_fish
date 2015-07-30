@@ -1555,7 +1555,7 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
         case 3:
         {
             // This is the [options] clause. It does not have ellipsis.
-            
+            assert(node.options_shortcut.present);
             if (! this->match_options(this->shortcut_options, state, ctx, resulting_states)) {
                 // No match, but matches are not required
                 if (ctx->flags & flag_generate_suggestions) {

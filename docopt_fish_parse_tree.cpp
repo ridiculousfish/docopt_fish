@@ -361,7 +361,7 @@ struct parse_context_t {
         return parsed_ok; // can't fail
     }
     
-    // Parse [options]
+    // "Parse" [options]
     parse_result_t parse(options_shortcut_t *result) {
         result->present = true;
         return parsed_ok; // can't fail
@@ -498,7 +498,7 @@ struct parse_context_t {
         // Note that options must come before trying to parse it as a list, because "[options]" itself looks like a list
         if (this->scan("[options]", &token)) {
             result->production = 3;
-            status = this->try_parse_auto(&result->options_shortcut);
+            status = this->parse(&result->options_shortcut);
         } else if (this->scan('(', &token) || this->scan('[', &token)) {
             status = this->try_parse_auto(&result->alternation_list);
             if (status != parsed_error) {
