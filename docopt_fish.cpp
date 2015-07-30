@@ -1371,23 +1371,9 @@ static void state_append_to(const match_state_t *state, match_state_list_t *dest
 }
 
 
-template<typename T>
-void try_match(const deep_ptr<T> &ptr, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
-    if (ptr.get()) {
-        this->match(*ptr, state, ctx, resulting_states);
-    }
-}
-
-template<typename T>
-void try_match(const deep_ptr<T> &ptr, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
-    if (ptr.get()) {
-        try_match(*ptr, incoming_state_list, ctx, resulting_states, require_progress);
-    }
-}
-
 // TODO: comment me
 template<typename T>
-void try_match(const T& node, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
+void match_list(const T& node, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
     if (! incoming_state_list->empty()) {
         for (size_t i=0; i < incoming_state_list->size(); i++) {
             match_state_t *state = &incoming_state_list->at(i);
@@ -1470,17 +1456,22 @@ void match(const expression_list_t &node, match_state_t *state, match_context_t 
     if (count == 0) {
         // Merely append this state
         state_destructive_append_to(state, resulting_states);
-        return;
+    } else if (count == 1) {
+        // Just one expression, trivial
+        match(node.expressions.at(0), state, ctx, resulting_states);
+    } else {
+        // First expression
+        match_state_list_t intermed_state_list;
+        match(node.expressions.at(0), state, ctx, &intermed_state_list);
+        // Middle expressions
+        for (size_t i=1; i + 1 < count; i++) {
+            match_state_list_t new_states;
+            match_list(node.expressions.at(i), &intermed_state_list, ctx, &new_states);
+            intermed_state_list.swap(new_states);
+        }
+        // Last expression
+        match_list(node.expressions.at(count-1), &intermed_state_list, ctx, resulting_states);
     }
-    
-#warning Need to optimize this to avoid copying so much
-    match_state_list_t intermed_state_list(1, *state);
-    for (size_t i=0; i + 1 < count; i++) {
-        match_state_list_t new_states;
-        try_match(node.expressions.at(i), &intermed_state_list, ctx, &new_states);
-        intermed_state_list.swap(new_states);
-    }
-    try_match(node.expressions.at(count-1), &intermed_state_list, ctx, resulting_states);
 }
 
 void match(const alternation_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
@@ -1509,14 +1500,15 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
                match one time, two times, three times...
                We stop when we get no more matches, which usually happens when we run out of positionals.
             */
+            assert(node.simple_clause.get() != NULL);
             size_t prior_state_count = resulting_states->size();
-            try_match(node.simple_clause, state, ctx, resulting_states);
+            match(*node.simple_clause, state, ctx, resulting_states);
             /* Now we know that all states starting at state_count_before are newly added. If we have ellipsis, go until we run out. */
             if (has_ellipsis) {
                 while (prior_state_count < resulting_states->size()) {
                     match_state_list_t intermediate_states(resulting_states->begin() + prior_state_count, resulting_states->end());
                     prior_state_count = resulting_states->size();
-                    try_match(node.simple_clause, &intermediate_states, ctx, resulting_states, true /* require progress */);
+                    match_list(*node.simple_clause, &intermediate_states, ctx, resulting_states, true /* require progress */);
                 }
             }
             break;
@@ -1529,12 +1521,13 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
                TODO: this may loop forever with states that do not consume any values, e.g. ([foo])...
             */
             size_t prior_state_count = resulting_states->size();
-            try_match(node.alternation_list, state, ctx, resulting_states);
+            assert(node.alternation_list.get() != NULL);
+            match(*node.alternation_list, state, ctx, resulting_states);
             if (has_ellipsis) {
                 while (prior_state_count < resulting_states->size()) {
                     match_state_list_t intermediate_states(resulting_states->begin() + prior_state_count, resulting_states->end());
                     prior_state_count = resulting_states->size();
-                    try_match(node.alternation_list, &intermediate_states, ctx, resulting_states, true /* require progress */);
+                    match_list(*node.alternation_list, &intermediate_states, ctx, resulting_states, true /* require progress */);
                 }
             }
             break;
@@ -1545,14 +1538,15 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
             /* This is a square-bracketed clause which may have ellipsis, like [foo]...
                Same algorithm as the simple clause above, except that we also append the initial state as a not-taken branch.
             */
+            assert(node.alternation_list.get() != NULL);
             state_append_to(state, resulting_states);  // append the not-taken-branch
             size_t prior_state_count = resulting_states->size();
-            try_match(node.alternation_list, state, ctx, resulting_states);
+            match(*node.alternation_list, state, ctx, resulting_states);
             if (has_ellipsis) {
                 while (prior_state_count < resulting_states->size()) {
                     match_state_list_t intermediate_states(resulting_states->begin() + prior_state_count, resulting_states->end());
                     prior_state_count = resulting_states->size();
-                    try_match(node.alternation_list, &intermediate_states, ctx, resulting_states, true /* require progress */);
+                    match_list(*node.alternation_list, &intermediate_states, ctx, resulting_states, true /* require progress */);
                 }
             }
             break;

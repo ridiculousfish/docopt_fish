@@ -21,18 +21,6 @@ enum parse_result_t {
     parsed_done
 };
 
-UNUSED
-static const wstring &widen(const wstring &t) {
-    return t;
-}
-
-UNUSED
-static wstring widen(const string &t) {
-    wstring result;
-    result.insert(result.begin(), t.begin(), t.end());
-    return result;
-}
-
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
@@ -263,6 +251,7 @@ struct parse_context_t {
         return tok;
     }
     
+    // Given a vector of T, try parsing and then appending a T
     template<typename T>
     inline parse_result_t try_parse_appending(std::vector<T> *vec) {
         vec->resize(vec->size() + 1);
@@ -273,6 +262,7 @@ struct parse_context_t {
         return status;
     }
     
+    // Given a deep_ptr, try parsing it
     template<typename T>
     inline parse_result_t try_parse_auto(deep_ptr<T> *p) {
         p->reset(new T());
@@ -325,6 +315,7 @@ struct parse_context_t {
         return status;
     }
     
+    // Parse a usage_t
     parse_result_t parse(usage_t *result) {
         // Suck up empty lines.
         while (scan('\n')) {
@@ -347,6 +338,7 @@ struct parse_context_t {
         }
     }
     
+    // Parse a usages_t
     parse_result_t parse(usages_t *result) {
         parse_result_t status = parsed_ok;
         while (status == parsed_ok) {
@@ -363,16 +355,19 @@ struct parse_context_t {
         return status;
     }
 
+    // Parse ellipsis
     parse_result_t parse(opt_ellipsis_t *result) {
         result->present = this->scan("...", &result->ellipsis);
         return parsed_ok; // can't fail
     }
     
+    // Parse [options]
     parse_result_t parse(options_shortcut_t *result) {
         result->present = true;
         return parsed_ok; // can't fail
     }
     
+    // Parse a simple clause
     parse_result_t parse(simple_clause_t *result) {
         token_t word = this->peek_word();
         if (word.range.empty()) {
@@ -390,7 +385,8 @@ struct parse_context_t {
             return this->try_parse_auto(&result->fixed);
         }
     }
-    
+
+    // Parse options clause
     parse_result_t parse(option_clause_t *result) {
         token_t word;
         if (! this->scan_word(&word)) {
@@ -470,6 +466,7 @@ struct parse_context_t {
         return parsed_ok;
     }
     
+    // Parse a fixed argument
     parse_result_t parse(fixed_clause_t *result) {
         if (this->scan_word(&result->word)) {
             // TODO: handle invalid commands like foo<bar>
@@ -479,6 +476,7 @@ struct parse_context_t {
         }
     }
     
+    // Parse a variable argument
     parse_result_t parse(variable_clause_t *result) {
         if (this->scan_word(&result->word)) {
             // TODO: handle invalid variables like foo<bar>
@@ -489,6 +487,7 @@ struct parse_context_t {
     }
 
     
+    // Parse a general expression
     parse_result_t parse(expression_t *result) {
         if (this->is_at_end()) {
             return parsed_done;
@@ -551,12 +550,11 @@ usages_t *parse_usage(const string_t &src, const range_t &src_range, const optio
     
     // Error statuses should have error messages
     assert(! (status == parsed_error && ctx.errors.empty()));
-    
     if (out_errors) {
         out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
     }
     
-    return result;
+    return result; // transfers ownership
 }
 
 // Force template instantiation
