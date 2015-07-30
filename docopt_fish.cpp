@@ -1,7 +1,6 @@
 #include "docopt_fish.h"
 #include "docopt_fish_types.h"
 #include "docopt_fish_grammar.h"
-#include <memory>
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
@@ -13,8 +12,6 @@
 
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
-
-using std::auto_ptr;
 
 static const size_t npos = (size_t)(-1);
 
@@ -1375,14 +1372,14 @@ static void state_append_to(const match_state_t *state, match_state_list_t *dest
 
 
 template<typename T>
-void try_match(const std::auto_ptr<T> &ptr, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
+void try_match(const deep_ptr<T> &ptr, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     if (ptr.get()) {
         this->match(*ptr, state, ctx, resulting_states);
     }
 }
 
 template<typename T>
-void try_match(const auto_ptr<T> &ptr, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
+void try_match(const deep_ptr<T> &ptr, match_state_list_t *incoming_state_list, match_context_t *ctx, match_state_list_t *resulting_states, bool require_progress = false) const {
     if (ptr.get()) {
         try_match(*ptr, incoming_state_list, ctx, resulting_states, require_progress);
     }

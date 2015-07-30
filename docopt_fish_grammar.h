@@ -5,14 +5,12 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <memory>
 #include <stdint.h>
 
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
 using std::vector;
-using std::auto_ptr;
 
 /* Usage grammar:
  
@@ -55,6 +53,63 @@ struct opt_ellipsis_t;
 struct option_clause_t;
 struct fixed_clause_t;
 struct variable_clause_t;
+
+/* Our sort of auto_ptr ripoff. It has the property that copying the pointer copies the underlying object. */
+template<typename T>
+class deep_ptr {
+    T* val_;
+public:
+    
+    // We own our pointer
+    ~deep_ptr() { delete val_; }
+    
+    // Getters
+    T* get() { return val_; }
+    const T* get() const { return val_; }
+    
+    T& operator*() { return *val_; }
+    const T& operator*() const { return *val_; }
+    
+    // Constructors
+    deep_ptr() : val_(NULL) {}
+    explicit deep_ptr(T* v) : val_(v) {}
+    deep_ptr(const deep_ptr &rhs) :val_(rhs.val_ ? new T(*rhs.val_) : NULL) {}
+
+    // We support assignment
+    void operator=(const deep_ptr<T> &rhs) {
+        if (this != &rhs) {
+            if (val_ && rhs.val_) {
+                // Use operator= to avoid new allocations
+                *val_ = *rhs.val_;
+            } else {
+                delete val_;
+                val_ = rhs.val_ ? new T(*rhs.val_) : NULL;
+            }
+        }
+    }
+    
+    void reset(T* v) {
+        if (val_ != v) {
+            delete val_;
+            val_ = v;
+        }
+    }
+    
+#if __cplusplus > 199711L
+    // Move semantics
+    deep_ptr(deep_ptr<T> &&rhs) : val_(rhs.val_) {
+        rhs.val_ = NULL;
+    }
+    
+    operator=(deep_ptr<T> &&rhs) {
+        if (this != &rhs) {
+            delete val_;
+            val_ = rhs.val_;
+            rhs.val_ = NULL;
+        }
+    }
+#endif
+};
 
 /* Base class of all intermediate states. Does nothing for now. */
 struct base_t {};
@@ -141,19 +196,10 @@ struct options_shortcut_t : public base_t {
     void visit_children(T *v UNUSED) const {}
 };
 
-template<typename P>
-std::auto_ptr<P> auto_copy(const std::auto_ptr<P> &rhs) {
-    if (! rhs.get()) {
-        return std::auto_ptr<P>(NULL);
-    } else {
-        return std::auto_ptr<P>(new P(*rhs));
-    }
-}
-
 struct simple_clause_t : public base_t {
-    std::auto_ptr<option_clause_t> option;
-    std::auto_ptr<fixed_clause_t> fixed;
-    std::auto_ptr<variable_clause_t> variable;
+    deep_ptr<option_clause_t> option;
+    deep_ptr<fixed_clause_t> fixed;
+    deep_ptr<variable_clause_t> variable;
     
     std::string name() const { return "simple_clause"; }
     template<typename T>
@@ -162,33 +208,24 @@ struct simple_clause_t : public base_t {
         v->visit(fixed);
         v->visit(variable);
     }
-    
-    simple_clause_t() {}
-    simple_clause_t(const simple_clause_t &rhs) : option(auto_copy(rhs.option)), fixed(auto_copy(rhs.fixed)), variable(auto_copy(rhs.variable)) {
-    }
-    
 };
 
 struct expression_t : public base_t {
     // production 0
-    std::auto_ptr<simple_clause_t> simple_clause;
+    deep_ptr<simple_clause_t> simple_clause;
     
     // Collapsed for productions 1 and 2
     token_t open_token;
-    std::auto_ptr<alternation_list_t> alternation_list;
+    deep_ptr<alternation_list_t> alternation_list;
     token_t close_token;
     
     // Collapsed for all
     opt_ellipsis_t opt_ellipsis;
     
-    std::auto_ptr<options_shortcut_t> options_shortcut;
+    deep_ptr<options_shortcut_t> options_shortcut;
     
     // Invariant: at most one of (simple_clause, alternation_list, options_shortcut) may be set
     uint8_t production;
-    
-    expression_t(const expression_t &rhs) : simple_clause(auto_copy(rhs.simple_clause)), open_token(rhs.open_token), alternation_list(auto_copy(rhs.alternation_list)), close_token(rhs.close_token), opt_ellipsis(rhs.opt_ellipsis), options_shortcut(auto_copy(rhs.options_shortcut)), production(rhs.production) {
-        
-    }
     
     expression_t() : production(-1) {}
     
@@ -253,7 +290,7 @@ struct node_visitor_t {
     }
     
     template<typename NODE_TYPE>
-    void visit_internal(const std::auto_ptr<NODE_TYPE> &node)
+    void visit_internal(const deep_ptr<NODE_TYPE> &node)
     {
         if (node.get()) {
             this->visit_internal(*node);

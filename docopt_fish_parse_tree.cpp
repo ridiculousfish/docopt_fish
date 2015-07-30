@@ -262,52 +262,6 @@ struct parse_context_t {
         remaining_range = saved_range;
         return tok;
     }
-
-    /* Helpers to parse when the productions are fixed. */
-    
-    template<typename PARENT, typename REQ_CHILD, typename OPT_CHILD>
-    bool parse_required_then_optional(auto_ptr<PARENT> *result) {
-        auto_ptr<REQ_CHILD> child1;
-        if (! parse(&child1)) {
-            return false;
-        }
-        if (child1.get() == NULL) {
-            return true;
-        }
-        
-        auto_ptr<OPT_CHILD> child2;
-        if (! parse(&child2)) {
-            return false;
-        }
-        result->reset(new PARENT(child1, child2));
-        return true;
-    }
-
-    template<typename PARENT, typename CHILD>
-    bool parse_1_disallowing_null(auto_ptr<PARENT> *result) {
-        bool success = false;
-        auto_ptr<CHILD> child;
-        if (parse(&child)) {
-            // This variant requires that successful parses return non-null
-            assert(child.get() != NULL);
-            result->reset(new PARENT(child));
-            success = true;
-        }
-        return success;
-    }
-    
-    // Like parse1, except if the child comes back NULL we provide NULL too
-    template<typename PARENT, typename CHILD>
-    bool parse_1_or_empty(auto_ptr<PARENT> *result) {
-        auto_ptr<CHILD> child;
-        if (! parse(&child)) {
-            return false;
-        }
-        if (child.get()) {
-            result->reset(new PARENT(child));
-        }
-        return true;
-    }
     
     template<typename T>
     inline parse_result_t try_parse_appending(std::vector<T> *vec) {
@@ -320,7 +274,7 @@ struct parse_context_t {
     }
     
     template<typename T>
-    inline parse_result_t try_parse_auto(auto_ptr<T> *p) {
+    inline parse_result_t try_parse_auto(deep_ptr<T> *p) {
         p->reset(new T());
         return this->parse(p->get());
     }
