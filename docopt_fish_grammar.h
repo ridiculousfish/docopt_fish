@@ -101,7 +101,7 @@ public:
         rhs.val_ = NULL;
     }
     
-    operator=(deep_ptr<T> &&rhs) {
+    void operator=(deep_ptr<T> &&rhs) {
         if (this != &rhs) {
             delete val_;
             val_ = rhs.val_;
