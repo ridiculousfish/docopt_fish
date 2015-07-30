@@ -133,6 +133,8 @@ struct option_t {
     // How we separate the name from the value. We may make this a bitmap some day.
     separator_t separator;
 
+    option_t() {}
+    
     option_t(const range_t &n, const range_t &v, size_t leading_dash_count, separator_t sep) : name(n), value(v), separator(sep) {
         // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
         if (leading_dash_count > 1) {
@@ -276,6 +278,7 @@ enum {
     
     /* Errors that may occur in a docopt description */
     error_excessive_dashes, // Three or more dashes in an option: prog ---foo
+    error_leading_ellipsis, // ... appearing without an associated expression
     error_excessive_equal_signs, // Two or more equal signs: --foo==bar
     error_bad_option_separator, // Bad separator between option and value: --foo<bar>
     error_invalid_option_name, // Bad option name: Options: foo

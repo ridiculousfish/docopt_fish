@@ -1461,30 +1461,23 @@ void match(const usage_t &node, match_state_t *state, match_context_t *ctx, matc
         return;
     }
     
-    /* Must duplicate the state for the next usage */
-    match_state_t copied_state = *state;
-    
     // Program name
     ctx->acquire_next_positional(state);
     
-    if (! node.alternation_list.alternations.empty()) {
-        // Match against our contents
-        match(node.alternation_list, state, ctx, resulting_states);
-    } else {
-        // Usage is just the program name
-        // Merely append this state
-        state_destructive_append_to(state, resulting_states);
-    }
+    // Match against our contents
+    match(node.alternation_list, state, ctx, resulting_states);
 }
 
 void match(const expression_list_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
+    size_t count = node.expressions.size();
+    if (count == 0) {
+        // Merely append this state
+        state_destructive_append_to(state, resulting_states);
+        return;
+    }
     
 #warning Need to optimize this to avoid copying so much
     match_state_list_t intermed_state_list(1, *state);
-    size_t count = node.expressions.size();
-    if (count == 0) {
-        return;
-    }
     for (size_t i=0; i + 1 < count; i++) {
         match_state_list_t new_states;
         try_match(node.expressions.at(i), &intermed_state_list, ctx, &new_states);
@@ -1507,7 +1500,7 @@ void match(const alternation_list_t &node, match_state_t *state, match_context_t
 
 void match(const expression_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
-    bool has_ellipsis = (node.opt_ellipsis.get() != NULL && node.opt_ellipsis->production > 0);
+    bool has_ellipsis = node.opt_ellipsis.present;
     
     switch (node.production) {
         case 0:

@@ -37,8 +37,7 @@ using std::auto_ptr;
  fixed_clause = WORD
  variable_clause = WORD
                  
- opt_ellipsis = <empty> |
- ELLIPSIS
+ opt_ellipsis = <empty> | ELLIPSIS
  
  options_shortcut = OPEN_SQUARE WORD CLOSE_SQUARE
  
@@ -57,25 +56,14 @@ struct option_clause_t;
 struct fixed_clause_t;
 struct variable_clause_t;
 
-/* Base class of all intermediate states */
-struct base_t {
-    // Which production was used
-    uint8_t production;
-    
-    // Range of tokens used
-    range_t token_range;
-    
-    // Constructors. The default production index is 0. The second constructor specifies a production.
-    base_t() : production(0){}
-    base_t(uint8_t p) : production(p) {}
-};
+/* Base class of all intermediate states. Does nothing for now. */
+struct base_t {};
 
 struct expression_list_t : public base_t {
     vector<expression_t> expressions;
     
     // expression_list = expression opt_expression_list
     expression_list_t() {}
-    expression_list_t(const vector<expression_t> &v) : expressions(v) {}
     std::string name() const { return "expression_list"; }
     
     template<typename T>
@@ -92,8 +80,6 @@ struct expression_list_t : public base_t {
 struct alternation_list_t : public base_t {
     vector<expression_list_t> alternations;
     
-    alternation_list_t() {}
-    alternation_list_t(vector<expression_list_t> v) : alternations(v) {}
     std::string name() const { return "alternation_list"; }
     
     template<typename T>
@@ -108,12 +94,6 @@ struct alternation_list_t : public base_t {
 struct usage_t : public base_t {
     token_t prog_name;
     alternation_list_t alternation_list;
-    
-    // usage = <empty>
-    usage_t() : base_t(0) {}
-
-    // usage = word alternation_list usage
-    usage_t(token_t t, const alternation_list_t &v) : base_t(2), prog_name(t), alternation_list(v) {}
     
     std::string name() const { return "usage"; }
     
@@ -138,11 +118,10 @@ struct usages_t : public base_t {
 };
 
 struct opt_ellipsis_t : public base_t {
+    bool present;
     token_t ellipsis;
 
-    // opt_ellipsis = <empty>
-    // opt_ellipsis = ELLIPSIS
-    opt_ellipsis_t(token_t t) : base_t(t.empty() ? 0 : 1), ellipsis(t) {}
+    opt_ellipsis_t() : present(false) {}
     
     std::string name() const { return "opt_ellipsis"; }
     template<typename T>
@@ -153,7 +132,9 @@ struct opt_ellipsis_t : public base_t {
 
 struct options_shortcut_t : public base_t {
     // The options shortcut does not need to remember its token, since we never use it
-    options_shortcut_t() : base_t() {}
+    // It's always assuemd to be present
+    bool present;
+    options_shortcut_t() : base_t(), present(true) {}
     
     std::string name() const { return "options_shortcut"; }
     template<typename T>
@@ -174,10 +155,6 @@ struct simple_clause_t : public base_t {
     std::auto_ptr<fixed_clause_t> fixed;
     std::auto_ptr<variable_clause_t> variable;
     
-    simple_clause_t(std::auto_ptr<option_clause_t> &o) : base_t(0), option(o) {}
-    simple_clause_t(std::auto_ptr<fixed_clause_t> &f) : base_t(1), fixed(f) {}
-    simple_clause_t(std::auto_ptr<variable_clause_t> &v) : base_t(2), variable(v) {}
-    
     std::string name() const { return "simple_clause"; }
     template<typename T>
     void visit_children(T *v) const {
@@ -186,6 +163,7 @@ struct simple_clause_t : public base_t {
         v->visit(variable);
     }
     
+    simple_clause_t() {}
     simple_clause_t(const simple_clause_t &rhs) : option(auto_copy(rhs.option)), fixed(auto_copy(rhs.fixed)), variable(auto_copy(rhs.variable)) {
     }
     
@@ -201,26 +179,18 @@ struct expression_t : public base_t {
     token_t close_token;
     
     // Collapsed for all
-    std::auto_ptr<opt_ellipsis_t> opt_ellipsis;
+    opt_ellipsis_t opt_ellipsis;
     
     std::auto_ptr<options_shortcut_t> options_shortcut;
     
-    expression_t(const expression_t &rhs) : simple_clause(auto_copy(rhs.simple_clause)), open_token(rhs.open_token), alternation_list(auto_copy(rhs.alternation_list)), close_token(rhs.close_token), opt_ellipsis(auto_copy(rhs.opt_ellipsis)), options_shortcut(auto_copy(rhs.options_shortcut)) {
+    // Invariant: at most one of (simple_clause, alternation_list, options_shortcut) may be set
+    uint8_t production;
+    
+    expression_t(const expression_t &rhs) : simple_clause(auto_copy(rhs.simple_clause)), open_token(rhs.open_token), alternation_list(auto_copy(rhs.alternation_list)), close_token(rhs.close_token), opt_ellipsis(rhs.opt_ellipsis), options_shortcut(auto_copy(rhs.options_shortcut)), production(rhs.production) {
         
     }
     
-    //expression = simple_clause
-    expression_t(std::auto_ptr<simple_clause_t> c, std::auto_ptr<opt_ellipsis_t> e) : base_t(0), simple_clause(c), opt_ellipsis(e) {}
-    
-    //expression = OPEN_PAREN expression_list CLOSE_PAREN opt_ellipsis |
-    //expression = OPEN_SQUARE expression_list CLOSE_SQUARE opt_ellipsis
-    expression_t(token_t a, bool is_paren, std::auto_ptr<alternation_list_t> el, token_t b, std::auto_ptr<opt_ellipsis_t> e)
-    : base_t(is_paren ? 1  : 2), open_token(a), alternation_list(el), close_token(b), opt_ellipsis(e)
-    {}
-    
-    //expression = options_shortcut
-    expression_t(std::auto_ptr<options_shortcut_t> os) : base_t(3), options_shortcut(os)
-    {}
+    expression_t() : production(-1) {}
     
     std::string name() const { return "expression"; }
     template<typename T>
@@ -236,9 +206,8 @@ struct expression_t : public base_t {
 
 // An option like '--track', optionally with a value
 struct option_clause_t : public base_t {
-    const token_t word;
-    const option_t option;
-    option_clause_t(const token_t &t, const option_t &o) : word(t), option(o) {}
+    token_t word;
+    option_t option;
     std::string name() const { return "option"; }
     template<typename T>
     void visit_children(T *v) const {
@@ -248,8 +217,7 @@ struct option_clause_t : public base_t {
 
 // Fixed like 'checkout'
 struct fixed_clause_t : public base_t {
-    const token_t word;
-    fixed_clause_t(const token_t &t) : word(t) {}
+    token_t word;
     std::string name() const { return "fixed"; }
     template<typename T>
     void visit_children(T *v) const {
@@ -260,8 +228,8 @@ struct fixed_clause_t : public base_t {
 
 // Variable like '<branch>'
 struct variable_clause_t : public base_t {
-    const token_t word;
-    variable_clause_t(const token_t &t) : word(t) {}
+    token_t word;
+    variable_clause_t() {}
     std::string name() const { return "variable"; }
     template<typename T>
     void visit_children(T *v) const {

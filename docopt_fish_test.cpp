@@ -167,7 +167,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     if (! errors.empty()) {
         err("Suggestion test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
         for (size_t i=0; i < errors.size(); i++) {
-            fprintf(stderr, "\t%ls\n", wide(errors.at(i).text));
+            fprintf(stderr, "\terr: %ls\n", wide(errors.at(i).text));
         }
     } else {
         /* Get the suggested arguments, then sort and join them */
@@ -2079,6 +2079,11 @@ static void test_errors_in_usage()
         {   "Usage: prog --foo=<bar> \n"
             "Conditions: gibberish",
             error_invalid_variable_name
+        },
+        /* Case 18 */
+        {   "Usage: prog ... \n"
+            "Conditions: gibberish",
+            error_leading_ellipsis
         },
         {NULL, 0}
         
