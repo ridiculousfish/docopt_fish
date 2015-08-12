@@ -19,12 +19,14 @@ static const size_t npos = (size_t)(-1);
 static inline size_t find_case_insensitive(const std::string &haystack, const char *needle, const range_t &haystack_range) {
     size_t start = haystack_range.start, end = haystack_range.end();
     assert(end <= haystack.size());
+    const size_t needle_len = strlen(needle);
+    assert(needle_len > 0);
     const char *haystack_cstr = haystack.c_str();
     char first_down = tolower(needle[0]);
     char first_up = toupper(needle[0]);
     for (size_t i = start; i < end; i++) {
         if (haystack_cstr[i] == first_up || haystack_cstr[i] == first_down) {
-            if (0==strcasecmp(needle + 1, haystack_cstr + i + 1)) {
+            if (0==strncasecmp(needle + 1, haystack_cstr + i + 1, needle_len - 1)) {
                 return i;
             }
         }
@@ -702,8 +704,7 @@ range_list_t source_ranges_for_section(const char *name, bool include_other_top_
         size_t colon_pos = npos;
         bool is_header = false;
         bool is_other_top_level = false;
-        if (! trimmed_line_range.empty() && line_indent <= current_header_indent)
-        {
+        if (! trimmed_line_range.empty() && line_indent <= current_header_indent) {
             colon_pos = find_colon(trimmed_line_range, this->source);
             is_header = (colon_pos != npos);
             is_other_top_level = (colon_pos == npos);
