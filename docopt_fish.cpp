@@ -17,18 +17,25 @@ static const size_t npos = (size_t)(-1);
 
 // Narrow implementation
 static inline size_t find_case_insensitive(const std::string &haystack, const char *needle, const range_t &haystack_range) {
-    size_t start = haystack_range.start, end = haystack_range.end();
-    assert(end <= haystack.size());
     const size_t needle_len = strlen(needle);
     assert(needle_len > 0);
+    if (needle_len > haystack_range.length) {
+        // needle is longer than haystack, no possible match
+        return std::wstring::npos;
+    }
+    size_t search_end = haystack_range.end() - needle_len;
+    
     const char *haystack_cstr = haystack.c_str();
-    char first_down = tolower(needle[0]);
-    char first_up = toupper(needle[0]);
-    for (size_t i = start; i < end; i++) {
-        if (haystack_cstr[i] == first_up || haystack_cstr[i] == first_down) {
-            if (0==strncasecmp(needle + 1, haystack_cstr + i + 1, needle_len - 1)) {
-                return i;
-            }
+    const char first_down = tolower(needle[0]);
+    const char first_up = toupper(needle[0]);
+    for (size_t i = haystack_range.start; i <= search_end; i++) {
+        // Common case
+        char c = haystack_cstr[i];
+        if (c != first_down && c != first_up) {
+            continue;
+        }
+        if (0==strncasecmp(needle + 1, haystack_cstr + i + 1, needle_len - 1)) {
+            return i;
         }
     }
     return std::string::npos;
@@ -40,6 +47,7 @@ static inline size_t find_case_insensitive(const std::wstring &haystack, const c
     // The assumption here is that needle is always ASCII; thus it suffices to do an ugly tolower comparison
     assert(haystack_range.end() <= haystack.size());
     const size_t needle_len = strlen(needle);
+    assert(needle_len > 0);
     if (needle_len > haystack_range.length) {
         // needle is longer than haystack, no possible match
         return std::wstring::npos;
@@ -59,7 +67,7 @@ static inline size_t find_case_insensitive(const std::wstring &haystack, const c
         
         // See if we have a match at i
         size_t j;
-        for (j = 0; j < needle_len; j++) {
+        for (j = 1; j < needle_len; j++) {
             wchar_t wc = haystack_cstr[i + j];
             if (wc > 127 || tolower((char)wc) != tolower(needle[j])) {
                 break;
@@ -552,8 +560,7 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
         // TODO: handle the case where there's more than one
         const char *default_prefix = "[default:";
         size_t default_prefix_loc = find_case_insensitive(this->source, default_prefix, description_range);
-        if (default_prefix_loc < description_range.end()) {
-            // Note: the above check handles npos too
+        if (default_prefix_loc != string_t::npos) {
             size_t default_value_start = default_prefix_loc + strlen(default_prefix);
             // Skip over spaces
             while (default_value_start < description_range.end() && isspace(this->source.at(default_value_start))) {
