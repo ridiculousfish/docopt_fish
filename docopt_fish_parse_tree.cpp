@@ -11,10 +11,6 @@
 #include <set>
 #include <vector>
 
-using std::vector;
-using std::string;
-using std::wstring;
-
 enum parse_result_t {
     parsed_ok,
     parsed_error,
@@ -27,12 +23,6 @@ OPEN_DOCOPT_IMPL
 #pragma mark -
 #pragma mark Usage Grammar
 #pragma mark -
-
-struct alternation_list;
-struct expression_list_t;
-struct expression_t;
-struct simple_clause_t;
-struct opt_ellipsis_t;
 
 /* Context passed around in our recursive descent parser */
 template<typename string_t>
@@ -255,7 +245,7 @@ struct parse_context_t {
     
     // Given a vector of T, try parsing and then appending a T
     template<typename T>
-    inline parse_result_t try_parse_appending(std::vector<T> *vec) {
+    inline parse_result_t try_parse_appending(vector<T> *vec) {
         vec->resize(vec->size() + 1);
         parse_result_t status = this->parse(&vec->back());
         if (status != parsed_ok) {
@@ -565,8 +555,8 @@ usages_t *parse_usage(const string_t &src, const range_t &src_range, const optio
 }
 
 // Force template instantiation
-template usages_t *parse_usage<string>(const string &, const range_t &, const option_list_t &, vector<error_t<string> > *);
-template usages_t *parse_usage<wstring>(const wstring &, const range_t &, const option_list_t &shortcut_options, vector<error_t<wstring> > *);
+template usages_t *parse_usage<std::string>(const std::string &, const range_t &, const option_list_t &, vector<error_t<std::string> > *);
+template usages_t *parse_usage<std::wstring>(const std::wstring &, const range_t &, const option_list_t &shortcut_options, vector<error_t<std::wstring> > *);
 
 
 CLOSE_DOCOPT_IMPL /* namespace */
