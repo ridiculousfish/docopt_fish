@@ -72,11 +72,6 @@ namespace docopt_fish
         base_argument_t() : count(0) {}
     };
     
-    /* Concrete types */
-    typedef base_argument_t<std::string> argument_t;
-    typedef base_argument_t<std::wstring> wargument_t;
-    
-    
     template<typename string_t>
     class argument_parser_t {
         /* Guts */

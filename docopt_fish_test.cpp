@@ -498,7 +498,8 @@ static void test_correctness()
             "Options: -p <PATH>",
             {
                 {   "-p home/", // argv
-                    "-p:home/"
+                    "-p:%1\n"
+                    "<PATH>:home/"
                 },
                 {   "-p", // argv
                     ERROR_EXPECTED
@@ -511,7 +512,8 @@ static void test_correctness()
             "Options: -p<PATH>",
             {
                 {   "-phome/", // argv
-                    "-p:home/"
+                    "-p:%1\n"
+                    "<PATH>:home/"
                 },
                 {   "-p", // argv
                     ERROR_EXPECTED
@@ -524,13 +526,16 @@ static void test_correctness()
             "Options: --path <path>",
             {
                 {   "--path home/", // argv
-                    "--path:home/"
+                    "--path:%1\n"
+                    "<path>:home/"
                 },
                 {   "--pa home/", // argv
-                    "--path:home/"
+                    "--path:%1\n"
+                    "<path>:home/"
                 },
                 {   "--pa=home/", // argv
-                    "--path:home/"
+                    "--path:%1\n"
+                    "<path>:home/"
                 },
                 {   "--path", // argv
                     ERROR_EXPECTED
@@ -543,7 +548,8 @@ static void test_correctness()
             "Options: -p<PATH>, --path=<path>  Path to files.",
             {
                 {   "-proot", // argv
-                    "--path:root"
+                    "--path:%1\n"
+                    "<PATH>:root"
                 },
             },
         },
@@ -553,10 +559,12 @@ static void test_correctness()
             "Options:    -p <PATH>, --path <PATH>  Path to files.",
             {
                 {   "-p root", // argv
-                    "--path:root"
+                    "--path:%1\n"
+                    "<PATH>:root"
                 },
                 {   "--path root", // argv
-                    "--path:root"
+                    "--path:%1\n"
+                    "<PATH>:root"
                 },
             },
         },
@@ -567,10 +575,12 @@ static void test_correctness()
             " -p<PATH>  Path to files [default: ./]",
             {
                 {   "", // argv
-                    "-p:./"
+                    "-p:%0\n"
+                    "<PATH>:./"
                 },
                 {   "-phome", // argv
-                    "-p:home"
+                    "-p:%1\n"
+                    "<PATH>:home"
                 },
             },
         },
@@ -581,10 +591,12 @@ static void test_correctness()
             "                [dEfAuLt: /root]",
             {
                 {   "", // argv
-                    "--path:/root"
+                    "--path:%0\n"
+                    "<files>:/root"
                 },
                 {   "--path=home", // argv
-                    "--path:home"
+                    "--path:%1\n"
+                    "<files>:home"
                 },
             },
         },
@@ -597,12 +609,14 @@ static void test_correctness()
             "    -m <msg>  Message",
             {
                 {   "-a -r -m Hello", // argv
-                    "-m:Hello\n"
+                    "-m:%1\n"
+                    "<msg>:Hello\n"
                     "-a:True\n"
                     "-r:True"
                 },
                 {   "-arm yourass", // argv
-                    "-m:yourass\n"
+                    "-m:%1\n"
+                    "<msg>:yourass\n"
                     "-a:True\n"
                     "-r:True"
                 },
@@ -645,7 +659,8 @@ static void test_correctness()
             " -m <msg>  Message",
             {
                 {   "-arm yourass", // argv
-                    "-m:yourass\n"
+                    "-m:%1\n"
+                    "<msg>:yourass\n"
                     "-a:True\n"
                     "-r:True"
                 },
@@ -659,7 +674,8 @@ static void test_correctness()
             "         -m <msg>  Message",
             {
                 {   "-a -r -m Hello", // argv
-                    "-m:Hello\n"
+                    "-m:%1\n"
+                    "<msg>:Hello\n"
                     "-a:True\n"
                     "-r:True"
                 },
@@ -1048,7 +1064,8 @@ static void test_correctness()
                     "--moored:False\n"
                     "--drifting:False\n"
                     "move:True\n"
-                    "--speed:20\n"
+                    "--speed:%1\n"
+                    "<kn>:20\n"
                     "mine:False\n"
                     "new:False\n"
                     "--version:False\n"
@@ -1077,7 +1094,8 @@ static void test_correctness()
                     "--hello:False"
                 },
                 {   "--hello wrld", // argv
-                    "--hello:wrld"
+                    "--hello:%1\n"
+                    "<world>:wrld"
                 },
             },
         },
@@ -1303,7 +1321,8 @@ static void test_correctness()
                     "--hello:False"
                 },
                 {   "--hello wrld", // argv
-                    "--hello:wrld"
+                    "--hello:%1\n"
+                    "<world>:wrld"
                 },
             },
         },
@@ -1400,10 +1419,11 @@ static void test_correctness()
         /* Case 65 */
         {   "Usage: prog [-a <host:port>]\n"
             "\n"
-            "Options: -a, --address <host:port>  TCP address [default: localhost:6283].",
+            "Options: -a, --address <host_port>  TCP address [default: localhost:6283].",
             {
                 {   "", // argv
-                    "--address:localhost:6283"
+                    "--address:%0\n"
+                    "<host_port>:localhost:6283"
                 },
             },
         },
@@ -1411,10 +1431,12 @@ static void test_correctness()
         {   "usage: prog --long=<arg> ...",
             {
                 {   "--long one", // argv
-                    "--long:one"
+                    "--long:%1\n"
+                    "<arg>:one"
                 },
                 {   "--long one --long two", // argv
-                    "--long:one, two"
+                    "--long:%2\n"
+                    "<arg>:one, two"
                 },
             },
         },
@@ -1424,7 +1446,8 @@ static void test_correctness()
                 {   "go left --speed=5  go right --speed=9", // argv
                     "go:%2\n"
                     "<direction>:left, right\n"
-                    "--speed:5, 9"
+                    "--speed:%2\n"
+                    "<km/h>:5, 9"
                 },
             },
         },
@@ -1444,10 +1467,12 @@ static void test_correctness()
             "options: -o <o>  [default: x]",
             {
                 {   "-o this -o that", // argv
-                    "-o:this, that"
+                    "-o:%2\n"
+                    "<o>:this, that"
                 },
                 {   "", // argv
-                    "-o:x"
+                    "-o:%0\n"
+                    "<o>:x"
                 },
             },
         },
@@ -1457,10 +1482,12 @@ static void test_correctness()
             "options: -o <o>  [default: x y]",
             {
                 {   "-o this", // argv
-                    "-o:this"
+                    "-o:%1\n"
+                    "<o>:this"
                 },
                 {   "", // argv
-                    "-o:x y"
+                    "-o:%0\n"
+                    "<o>:x y"
                 },
             },
         },
@@ -1470,7 +1497,8 @@ static void test_correctness()
             "options: -p <PATH>",
             {
                 {   "-pHOME", // argv
-                    "-p:HOME"
+                    "-p:%1\n"
+                    "<PATH>:HOME"
                 },
             },
         },
@@ -1478,8 +1506,10 @@ static void test_correctness()
         {   "Usage: foo (--xx=<x>|--yy=<y>)...",
             {
                 {   "--xx=1 --yy=2", // argv
-                    "--yy:2\n"
-                    "--xx:1"
+                    "--yy:%1\n"
+                    "<y>:2\n"
+                    "--xx:%1\n"
+                    "<x>:1"
                 },
             },
         },
@@ -1495,7 +1525,8 @@ static void test_correctness()
         {   "usage: prog [--input=<file name>]...",
             {
                 {   "--input a.txt --input=b.txt", // argv
-                    "--input:a.txt, b.txt"
+                    "--input:%2\n"
+                    "<file name>:a.txt, b.txt"
                 },
             },
         },
@@ -1508,7 +1539,8 @@ static void test_correctness()
                 {   "fail --loglevel 5", // argv
                     "fail:True\n"
                     "good:False\n"
-                    "--loglevel:5"
+                    "--loglevel:%1\n"
+                    "<N>:5"
                 },
             },
         },
@@ -1589,7 +1621,8 @@ static void test_correctness()
             "Options: -D<def>\n",
             {
                 {   "-DNDEBUG", // argv
-                    "-D:NDEBUG\n"
+                    "-D:%1\n"
+                    "<def>:NDEBUG\n"
                 },
             },
         },
@@ -1629,10 +1662,12 @@ static void test_correctness()
         {   "Usage: prog -D<val>\n",
             {
                 {   "-Dx1", // argv
-                    "-D:x1\n"
+                    "-D:%1\n"
+                    "<val>:x1"
                 },
                 {   "-D x2", // argv
-                    "-D:x2\n"
+                    "-D:%1\n"
+                    "<val>:x2"
                 },
             },
         },
@@ -1640,10 +1675,12 @@ static void test_correctness()
         {   "Usage: prog --line=<val>\n",
             {
                 {   "--line=x1", // argv
-                    "--line:x1\n"
+                    "--line:%1\n"
+                    "<val>:x1"
                 },
                 {   "--line x2", // argv
-                    "--line:x2\n"
+                    "--line:%1\n"
+                    "<val>:x2"
                 },
             },
         },
@@ -1665,7 +1702,8 @@ static void test_correctness()
             "         <SEQUENCE>\n",
             {
                 {   "-m abc def", // argv
-                    "-m:abc\n"
+                    "-m:%1\n"
+                    "<MODE>:abc\n"
                     "<SEQUENCE>:def"
                 }
             },

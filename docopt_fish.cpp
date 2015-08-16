@@ -343,6 +343,12 @@ public:
 const string_t source;
 docopt_impl(const string_t &s) : source(s), parse_tree(NULL) {}
 
+string_t string_for_range(const range_t &r) const
+{
+    assert(r.end() <= this->source.size());
+    return string_t(this->source, r.start, r.length);
+}
+
 #pragma mark -
 #pragma mark Instance Variables
 #pragma mark -
@@ -1244,7 +1250,7 @@ typedef std::map<string_t, base_argument_t<string_t> > option_map_t;
 
 struct match_state_t {
     // Map from option names to arguments
-    option_map_t option_map;
+    option_map_t argument_values;
     
     // Next positional to dequeue
     size_t next_positional_index;
@@ -1260,7 +1266,7 @@ struct match_state_t {
     match_state_t() : next_positional_index(0), fully_consumed(false) {}
 
     void swap(match_state_t &rhs) {
-        this->option_map.swap(rhs.option_map);
+        this->argument_values.swap(rhs.argument_values);
         this->consumed_options.swap(rhs.consumed_options);
         this->suggested_next_arguments.swap(rhs.suggested_next_arguments);
         std::swap(this->next_positional_index, rhs.next_positional_index);
@@ -1635,18 +1641,24 @@ bool match_options(const option_list_t &options_in_doc, match_state_t *state, ma
         }
 
         if (resolved_opt_idx != npos) {
-            // We found a matching option in argv. Set it in the option_map for this state and mark its index as used
+            // We found a matching option in argv. Set it in the argument_values for this state and mark its index as used
+            // We have two things to set:
+            //  - The option name, like -foo
+            //  - The option's argument value (if any)
             const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
             const string_t name = opt_in_doc.longest_name_as_string(this->source);
             
-            // Update the argument, creating it if necessary
-            arg_t *arg = &state->option_map[name];
-            if (resolved_opt.value_idx_in_argv != npos) {
-                const string_t &str = ctx->argv.at(resolved_opt.value_idx_in_argv);
+            // Update the option value, creating it if necessary
+            state->argument_values[name].count += 1;
+            
+            // Update the option argument vlaue
+            if (opt_in_doc.has_value() && resolved_opt.value_idx_in_argv != npos) {
+                const string_t variable_name(this->source, opt_in_doc.value.start, opt_in_doc.value.length);
+                
+                const string_t &arg_with_value = ctx->argv.at(resolved_opt.value_idx_in_argv);
                 const range_t value_range = resolved_opt.value_range_in_arg;
-                arg->values.push_back(string_t(str, value_range.start, value_range.length));
+                state->argument_values[variable_name].values.push_back(string_t(arg_with_value, value_range.start, value_range.length));
             }
-            arg->count += 1;
             
             successful_match = true;
             state->consumed_options.at(resolved_opt_idx) = true;
@@ -1720,8 +1732,7 @@ void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ct
         const string_t &name = ctx->argv.at(positional.idx_in_argv);
         if (name.size() == range.length && this->range_equals_string(range, name)) {
             // The static argument matches
-            arg_t *arg = &state->option_map[name];
-            arg->count += 1;
+            state->argument_values[name].count += 1;
             ctx->acquire_next_positional(state);
             ctx->try_mark_fully_consumed(state);
             state_destructive_append_to(state, resulting_states);
@@ -1729,7 +1740,7 @@ void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ct
     } else {
         // No more positionals. Maybe suggest one.
         if (ctx->flags & flag_generate_suggestions) {
-            state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
+            state->suggested_next_arguments.insert(string_for_range(range));
         }
         // Append the state if we are allowing incomplete
         if (ctx->flags & flag_match_allow_incomplete) {
@@ -1743,8 +1754,8 @@ void match(const variable_clause_t &node, match_state_t *state, match_context_t 
     const range_t &range = node.word.range;
     if (ctx->has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
-        const string_t name = string_t(this->source, range.start, range.length);
-        arg_t *arg = &state->option_map[name];
+        const string_t name = string_for_range(range);
+        arg_t *arg = &state->argument_values[name];
         const positional_argument_t &positional = ctx->acquire_next_positional(state);
         arg->values.push_back(ctx->argv.at(positional.idx_in_argv));
         ctx->try_mark_fully_consumed(state);
@@ -1752,7 +1763,7 @@ void match(const variable_clause_t &node, match_state_t *state, match_context_t 
     } else {
         // No more positionals. Suggest one.
         if (ctx->flags & flag_generate_suggestions) {
-            state->suggested_next_arguments.insert(string_t(this->source, range.start, range.length));
+            state->suggested_next_arguments.insert(string_for_range(range));
         }
         if (ctx->flags & flag_match_allow_incomplete) {
             state_destructive_append_to(state, resulting_states);
@@ -1774,11 +1785,16 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
         string_t name = opt.longest_name_as_string(this->source);
         // We merely invoke operator[]; this will do the insertion with a default value if necessary.
         // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
-        arg_t *arg = &result[name];
+        result[name];
         
-        if (! opt.default_value_range.empty() && arg->values.empty()) {
-            // Apply the default value
-            arg->values.push_back(string_t(this->source, opt.default_value_range.start, opt.default_value_range.length));
+        if (opt.has_value() && ! opt.default_value_range.empty()) {
+            // Maybe pply the default value for the variable
+            const string_t variable_name(this->source, opt.value.start, opt.value.length);
+            arg_t *var_arg = &result[variable_name];
+            if (var_arg->values.empty())
+            {
+                var_arg->values.push_back(string_for_range(opt.default_value_range));
+            }
         }
     }
     
@@ -1818,7 +1834,7 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
             const match_state_t &state = result.at(i);
             bool is_incomplete = ! ctx.unused_arguments(&state).empty();
             std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
-            for (typename option_map_t::const_iterator iter = state.option_map.begin(); iter != state.option_map.end(); ++iter) {
+            for (typename option_map_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
                 const string_t &name = iter->first;
                 const arg_t &arg = iter->second;
                 fprintf(stderr, "\t%ls: ", widen(name).c_str());
@@ -1856,7 +1872,7 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
         if (out_unused_arguments != NULL) {
             out_unused_arguments->swap(best_unused_args);
         }
-        return finalize_option_map(result.at(best_state_idx).option_map, all_options, all_variables, flags);
+        return finalize_option_map(result.at(best_state_idx).argument_values, all_options, all_variables, flags);
     } else {
         // No states. Every argument is unused.
         if (out_unused_arguments != NULL) {
@@ -2086,14 +2102,14 @@ std::vector<string_t> get_variables() const {
     // Include explicit variables
     for (size_t i=0; i < this->all_variables.size(); i++) {
         const range_t &r = this->all_variables.at(i);
-        result.push_back(string_t(this->source, r.start, r.length));
+        result.push_back(string_for_range(r));
     }
     
     // Include variables that are part of options
     for (size_t i=0; i < this->all_options.size(); i++) {
         const range_t &r = this->all_options.at(i).value;
         if (! r.empty()) {
-            result.push_back(string_t(this->source, r.start, r.length));
+            result.push_back(string_for_range(r));
         }
     }
     
