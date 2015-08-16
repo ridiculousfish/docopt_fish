@@ -2,4 +2,6 @@
 docopt_benchmark
 docopt_test
 copy_it.sh
-
+docopt_fish.xcodeproj
+DerivedData/
+.DS_Store
