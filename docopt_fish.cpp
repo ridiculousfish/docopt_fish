@@ -673,7 +673,7 @@ static bool find_header(const string_t &src, const range_t &line_range, range_t 
     for (size_t i=line_range.start; i < line_range.end(); i++) {
         char_t c = src[i];
         if (c == ':') {
-            *out_header_range = range_t(line_range.start, i - line_range.start);
+            *out_header_range = range_t(line_range.start, i + 1 - line_range.start);
             result = true;
             break;
         } else if (! (isalnum(c) || c == ' ')) {
@@ -711,7 +711,6 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         
         range_t trimmed_line_range = trim_whitespace(line_range, this->source);
         assert(trimmed_line_range.start >= line_range.start);
-        const size_t trimmed_line_start = trimmed_line_range.start;
         
         range_t header_range;
         if (find_header(this->source, trimmed_line_range, &header_range)) {
@@ -722,14 +721,14 @@ void populate_by_walking_lines(error_list_t *out_errors) {
             size_t keyword_count = sizeof keywords / sizeof *keywords;
             bool found_keyword = false;
             for (size_t i=0; i < keyword_count && !found_keyword; i++) {
-                found_keyword = find_case_insensitive(this->source, keywords[i], header_range);
+                found_keyword = (find_case_insensitive(this->source, keywords[i], header_range) != string_t::npos);
             }
             mode = found_keyword ? mode_normal : mode_exposition;
             
             // Remove the header range from the trimmed line
             size_t header_end = header_range.end();
             assert(header_end <= trimmed_line_range.end());
-            trimmed_line_range = range_t(header_end, trimmed_line_range.end() - header_end);
+            trimmed_line_range = trim_whitespace(range_t(header_end, trimmed_line_range.end() - header_end), this->source);
         }
         
         // Skip exposition or empty lines
@@ -744,11 +743,12 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         
           Here 'foo' is indented more than 'bar'.
         */
-        const size_t line_indent = compute_indent(this->source, line_range.start, trimmed_line_start - line_range.start);
+        const size_t line_indent = compute_indent(this->source, line_range.start, trimmed_line_range.start - line_range.start);
         
         // Determine the "line group." That is, this line plus all subsequent nonempty lines
         // that are indented more than this line.
         range_t line_group_range = trimmed_line_range;
+        range_t all_consumed_lines = line_range;
         range_t next_line = line_range;
         while (get_next_line(this->source, &next_line)) {
             range_t trimmed_next_line = trim_whitespace(next_line, this->source);
@@ -757,6 +757,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
                 break;
             }
             line_group_range.merge(next_line);
+            all_consumed_lines.merge(next_line);
         }
         
         char_t first_char = this->source.at(line_group_range.start);
@@ -785,7 +786,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         }
         
         // Note the line range we consumed, for the next iteration of the loop
-        line_range = line_group_range;
+        line_range = all_consumed_lines;
     }
     
     // Ensure our shortcut options don't have duplicates
@@ -874,8 +875,8 @@ variable_command_map_t parse_one_variable_command_spec(const range_t &range, err
         append_error(out_errors, range.start, error_missing_close_variable, "No > to balance this <");
     } else {
         assert(close_bracket < range.end());
-        range_t key_range(range.start, close_bracket - range.start);
-        range_t value(close_bracket + 1, range.end() - (close_bracket + 1));
+        range_t key_range(range.start, close_bracket - range.start + 1);
+        range_t value(key_range.end(), range.end() - key_range.end());
         key_range = trim_whitespace(key_range, this->source);
         value = trim_whitespace(value, this->source);
         result[string_for_range(key_range)] = value;

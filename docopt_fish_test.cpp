@@ -1042,7 +1042,7 @@ static void test_correctness()
             },
         },
         /* Case 35 */
-        {   "Naval Fate.\n"
+        {   "Name: Naval Fate.\n"
             "\n"
             "Usage:\n"
             "  prog ship new <name>...\n"
@@ -1174,7 +1174,7 @@ static void test_correctness()
         /* Case 44 */
         {   "Usage: prog [-v | -vv | -vvv]\n"
             "\n"
-            "This one is probably most readable user-friednly variant.",
+            "Description: This one is probably most readable user-friednly variant.",
             {
                 {   "", // argv
                     "-v:False\n"
@@ -1563,7 +1563,7 @@ static void test_correctness()
         /* Case 78 */
         {   "Usage: prog --foo\n"
             "       prog --bar\n"
-            "NOT PART OF SECTION",
+            "other: NOT PART OF SECTION",
             {
                 {   "--foo", // argv
                     "--bar:False\n"
@@ -1576,7 +1576,7 @@ static void test_correctness()
             " prog --foo\n"
             " prog --bar\n"
             "\n"
-            "NOT PART OF SECTION",
+            "anything: NOT PART OF SECTION",
             {
                 {   "--foo", // argv
                     "--bar:False\n"
@@ -1588,7 +1588,7 @@ static void test_correctness()
         {   "Usage:\n"
             " prog --foo\n"
             " prog --bar\n"
-            "NOT PART OF SECTION",
+            "anything: NOT PART OF SECTION",
             {
                 {   "--foo", // argv
                     "--bar:False\n"
@@ -1605,7 +1605,7 @@ static void test_correctness()
             "other options:\n"
             " --egg\n"
             " --spam\n"
-            "-not-an-option-",
+            "anything: -not-an-option-",
             {
                 {   "--baz --egg", // argv
                     "--baz:True\n"
@@ -1942,10 +1942,10 @@ static void test_commands()
     const testcase_t testcases[] =
     {   /* Case 0 */
         {   "Usage: prog <pid> <grp> <uid> <gid>\n"
-            "Conditions: <pid>  get_a_pid\n"
-            "            <grp>  (echo groups)\n"
-            "            <uid>   1 2\n 3 4\n"
-            "            <gid>   \n1 2\n 3 4\n",
+            "  <pid>  get_a_pid\n"
+            "  <grp>  (echo groups)\n"
+            "  <uid>   1 2\n   3 4\n"
+            "  <gid>   \n    1 2\n   3 4\n",
             {
                 {   "<pid>", // variable
                     "get_a_pid"
@@ -1954,16 +1954,16 @@ static void test_commands()
                     "(echo groups)"
                 },
                 {   "<uid>", // variable
-                    "1 2\n 3 4"
+                    "1 2\n   3 4"
                 },
                 {   "<gid>", // variable
-                    "1 2\n 3 4"
+                    "1 2\n   3 4"
                 },
             }
         },
         /* Case 1 */
         {   "Usage: prog <arg> <val>\n"
-            "Conditions:\n"
+            "Arguments:\n"
             "  <pid>\n"
             "    get_a_pid\n"
             "  <val>\n"
@@ -2052,7 +2052,7 @@ static void test_errors_in_usage()
         },
         /* Case 5 */
         {   "Usage: prog <var>\n"
-            "Conditions: <var>  cond1\n"
+            "Arguments: <var>  cond1\n"
             "            <var>  cond2\n",
             error_one_variable_multiple_commands
         },
@@ -2115,12 +2115,12 @@ static void test_errors_in_usage()
         },
         /* Case 17 */
         {   "Usage: prog --foo=<bar> \n"
-            "Conditions: gibberish",
+            "Arguments: gibberish",
             error_invalid_variable_name
         },
         /* Case 18 */
         {   "Usage: prog ... \n"
-            "Conditions: gibberish",
+            "Arguments: gibberish",
             error_leading_ellipsis
         },
         {NULL, 0}
@@ -2263,7 +2263,7 @@ void test_fuzzing() {
         "  ",
         "Usage:",
         "Options:",
-        "Conditions:",
+        "Arguments:",
         "[",
         "]",
         "(",
