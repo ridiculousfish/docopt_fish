@@ -338,6 +338,9 @@ typedef std::vector<error_t<string_t> > error_list_t;
 /* Class representing a map from variable names to conditions */
 typedef std::map<string_t, range_t> variable_command_map_t;
 
+/* List of usages */
+typedef std::vector<usage_t> usage_list_t;
+
 /* Constructor takes the source */
 public:
 const string_t source;
@@ -354,7 +357,7 @@ string_t string_for_range(const range_t &r) const
 #pragma mark -
 
 /* The usage parse tree. */
-usages_t usage_specs;
+usage_list_t usages;
 
 /* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
 option_list_t shortcut_options;
@@ -496,10 +499,11 @@ bool token_substr_equals(const token_t &tok, const char *str, size_t len) const 
 }
 
 /* Collects options, i.e. tokens of the form --foo */
-template<typename ENTRY_TYPE>
-void collect_options_and_variables(const ENTRY_TYPE &entry, option_list_t *out_options, range_list_t *out_variables, range_list_t *out_static_arguments) const {
+void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, range_list_t *out_variables, range_list_t *out_static_arguments) const {
     clause_collector_t collector;
-    collector.begin(entry);
+    for (size_t i=0; i < usages.size(); i++) {
+        collector.begin(usages.at(i));
+    }
     
     // "Return" the values
     out_options->swap(collector.options);
@@ -794,10 +798,10 @@ void populate_by_walking_lines(error_list_t *out_errors) {
     
     // Now parse our usage_spec_ranges
     size_t usages_count = usage_spec_ranges.size();
-    this->usage_specs.usages.resize(usages_count);
+    this->usages.resize(usages_count);
     for (size_t i=0; i < usages_count; i++)
     {
-        parse_one_usage<string_t>(this->source, usage_spec_ranges.at(i), this->shortcut_options, &this->usage_specs.usages.at(i), out_errors);
+        parse_one_usage<string_t>(this->source, usage_spec_ranges.at(i), this->shortcut_options, &this->usages.at(i), out_errors);
     }
 }
 
@@ -1447,9 +1451,9 @@ void match_list(const T& node, match_state_list_t *incoming_state_list, match_co
 }
 
 /* Match overrides */
-void match(const usages_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
+void match(const vector<usage_t> &usages, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Elide the copy in the last one
-    size_t count = node.usages.size();
+    size_t count = usages.size();
     if (count == 0) {
         return;
     }
@@ -1457,7 +1461,7 @@ void match(const usages_t &node, match_state_t *state, match_context_t *ctx, mat
     bool fully_consumed = false;
     for (size_t i=0; i + 1 < count && ! fully_consumed; i++) {
         match_state_t copied_state = *state;
-        match(node.usages.at(i), &copied_state, ctx, resulting_states);
+        match(usages.at(i), &copied_state, ctx, resulting_states);
         
         if (ctx->flags & flag_stop_after_consuming_everything) {
             size_t idx = resulting_states->size();
@@ -1470,7 +1474,7 @@ void match(const usages_t &node, match_state_t *state, match_context_t *ctx, mat
         }
     }
     if (! fully_consumed) {
-        match(node.usages.at(count-1), state, ctx, resulting_states);
+        match(usages.at(count-1), state, ctx, resulting_states);
     }
 }
 
@@ -1837,7 +1841,7 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
     init_state.consumed_options.resize(resolved_options.size(), false);
     
     match_state_list_t result;
-    match(this->usage_specs, &init_state, &ctx, &result);
+    match(this->usages, &init_state, &ctx, &result);
 
     if (log_stuff) {
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
@@ -1902,15 +1906,15 @@ bool preflight(error_list_t *out_errors) {
     this->populate_by_walking_lines(out_errors);
     
     /* If we have no usage, apply the default one */
-    if (this->usage_specs.usages.empty())
+    if (this->usages.empty())
     {
-        this->usage_specs.usages.resize(1);
-        this->usage_specs.usages.back().make_default();
+        this->usages.resize(1);
+        this->usages.back().make_default();
     }
     
     // Extract options and variables from the usage sections
     option_list_t usage_options;
-    this->collect_options_and_variables(this->usage_specs, &usage_options, &this->all_variables, &this->all_static_arguments);
+    this->collect_options_and_variables(this->usages, &usage_options, &this->all_variables, &this->all_static_arguments);
 
     // Combine these into a single list
     this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
@@ -1947,7 +1951,11 @@ bool preflight(error_list_t *out_errors) {
     // Example of how to dump
     if (0)
     {
-        std::string dumped = node_dumper_t::dump_tree(this->usage_specs, this->source);
+        std::string dumped;
+        for (size_t i=0; i < this->usages.size(); i++)
+        {
+            dumped += node_dumper_t::dump_tree(this->usages.at(i), this->source);
+        }
         fprintf(stderr, "%s\n", dumped.c_str());
     }
     
@@ -1989,7 +1997,7 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
     match_state_t init_state;
     init_state.consumed_options.resize(resolved_options.size(), false);
     match_state_list_t states;
-    match(this->usage_specs, &init_state, &ctx, &states);
+    match(this->usages, &init_state, &ctx, &states);
     
     /* Find the state(s) with the fewest unused arguments, and then insert all of their suggestions into a list */
     string_list_t all_suggestions;
@@ -2060,8 +2068,8 @@ std::vector<string_t> get_command_names() const {
     /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
     std::vector<string_t> result;
     std::set<string_t> seen;
-    for (size_t i=0; i < this->usage_specs.usages.size(); i++) {
-        const usage_t &usage = this->usage_specs.usages.at(i);
+    for (size_t i=0; i < this->usages.size(); i++) {
+        const usage_t &usage = this->usages.at(i);
         range_t name_range = usage.prog_name.range;
         if (! name_range.empty()) {
             const string_t name(this->source, name_range.start, name_range.length);

@@ -13,9 +13,7 @@ OPEN_DOCOPT_IMPL
 using std::vector;
 
 /* Usage grammar:
- 
- usages = [usage]
- 
+  
  usage = WORD alternation_list
 
  alternation_list = [expression_list] # logical ORs of values
@@ -157,19 +155,6 @@ struct usage_t {
     
     /* Turn the receiver into a "default" usage that has an empty program name and just the [options] portion. */
     void make_default();
-};
-
-struct usages_t {
-    vector<usage_t> usages;
-    
-    std::string name() const { return "usages"; }
-    
-    template<typename T>
-    void visit_children(T *v) const {
-        for (size_t i=0; i < this->usages.size(); i++) {
-            v->visit(this->usages.at(i));
-        }
-    }
 };
 
 struct opt_ellipsis_t {
