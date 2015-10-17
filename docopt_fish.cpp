@@ -353,7 +353,7 @@ string_t string_for_range(const range_t &r) const
 #pragma mark Instance Variables
 #pragma mark -
 
-/* The usage parse tree */
+/* The usage parse tree. Owned and destroyed in the constructor via delete */
 usages_t *parse_tree;
 
 /* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
@@ -367,9 +367,6 @@ range_list_t all_variables;
 
 /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
 range_list_t all_static_arguments;
-
-/* List of errors */
-error_list_t errors;
 
 /* Map from variable names to conditions */
 condition_map_t variables_to_conditions;
@@ -1886,7 +1883,7 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
 }
 
 /* Parses the docopt, etc. Returns true on success, false on error */
-bool preflight() {
+bool preflight(error_list_t *out_errors) {
     /* Clean up from any prior run */
     delete this->parse_tree; // may be null
     this->parse_tree = NULL;
@@ -1899,21 +1896,21 @@ bool preflight() {
 
     const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
     if (usage_ranges.empty()) {
-        append_error(&this->errors, npos, error_missing_usage_section, "Missing Usage: section");
+        append_error(out_errors, npos, error_missing_usage_section, "Missing Usage: section");
         return false;
     } else if (usage_ranges.size() > 1) {
-        append_error(&this->errors, npos, error_excessive_usage_sections, "More than one Usage: section");
+        append_error(out_errors, npos, error_excessive_usage_sections, "More than one Usage: section");
         return false;
     }
     
     // Extract options from the options section
-    this->shortcut_options = this->parse_options_spec(&this->errors);
-    this->uniqueize_options(&this->shortcut_options, true /* error on duplicates */, &this->errors);
+    this->shortcut_options = this->parse_options_spec(out_errors);
+    this->uniqueize_options(&this->shortcut_options, true /* error on duplicates */, out_errors);
     
-    this->parse_tree = parse_usage<string_t>(this->source, usage_ranges.at(0), this->shortcut_options, &this->errors);
+    this->parse_tree = parse_usage<string_t>(this->source, usage_ranges.at(0), this->shortcut_options, out_errors);
     if (! this->parse_tree) {
         // Should always produce an error here!
-        assert(! this->errors.empty());
+        assert(out_errors == NULL || ! out_errors->empty());
         return false;
     }
     
@@ -1925,7 +1922,7 @@ bool preflight() {
     this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
     this->all_options.insert(this->all_options.end(), usage_options.begin(), usage_options.end());
     this->all_options.insert(this->all_options.end(), this->shortcut_options.begin(), this->shortcut_options.end());
-    this->uniqueize_options(&this->all_options, false /* do not error on duplicates */, &this->errors);
+    this->uniqueize_options(&this->all_options, false /* do not error on duplicates */, out_errors);
 
     /* Hackish. Consider the following usage:
        usage: prog [options] [-a]
@@ -1954,7 +1951,7 @@ bool preflight() {
     }
     
     // Extract conditions from the conditions section
-    this->variables_to_conditions = this->parse_conditions_spec(&this->errors);
+    this->variables_to_conditions = this->parse_conditions_spec(out_errors);
     
     // Example of how to dump
     if (0)
@@ -1970,22 +1967,14 @@ bool preflight() {
 // TODO: make this const by stop touching error_list
 option_map_t best_assignment_for_argv(const string_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments)
 {
-    this->errors.clear();
-    
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
     
     // Extract positionals and arguments from argv
-    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, &this->errors);
+    this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, out_errors);
     
     // Produce an option map
     option_map_t result = this->match_argv(argv, flags, positionals, resolved_options, all_options, all_variables, out_unused_arguments);
-    
-    // Pass along any errors
-    if (out_errors) {
-        out_errors->insert(out_errors->end(), this->errors.begin(), this->errors.end());
-    }
-    this->errors.clear();
     
     return result;
 }
@@ -2183,11 +2172,7 @@ template<typename string_t>
 bool argument_parser_t<string_t>::set_doc(const string_t &doc, std::vector<error_t<string_t> > *out_errors) {
     docopt_impl<string_t> *new_impl = new docopt_impl<string_t>(doc);
     
-    bool preflighted = new_impl->preflight();
-    
-    if (out_errors) {
-        out_errors->insert(out_errors->end(), new_impl->errors.begin(), new_impl->errors.end());
-    }
+    bool preflighted = new_impl->preflight(out_errors);
     
     if (! preflighted) {
         delete new_impl;
