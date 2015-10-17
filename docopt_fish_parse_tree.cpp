@@ -511,6 +511,13 @@ struct parse_context_t {
     }
 };
 
+void usage_t::make_default() {
+    // hackish?
+    const std::string src = "command [options]";
+    vector<error_t<std::string> > *null_errors = NULL;
+    parse_one_usage(src, range_t(0, src.size()), option_list_t(), this, null_errors);
+}
+
 template<typename string_t>
 bool parse_one_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<string_t> > *out_errors)
 {

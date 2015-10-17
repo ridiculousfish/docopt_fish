@@ -2180,6 +2180,11 @@ static void test_validation()
             "--baz", // argv
             "1"
         },
+        /* Case 2 */
+        {   "--baz\n",
+            "foo --baz", // argv
+            "01"
+        },
         {NULL, NULL, NULL}
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {

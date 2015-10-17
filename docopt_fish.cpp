@@ -1901,6 +1901,13 @@ bool preflight(error_list_t *out_errors) {
     // Populate our instance variables
     this->populate_by_walking_lines(out_errors);
     
+    /* If we have no usage, apply the default one */
+    if (this->usage_specs.usages.empty())
+    {
+        this->usage_specs.usages.resize(1);
+        this->usage_specs.usages.back().make_default();
+    }
+    
     // Extract options and variables from the usage sections
     option_list_t usage_options;
     this->collect_options_and_variables(this->usage_specs, &usage_options, &this->all_variables, &this->all_static_arguments);

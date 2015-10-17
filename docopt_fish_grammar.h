@@ -154,6 +154,9 @@ struct usage_t {
         v->visit(prog_name);
         v->visit(alternation_list);
     }
+    
+    /* Turn the receiver into a "default" usage that has an empty program name and just the [options] portion. */
+    void make_default();
 };
 
 struct usages_t {
