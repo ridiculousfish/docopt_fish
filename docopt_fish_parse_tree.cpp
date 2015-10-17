@@ -534,26 +534,6 @@ struct parse_context_t {
 };
 
 template<typename string_t>
-usages_t *parse_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, vector<error_t<string_t> > *out_errors)
-{
-    parse_context_t<string_t> ctx(src, src_range, shortcut_options);
-    usages_t *result = new usages_t();
-    parse_result_t status = ctx.template parse(result);
-    if (status == parsed_error) {
-        delete result;
-        result = NULL;
-    }
-    
-    // Error statuses should have error messages
-    assert(! (status == parsed_error && ctx.errors.empty()));
-    if (out_errors) {
-        out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
-    }
-    
-    return result; // transfers ownership
-}
-
-template<typename string_t>
 bool parse_one_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<string_t> > *out_errors)
 {
     parse_context_t<string_t> ctx(src, src_range, shortcut_options);
@@ -564,11 +544,6 @@ bool parse_one_usage(const string_t &src, const range_t &src_range, const option
     }
     return status != parsed_error;
 }
-
-
-// Force template instantiation
-template usages_t *parse_usage<std::string>(const std::string &, const range_t &, const option_list_t &, vector<error_t<std::string> > *);
-template usages_t *parse_usage<std::wstring>(const std::wstring &, const range_t &, const option_list_t &shortcut_options, vector<error_t<std::wstring> > *);
 
 // Force template instantiation
 template bool parse_one_usage<std::string>(const std::string &, const range_t &, const option_list_t &, usage_t *out_usage, vector<error_t<std::string> > *);

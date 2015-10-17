@@ -342,7 +342,7 @@ typedef std::map<string_t, range_t> variable_command_map_t;
 /* Constructor takes the source */
 public:
 const string_t source;
-docopt_impl(const string_t &s) : source(s), parse_tree(NULL) {}
+docopt_impl(const string_t &s) : source(s) {}
 
 string_t string_for_range(const range_t &r) const
 {
@@ -354,9 +354,7 @@ string_t string_for_range(const range_t &r) const
 #pragma mark Instance Variables
 #pragma mark -
 
-/* The usage parse tree. Owned and destroyed in the constructor via delete */
-usages_t *parse_tree;
-
+/* The usage parse tree. */
 usages_t usage_specs;
 
 /* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
@@ -821,6 +819,9 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         // Note the line range we consumed, for the next iteration of the loop
         line_range = line_group_range;
     }
+    
+    // Ensure our shortcut options don't have duplicates
+    this->uniqueize_options(&this->shortcut_options, true /* error on duplicates */, out_errors);
     
     // Now parse our usage_spec_ranges
     size_t usages_count = usage_spec_ranges.size();
@@ -1984,7 +1985,7 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
     init_state.consumed_options.resize(resolved_options.size(), false);
     
     match_state_list_t result;
-    match(*this->parse_tree, &init_state, &ctx, &result);
+    match(this->usage_specs, &init_state, &ctx, &result);
 
     if (log_stuff) {
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
@@ -2046,9 +2047,6 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
 /* Parses the docopt, etc. Returns true on success, false on error */
 bool preflight(error_list_t *out_errors) {
     /* Clean up from any prior run */
-    delete this->parse_tree; // may be null
-    this->parse_tree = NULL;
-
     this->shortcut_options.clear();
     this->all_options.clear();
     this->all_variables.clear();
@@ -2058,29 +2056,9 @@ bool preflight(error_list_t *out_errors) {
 
     this->populate_by_walking_lines(out_errors);
     
-    const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
-    if (usage_ranges.empty()) {
-        append_error(out_errors, npos, error_missing_usage_section, "Missing Usage: section");
-        return false;
-    } else if (usage_ranges.size() > 1) {
-        append_error(out_errors, npos, error_excessive_usage_sections, "More than one Usage: section");
-        return false;
-    }
-    
-    // Extract options from the options section
-    this->shortcut_options = this->parse_options_spec(out_errors);
-    this->uniqueize_options(&this->shortcut_options, true /* error on duplicates */, out_errors);
-    
-    this->parse_tree = parse_usage<string_t>(this->source, usage_ranges.at(0), this->shortcut_options, out_errors);
-    if (! this->parse_tree) {
-        // Should always produce an error here!
-        assert(out_errors == NULL || ! out_errors->empty());
-        return false;
-    }
-    
     // Extract options and variables from the usage sections
     option_list_t usage_options;
-    this->collect_options_and_variables(*this->parse_tree, &usage_options, &this->all_variables, &this->all_static_arguments);
+    this->collect_options_and_variables(this->usage_specs, &usage_options, &this->all_variables, &this->all_static_arguments);
 
     // Combine these into a single list
     this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
@@ -2120,7 +2098,7 @@ bool preflight(error_list_t *out_errors) {
     // Example of how to dump
     if (0)
     {
-        std::string dumped = node_dumper_t::dump_tree(*this->parse_tree, this->source);
+        std::string dumped = node_dumper_t::dump_tree(this->usage_specs, this->source);
         fprintf(stderr, "%s\n", dumped.c_str());
     }
     
@@ -2162,7 +2140,7 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
     match_state_t init_state;
     init_state.consumed_options.resize(resolved_options.size(), false);
     match_state_list_t states;
-    match(*this->parse_tree, &init_state, &ctx, &states);
+    match(this->usage_specs, &init_state, &ctx, &states);
     
     /* Find the state(s) with the fewest unused arguments, and then insert all of their suggestions into a list */
     string_list_t all_suggestions;
@@ -2232,16 +2210,14 @@ string_t description_for_option(const string_t &given_option_name) const {
 std::vector<string_t> get_command_names() const {
     /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
     std::vector<string_t> result;
-    if (this->parse_tree) {
-        std::set<string_t> seen;
-        for (size_t i=0; i < this->parse_tree->usages.size(); i++) {
-            const usage_t &usage = this->parse_tree->usages.at(i);
-            range_t name_range = usage.prog_name.range;
-            if (! name_range.empty()) {
-                const string_t name(this->source, name_range.start, name_range.length);
-                if (seen.insert(name).second) {
-                    result.push_back(name);
-                }
+    std::set<string_t> seen;
+    for (size_t i=0; i < this->usage_specs.usages.size(); i++) {
+        const usage_t &usage = this->usage_specs.usages.at(i);
+        range_t name_range = usage.prog_name.range;
+        if (! name_range.empty()) {
+            const string_t name(this->source, name_range.start, name_range.length);
+            if (seen.insert(name).second) {
+                result.push_back(name);
             }
         }
     }
