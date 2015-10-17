@@ -337,6 +337,7 @@ typedef std::vector<error_t<string_t> > error_list_t;
 
 /* Class representing a map from variable names to conditions */
 typedef std::map<string_t, range_t> condition_map_t;
+typedef std::map<string_t, range_t> variable_command_map_t;
 
 /* Constructor takes the source */
 public:
@@ -356,6 +357,8 @@ string_t string_for_range(const range_t &r) const
 /* The usage parse tree. Owned and destroyed in the constructor via delete */
 usages_t *parse_tree;
 
+usages_t usage_specs;
+
 /* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
 option_list_t shortcut_options;
 
@@ -370,6 +373,9 @@ range_list_t all_static_arguments;
 
 /* Map from variable names to conditions */
 condition_map_t variables_to_conditions;
+
+/* Map from variable names to the commands that populate them */
+variable_command_map_t variables_to_commands;
 
 /* Helper typedefs */
 typedef base_argument_t<string_t> arg_t;
@@ -691,6 +697,140 @@ static size_t compute_indent(const string_t &src, size_t start, size_t len)
     return result;
 }
 
+static bool char_is_start_of_usage_spec(char_t c) {
+    return isalnum(c) || c == '_';
+}
+
+static bool find_header(const string_t &src, const range_t &line_range, range_t *out_header_range) {
+    /* We are considered a header if we contain a colon, and only space / alpha text before it. */
+    bool result = false;
+    for (size_t i=line_range.start; i < line_range.end(); i++) {
+        char_t c = src[i];
+        if (c == ':') {
+            *out_header_range = range_t(line_range.start, i - line_range.start);
+            result = true;
+            break;
+        } else if (! (isalnum(c) || c == ' ')) {
+            break;
+        }
+    }
+    return result;
+}
+
+/* Walk over the lines of our source, starting from the beginning. */
+void populate_by_walking_lines(error_list_t *out_errors) {
+    /* Distinguish between normal (docopt) and exposition (e.g. description). */
+    enum mode_t {
+        mode_normal,
+        mode_exposition
+    } mode = mode_normal;
+    
+    // We need to parse the usage spec ranges after all of the Options
+    // This is because we need the options to disambiguate some usages
+    range_list_t usage_spec_ranges;
+    
+    range_t line_range;
+    while (get_next_line(this->source, &line_range)) {
+        /* There are a couple of possibilitise for each line:
+         
+         1. It may have a header like "Usage:". If so, we want to strip that header, and optionally
+            use it to determine the mode.
+         2. It may be a usage spec. We can tell because the first word is plain text.
+         3. It may be an option spec. We can tell because the first character is a dash.
+         4. It may be a variable spec. We can tell because the first character is a <.
+         5. It may be just whitespace or empty, and is ignored.
+         
+         Also note that a (nonempty) line indented more than the previous line is considered a continuation of that line.
+         */
+        
+        range_t trimmed_line_range = trim_whitespace(line_range, this->source);
+        assert(trimmed_line_range.start >= line_range.start);
+        const size_t trimmed_line_start = trimmed_line_range.start;
+        
+        range_t header_range;
+        if (find_header(this->source, trimmed_line_range, &header_range)) {
+            // Set mode based on header, and remove header from line
+            // The headers we know about are Usage, Synopsis, Options, and Arguments (case insensitive)
+            // Everything else is considered exposition
+            const char * const keywords[] = { "Usage", "Synopsis", "Options", "Arguments" };
+            size_t keyword_count = sizeof keywords / sizeof *keywords;
+            bool found_keyword = false;
+            for (size_t i=0; i < keyword_count && !found_keyword; i++) {
+                found_keyword = find_case_insensitive(this->source, keywords[i], header_range);
+            }
+            mode = found_keyword ? mode_normal : mode_exposition;
+            
+            // Remove the header range from the trimmed line
+            size_t header_end = header_range.end();
+            assert(header_end <= trimmed_line_range.end());
+            trimmed_line_range = range_t(header_end, trimmed_line_range.end() - header_end);
+        }
+        
+        // Skip exposition or empty lines
+        if (mode == mode_exposition || trimmed_line_range.empty()) {
+            continue;
+        }
+        
+        /* Compute the indent. Note that the header is considered part of the indent, so that:
+         
+          Usage: foo
+              bar
+        
+          Here 'foo' is indented more than 'bar'.
+        */
+        const size_t line_indent = compute_indent(this->source, line_range.start, trimmed_line_start - line_range.start);
+        
+        // Determine the "line group." That is, this line plus all subsequent nonempty lines
+        // that are indented more than this line.
+        range_t line_group_range = trimmed_line_range;
+        range_t next_line = line_range;
+        while (get_next_line(this->source, &next_line)) {
+            range_t trimmed_next_line = trim_whitespace(next_line, this->source);
+            size_t next_line_indent = compute_indent(this->source, next_line.start, trimmed_next_line.start - next_line.start);
+            if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
+                break;
+            }
+            line_group_range.merge(next_line);
+        }
+        
+        char_t first_char = this->source.at(line_group_range.start);
+        if (first_char == '-') {
+            // It's an option spec
+            option_list_t options = this->parse_one_option_spec(line_group_range, out_errors);
+            this->shortcut_options.insert(this->shortcut_options.end(), options.begin(), options.end());
+            
+        } else if (first_char == '<') {
+            // It's a variable command spec
+            const variable_command_map_t new_var_cmds = parse_one_variable_command_spec(line_group_range, out_errors);
+            for (typename variable_command_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
+                if (!this->variables_to_commands.insert(*iter).second) {
+                    append_error(out_errors, line_group_range.start, error_one_variable_multiple_conditions, "Duplicate command for variable");
+                }
+            }
+            
+        } else if (char_is_start_of_usage_spec(first_char)) {
+            // It's a usage spec. We will come back to this.
+            usage_spec_ranges.push_back(line_group_range);
+            
+        } else {
+            // It's an error
+            append_error(out_errors, trimmed_line_range.start, error_unknown_leader, "Lines must start with a normal character, less-than sign, or dash.");
+            break;
+        }
+        
+        // Note the line range we consumed, for the next iteration of the loop
+        line_range = line_group_range;
+    }
+    
+    // Now parse our usage_spec_ranges
+    size_t usages_count = usage_spec_ranges.size();
+    this->usage_specs.usages.resize(usages_count);
+    for (size_t i=0; i < usages_count; i++)
+    {
+        parse_one_usage<string_t>(this->source, usage_spec_ranges.at(i), this->shortcut_options, &this->usage_specs.usages.at(i), out_errors);
+    }
+}
+
 /* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. We allow the section names to be indented, but must be less idented than the previous line. If include_unindented_lines is true, then non-header lines that are less indented are included:
 
   Usage: foo
@@ -798,6 +938,27 @@ option_list_t parse_options_spec(error_list_t *errors) const {
                 result.insert(result.end(), tmp.begin(), tmp.end());
             }
         }
+    }
+    return result;
+}
+
+/* Given a variable spec, parse out a condition map */
+variable_command_map_t parse_one_variable_command_spec(const range_t &range, error_list_t *out_errors) const {
+    // A specification look like this:
+    // <pid> stuff
+    variable_command_map_t result;
+    assert(this->source.at(range.start) == '<');
+    const size_t close_bracket = this->source.find('>', range.start);
+    if (close_bracket >= range.end()) {
+        // note: this covers npos too
+        append_error(out_errors, range.start, error_missing_close_variable, "No > to balance this <");
+    } else {
+        assert(close_bracket < range.end());
+        range_t key_range(range.start, close_bracket - range.start);
+        range_t value(close_bracket + 1, range.end() - (close_bracket + 1));
+        key_range = trim_whitespace(key_range, this->source);
+        value = trim_whitespace(value, this->source);
+        result[string_for_range(key_range)] = value;
     }
     return result;
 }
@@ -1893,7 +2054,10 @@ bool preflight(error_list_t *out_errors) {
     this->all_variables.clear();
     this->all_static_arguments.clear();
     this->variables_to_conditions.clear();
+    this->usage_specs.usages.clear();
 
+    this->populate_by_walking_lines(out_errors);
+    
     const range_list_t usage_ranges = this->source_ranges_for_section("Usage:");
     if (usage_ranges.empty()) {
         append_error(out_errors, npos, error_missing_usage_section, "Missing Usage: section");

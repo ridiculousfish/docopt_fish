@@ -286,12 +286,14 @@ enum {
     error_missing_close_paren, // Missing ): prog (foo
     error_missing_close_bracket, // Missing ]:  prog [foo
     error_missing_close_bracket_in_default, // No close bracket. Options: --send <msg> Specifies message [default: none
+    error_missing_close_variable, // Missing >: <foo
     error_one_variable_multiple_conditions, // Two conditions for same var. Conditions: <msg> foo \n <msg> foo
     error_option_duplicated_in_options_section, // Options: --foo, --foo
     error_missing_usage_section, // No Usage:
     error_excessive_usage_sections, // More than one Usage:
     error_missing_program_name, // Forgot the program name. Usage: --foo
     error_trailing_vertical_bar, // Usage: prog foo | bar |
+    error_unknown_leader, // Unknown leader on a line, e.g. leading ;
     
     // Errors that may occur in arguments (argv)
     // Lower values are more "likely" errors
