@@ -325,33 +325,11 @@ struct parse_context_t {
             return parsed_done;
         }
         
-        if (! this->scan_word(&result->prog_name)) {
-            append_error(&this->errors, this->remaining_range.start, error_missing_program_name, "Missing program name");
-            return parsed_error;
-        } else {
-            return parse(&result->alternation_list);
-        }
+        bool scanned = this->scan_word(&result->prog_name);
+        assert(scanned); // else we should not have tried to parse this as a usage
+        return parse(&result->alternation_list);
     }
     
-    // Parse a usages_t
-    parse_result_t parse(usages_t *result) {
-        // Our usages are quite small, but copying them is expensive
-        result->usages.reserve(8);
-        parse_result_t status = parsed_ok;
-        while (status == parsed_ok) {
-            status = try_parse_appending(&result->usages);
-        }
-        if (status == parsed_done) {
-            if (result->usages.empty()) {
-                append_error(&this->errors, this->remaining_range.start, error_missing_program_name, "Missing program name");
-                status = parsed_error;
-            } else {
-                status = parsed_ok;
-            }
-        }
-        return status;
-    }
-
     // Parse ellipsis
     parse_result_t parse(opt_ellipsis_t *result) {
         result->present = this->scan("...", &result->ellipsis);
