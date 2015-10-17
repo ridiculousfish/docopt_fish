@@ -336,7 +336,6 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
 typedef std::vector<error_t<string_t> > error_list_t;
 
 /* Class representing a map from variable names to conditions */
-typedef std::map<string_t, range_t> condition_map_t;
 typedef std::map<string_t, range_t> variable_command_map_t;
 
 /* Constructor takes the source */
@@ -368,9 +367,6 @@ range_list_t all_variables;
 
 /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
 range_list_t all_static_arguments;
-
-/* Map from variable names to conditions */
-condition_map_t variables_to_conditions;
 
 /* Map from variable names to the commands that populate them */
 variable_command_map_t variables_to_commands;
@@ -646,30 +642,6 @@ option_list_t parse_one_option_spec(const range_t &range, error_list_t *errors) 
     return result;
 }
 
-// Returns true if the source line contains an option spec, that is, has at least one leading space, and then a dash
-static bool line_contains_option_spec(const string_t &str, const range_t &range) {
-    range_t remaining = range;
-    range_t space = scan_while(str, &remaining, isspace);
-    range_t dashes = scan_while(str, &remaining, it_equals<'-'>);
-    return space.length > 0 && dashes.length > 0;
-}
-
-// Returns true if the source line contains a condition spec, that is, has at least one leading space and then a <
-static bool line_contains_condition_spec(const string_t &str, const range_t &range) {
-    range_t remaining = range;
-    range_t space = scan_while(str, &remaining, isspace);
-    range_t open_bracket = scan_while(str, &remaining, it_equals<'<'>);
-    return space.length > 0 && open_bracket.length > 0;
-}
-
-// Returns the index of the first colon within the given range, or npos if not found
-static size_t find_colon(const range_t &r, const string_t &src) {
-    typename string_t::const_iterator istart = src.begin();
-    size_t colon_pos = std::find(istart + r.start, istart + r.end(), ':') - istart;
-    assert(colon_pos >= r.start && colon_pos <= r.end());
-    return colon_pos < r.end() ? colon_pos : npos;
-}
-
 // Computes the indent for a line starting at start and extending len. Tabs are treated as 4 spaces. newlines are unexpected, and treated as one space.
 static size_t compute_indent(const string_t &src, size_t start, size_t len)
 {
@@ -693,10 +665,6 @@ static size_t compute_indent(const string_t &src, size_t start, size_t len)
         }
     }
     return result;
-}
-
-static bool char_is_start_of_usage_spec(char_t c) {
-    return isalnum(c) || c == '_';
 }
 
 static bool find_header(const string_t &src, const range_t &line_range, range_t *out_header_range) {
@@ -802,11 +770,11 @@ void populate_by_walking_lines(error_list_t *out_errors) {
             const variable_command_map_t new_var_cmds = parse_one_variable_command_spec(line_group_range, out_errors);
             for (typename variable_command_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
                 if (!this->variables_to_commands.insert(*iter).second) {
-                    append_error(out_errors, line_group_range.start, error_one_variable_multiple_conditions, "Duplicate command for variable");
+                    append_error(out_errors, line_group_range.start, error_one_variable_multiple_commands, "Duplicate command for variable");
                 }
             }
             
-        } else if (char_is_start_of_usage_spec(first_char)) {
+        } else if (isalnum(first_char) || first_char == '_') {
             // It's a usage spec. We will come back to this.
             usage_spec_ranges.push_back(line_group_range);
             
@@ -894,55 +862,6 @@ range_list_t source_ranges_for_section(const char *name, bool include_other_top_
     return result;
 }
 
-/* Parses the option specification at the given location */
-option_list_t parse_options_spec(error_list_t *errors) const {
-    option_list_t result;
-
-    const range_list_t section_ranges = source_ranges_for_section("Options:");
-    for (size_t range_idx = 0; range_idx < section_ranges.size(); range_idx++) {
-        const range_t section_range = section_ranges.at(range_idx);
-        const size_t section_end = section_range.end();
-        range_t line_range(section_range.start, 0);
-        while (get_next_line(this->source, &line_range, section_end)) {
-            // These are all valid option specifications:
-            // --foo
-            // --foo <bar>
-            // --foo=<bar>
-            // --foo=<bar>, -f=<bar>
-            // There may also be a description after two spaces
-            // The description may span multiple lines.
-
-            // Check to see if this line starts with a -
-            range_t trimmed_line = trim_whitespace(line_range, this->source);
-            if (trimmed_line.empty()) {
-                // Empty line in Options, just skip it
-                continue;
-            } else if (! line_contains_option_spec(this->source, line_range)) {
-                append_error(errors, line_range.start, error_invalid_option_name, "Invalid option name. Options must start with a leading space and a dash.");
-            } else {
-                // It's a new option. Determine how long its description goes.
-                range_t option_spec_range = line_range;
-                range_t local_range = line_range;
-                while (get_next_line(this->source, &local_range, section_end)) {
-                    if (line_contains_option_spec(this->source, local_range)) {
-                        break;
-                    } else {
-                        option_spec_range.merge(local_range);
-                        // Set our outermost lines to this line, so we'll skip past it next iteration
-                        line_range = local_range;
-                    }
-                }
-                
-                // Got the description. Skip leading whitespace and then parse out an option.
-                scan_while(this->source, &option_spec_range, isspace);
-                option_list_t tmp = parse_one_option_spec(option_spec_range, errors);
-                result.insert(result.end(), tmp.begin(), tmp.end());
-            }
-        }
-    }
-    return result;
-}
-
 /* Given a variable spec, parse out a condition map */
 variable_command_map_t parse_one_variable_command_spec(const range_t &range, error_list_t *out_errors) const {
     // A specification look like this:
@@ -963,74 +882,6 @@ variable_command_map_t parse_one_variable_command_spec(const range_t &range, err
     }
     return result;
 }
-
-/* Parses the conditions specification at the given location. TODO: refactor this with parse_options_spec */
-condition_map_t parse_conditions_spec(error_list_t *errors) const {
-    condition_map_t result;
-    
-    /* The 'true' here means to include other top-level lines as conditions, e.g.:
-          Usage: prog <pid>
-          Conditions: <pid>
-          1
-          2
-          3
-     
-        This can come about during e.g. variable expansion in fish.
-    */
-    
-    const range_list_t section_ranges = source_ranges_for_section("Conditions:", true);
-    for (size_t range_idx = 0; range_idx < section_ranges.size(); range_idx++) {
-        const range_t section_range = section_ranges.at(range_idx);
-        const size_t section_end = section_range.end();
-        range_t line_range(section_range.start, 0);
-        while (get_next_line(this->source, &line_range, section_end)) {
-            range_t trimmed_line = trim_whitespace(line_range, this->source);
-            if (trimmed_line.empty()) {
-                // Empty line in Conditions, just skip it
-                continue;
-            } else if (! line_contains_condition_spec(this->source, line_range)) {
-                append_error(errors, line_range.start, error_invalid_variable_name, "Invalid condition. Conditions must start with a variable like <var>.");
-            } else {
-                // It's a new condition. Determine how long it goes.
-                range_t condition_spec_range = line_range;
-                range_t local_range = line_range;
-                while (get_next_line(this->source, &local_range, section_end)) {
-                    if (line_contains_condition_spec(this->source, local_range)) {
-                        break;
-                    } else {
-                        condition_spec_range.merge(local_range);
-                        // Set our outermost lines to this line, so we'll skip past it next iteration
-                        line_range = local_range;
-                    }
-                }
-
-                // Got the condition spec
-                // A specification look like this:
-                // <pid>  stuff
-                // Two spaces are the separator. But make sure we skip leading spaces!
-                condition_spec_range = trim_whitespace(condition_spec_range, this->source);
-                const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
-                size_t sep = this->source.find(two_spaces, condition_spec_range.start);
-                if (sep < condition_spec_range.end())
-                {
-                    range_t key(condition_spec_range.start, sep - condition_spec_range.start);
-                    range_t value(sep, condition_spec_range.end() - sep);
-                    
-                    // Trim whitespace off of both sides and then populate our map
-                    // TODO: verify that the variable was found
-                    key = trim_whitespace(key, this->source);
-                    value = trim_whitespace(value, this->source);
-                    const string_t key_str(this->source, key.start, key.length);
-                    if (! result.insert(typename condition_map_t::value_type(key_str, value)).second) {
-                        append_error(errors, key.start, error_one_variable_multiple_conditions, "Variable already has a condition");
-                    }
-                }
-            }
-        }
-    }
-    return result;
-}
-
 
 /* Returns true if the two options have the same name */
 bool options_have_same_name(const option_t &opt1, const option_t &opt2) const {
@@ -2046,14 +1897,7 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
 
 /* Parses the docopt, etc. Returns true on success, false on error */
 bool preflight(error_list_t *out_errors) {
-    /* Clean up from any prior run */
-    this->shortcut_options.clear();
-    this->all_options.clear();
-    this->all_variables.clear();
-    this->all_static_arguments.clear();
-    this->variables_to_conditions.clear();
-    this->usage_specs.usages.clear();
-
+    // Populate our instance variables
     this->populate_by_walking_lines(out_errors);
     
     // Extract options and variables from the usage sections
@@ -2091,9 +1935,6 @@ bool preflight(error_list_t *out_errors) {
             }
         }
     }
-    
-    // Extract conditions from the conditions section
-    this->variables_to_conditions = this->parse_conditions_spec(out_errors);
     
     // Example of how to dump
     if (0)
@@ -2163,10 +2004,10 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
     return all_suggestions;
 }
 
-string_t conditions_for_variable(const string_t &var_name) const {
+string_t commands_for_variable(const string_t &var_name) const {
     string_t result;
-    typename condition_map_t::const_iterator where = this->variables_to_conditions.find(var_name);
-    if (where != this->variables_to_conditions.end()) {
+    typename variable_command_map_t::const_iterator where = this->variables_to_commands.find(var_name);
+    if (where != this->variables_to_commands.end()) {
         const range_t &cond_range = where->second;
         result.assign(this->source, cond_range.start, cond_range.length);
     }
@@ -2275,9 +2116,9 @@ std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const s
 }
 
 template<typename string_t>
-string_t argument_parser_t<string_t>::conditions_for_variable(const string_t &var) const
+string_t argument_parser_t<string_t>::commands_for_variable(const string_t &var) const
 {
-    return impl->conditions_for_variable(var);
+    return impl->commands_for_variable(var);
 }
 
 template<typename string_t>

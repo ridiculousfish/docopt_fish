@@ -303,7 +303,7 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
 }
 
 template<typename string_t>
-static void run_1_condition_test(const char *usage, const char *variable, const char *expected_condition, size_t test_idx, size_t arg_idx) {
+static void run_1_command_test(const char *usage, const char *variable, const char *expected_command, size_t test_idx, size_t arg_idx) {
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
@@ -311,11 +311,11 @@ static void run_1_condition_test(const char *usage, const char *variable, const 
     argument_parser_t<string_t> parser(usage_str, NULL);
     
     const string_t var_string(variable, variable + strlen(variable));
-    const string_t condition_string = parser.conditions_for_variable(var_string);
-    const string_t expected_condition_string(expected_condition, expected_condition + strlen(expected_condition));
+    const string_t command_string = parser.commands_for_variable(var_string);
+    const string_t expected_command_string(expected_command, expected_command + strlen(expected_command));
     
-    if (expected_condition_string != condition_string) {
-        err("Test %lu.%lu: Wrong condition. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_condition_string), wide(condition_string));
+    if (expected_command_string != command_string) {
+        err("Test %lu.%lu: Wrong command. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected_command_string), wide(command_string));
     }
 }
 
@@ -1937,7 +1937,7 @@ static void test_descriptions()
 
 
 template<typename string_t>
-static void test_conditions()
+static void test_commands()
 {
     const testcase_t testcases[] =
     {   /* Case 0 */
@@ -1983,7 +1983,7 @@ static void test_conditions()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_condition_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            run_1_command_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
@@ -2054,7 +2054,7 @@ static void test_errors_in_usage()
         {   "Usage: prog <var>\n"
             "Conditions: <var>  cond1\n"
             "            <var>  cond2\n",
-            error_one_variable_multiple_conditions
+            error_one_variable_multiple_commands
         },
         /* Case 6 */
         {   "Usage: prog [options]\n"
@@ -2309,7 +2309,7 @@ void do_all_tests() {
     test_unused_args<string_t>();
     test_suggestions<string_t>();
     test_descriptions<string_t>();
-    test_conditions<string_t>();
+    test_commands<string_t>();
     test_validation<string_t>();
     test_errors_in_usage<string_t>();
     test_errors_in_argv<string_t>();

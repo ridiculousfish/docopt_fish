@@ -92,8 +92,8 @@ namespace docopt_fish
         /* Given a list of arguments, returns an array of potential next values. A value may be either a literal flag -foo, or a variable; these may be distinguished by the <> surrounding the variable. */
         std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const;
         
-        /* Given a variable name, returns the conditions for that variable, or the empty string if none. */
-        string_t conditions_for_variable(const string_t &var) const;
+        /* Given a variable name, returns the commands for that variable, or the empty string if none. */
+        string_t commands_for_variable(const string_t &var) const;
         
         /* Given an option name like --foo, returns the description of that option name, or the empty string if none. */
         string_t description_for_option(const string_t &option) const;
