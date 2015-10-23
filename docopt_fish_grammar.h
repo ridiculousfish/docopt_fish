@@ -138,6 +138,8 @@ struct alternation_list_t {
             v->visit(alternations.at(i));
         }
     }
+    
+    void assign_corresponding_option_long_names();
 
 };
 

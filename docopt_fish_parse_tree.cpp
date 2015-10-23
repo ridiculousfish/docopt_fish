@@ -290,6 +290,10 @@ struct parse_context_t {
             if (result->alternations.empty()) {
                 result->alternations.resize(1);
             }
+            
+            /* Hackish place to do this */
+            assign_corresponding_option_long_names(result);
+            
             status = parsed_ok;
         }
         return status;
@@ -508,6 +512,49 @@ struct parse_context_t {
             }
         }
         return status;
+    }
+
+    /* Given an expression list, if it wraps a single option, return a pointer to that option.
+     Else return NULL. */
+    static option_t *single_option(expression_list_t *list) {
+        if (list->expressions.size() != 1) {
+            return NULL;
+        }
+        expression_t *expr = &list->expressions[0];
+        simple_clause_t *simple_clause = expr->simple_clause.get();
+        option_clause_t *option_clause = simple_clause ? simple_clause->option.get() : NULL;
+        return option_clause ? &option_clause->option : NULL;
+    }
+    
+    
+    /* For example:
+     usage: prog [-e | --erase]
+     prog [-a <name> | --add <name>]
+     
+     Here we need to mark -e's corresponding long name as --erase, and same for -a/--add.
+     This applies if we have exactly two options.
+     */
+    void assign_corresponding_option_long_names(alternation_list_t *list) {
+        assert(list != NULL);
+        // Must have exactly 2 alternations
+        if (list->alternations.size() != 2) {
+            return;
+        }
+        option_t *first = single_option(&list->alternations[0]);
+        option_t *second = single_option(&list->alternations[1]);
+
+        /* Both options must be non-NULL, and their values must agree (perhaps both empty) */
+        bool options_correspond = (first != NULL && second != NULL &&
+                                   0 == this->source->compare(first->value.start, first->value.length, *this->source,
+                                                              second->value.start, second->value.length));
+        if (options_correspond) {
+            /* Weird way to sync them, but it works */
+            if (first->corresponding_long_name.empty()) {
+                first->corresponding_long_name = second->corresponding_long_name;
+            } else if (second->corresponding_long_name.empty()) {
+                second->corresponding_long_name = first->corresponding_long_name;
+            }
+        }
     }
 };
 

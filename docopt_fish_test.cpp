@@ -1351,8 +1351,7 @@ static void test_correctness()
         {   "usage: git [-v | --verbose]",
             {
                 {   "-v", // argv
-                    "-v:True\n"
-                    "--verbose:False"
+                    "--verbose:True\n"
                 },
             },
         },
@@ -1360,9 +1359,8 @@ static void test_correctness()
         {   "usage: git remote [-v | --verbose]",
             {
                 {   "remote -v", // argv
-                    "-v:True\n"
+                    "--verbose:True\n"
                     "remote:True\n"
-                    "--verbose:False"
                 },
             },
         },
@@ -1726,6 +1724,50 @@ static void test_correctness()
                 }
             },
         },
+        
+        /* Case 91. Verify long/short merging without Options: section */
+        {   "Usage:\n"
+            "    bind [-M <MODE> | --mode <MODE>]\n"
+            "         [--key | -k]\n",
+            {
+                {   "-k", // argv
+                    "--key:True\n"
+                    "--mode:%0\n"
+                },
+                {   "--key", // argv
+                    "--key:True\n"
+                    "--mode:%0\n"
+                },
+                {   "-M left", // argv
+                    "<MODE>:left\n"
+                    "--mode:%1\n"
+                    "--key:%0\n"
+                },
+                {   "--mode left", // argv
+                    "--mode:%1\n"
+                    "<MODE>:left\n"
+                    "--key:%0\n"
+                }
+            },
+        },
+        
+        /* Case 92. Option merging should be disabled if variable names differ */
+        {   "Usage:\n"
+            "    bind [-M <BIGMODE> | --mode <LITTLEMODE>]\n",
+            {
+                {   "-M left", // argv
+                    "-M:%1\n"
+                    "<BIGMODE>:left\n"
+                    "--mode:%0\n"
+                },
+                {   "--mode left", // argv
+                    "--mode:%1\n"
+                    "<LITTLEMODE>:left\n"
+                    "-M:%0\n"
+                }
+            },
+        },
+        
 
 
         {NULL, {}}
