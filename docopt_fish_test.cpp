@@ -1768,6 +1768,19 @@ static void test_correctness()
             },
         },
         
+        /* Case 93. Option merging in parens */
+        {   "Usage:\n"
+            "    bind (-m | --mode)\n",
+            {
+                {   "-m", // argv
+                    "--mode:%1\n"
+                },
+                {   "--mode", // argv
+                    "--mode:%1\n"
+                }
+            },
+        },
+        
 
 
         {NULL, {}}
