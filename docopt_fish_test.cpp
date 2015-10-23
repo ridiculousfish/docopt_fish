@@ -1780,7 +1780,19 @@ static void test_correctness()
                 }
             },
         },
-        
+
+        /* Case 94. Option merging with no group */
+        {   "Usage:\n"
+            "    bind -m | --mode\n",
+            {
+                {   "-m", // argv
+                    "--mode:%1\n"
+                },
+                {   "--mode", // argv
+                    "--mode:%1\n"
+                }
+            },
+        },
 
 
         {NULL, {}}
