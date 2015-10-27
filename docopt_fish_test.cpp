@@ -249,6 +249,9 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
                 } else {
                     const vector<string_t> values = split(val, ", ");
                     do_arg_test(arg.values == values);
+                    if (arg.values != values) {
+                        err("Key '%ls' expected '%ls', found '%ls'", wide(key), wide(join(arg.values, ", ")), wide(val));
+                    }
                     /* Note that we don't test count here, since count will be 0 if it came from a default: clause, and nonzero if it did not */
                 }
             }
@@ -1793,6 +1796,22 @@ static void test_correctness()
                 }
             },
         },
+        
+        /* Case 95. Long option only in options spec */
+        {   "bind -a <file>\n"
+            "-a, --add  File to add",
+            {
+                {   "-a test", // argv
+                    "--add:%1\n"
+                    "<file>:test\n"
+                },
+                {   "--add test", // argv
+                    "--add:%1\n"
+                    "<file>:test"
+                }
+            },
+        },
+
 
 
         {NULL, {}}

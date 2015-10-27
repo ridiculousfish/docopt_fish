@@ -82,6 +82,13 @@ struct range_t {
             this->length = std::max(this->end(), rhs.end()) - this->start;
         }
     }
+    
+    /* If the receiver is empty, replace it with the new range */
+    void replace_if_empty(const range_t &rhs) {
+        if (this->empty()) {
+            *this = rhs;
+        }
+    }
 };
 
 typedef std::vector<range_t> range_list_t;
@@ -103,76 +110,94 @@ typedef std::vector<size_t> index_list_t;
 
 /* An option represents something like '--foo=bar' */
 struct option_t {
-    enum type_t {
-        single_short, // '-f'
-        single_long, // '-foo'
-        double_long // '--foo'
-    } type;
     
-    enum separator_t {
-        sep_space, // curl -o file
-        sep_equals, // -std=c++98
-        sep_none // -DNDEBUG. Must be a single_short option.
+    // The types of names
+    // This is also used indexes into an array
+    enum name_type_t {
+        single_short, // -f
+        single_long, // -foo
+        double_long, // --foo
+        
+        NAME_TYPE_COUNT
     };
 
-    // name of the option, like '--foo'
-    range_t name;
+    range_t names[NAME_TYPE_COUNT];
 
     // value of the option, i.e. variable name. Empty for no value.
     range_t value;
     
-    // key name of the option, e.g. if we have both -v and --verbose, this will be 'verbose' for the -v option. Empty for none.
-    range_t corresponding_long_name;
-
     // Range of the description. Empty for none.
     range_t description_range;
     
     // Range of the default value. Empty for none.
     range_t default_value_range;
-
-    // How we separate the name from the value. We may make this a bitmap some day.
-    separator_t separator;
-
-    option_t() {}
     
-    option_t(const range_t &n, const range_t &v, size_t leading_dash_count, separator_t sep) : name(n), value(v), separator(sep) {
-        // Set the type. If there is only one dash, we infer single_long and single_short by the length of the name
-        if (leading_dash_count > 1) {
-            this->type = option_t::double_long;
-            this->corresponding_long_name = this->name;
-        } else if (n.length > 1) {
-            this->type = option_t::single_long;
-        } else {
-            this->type = option_t::single_short;
-        }
+    // How we separate the name from the value
+    enum separator_t {
+        sep_space, // curl -o file
+        sep_equals, // -std=c++98
+        sep_none // -DNDEBUG. Must be a single_short option.
+    } separator;
+    
+    option_t() : separator(sep_space) {}
+    
+    option_t(enum name_type_t type, const range_t &name, const range_t &v, separator_t sep) : value(v), separator(sep) {
+        assert(type < NAME_TYPE_COUNT);
+        this->names[type] = name;
+    }
+    
+    bool has_type(name_type_t type) const {
+        assert(type < NAME_TYPE_COUNT);
+        return ! this->names[type].empty();
     }
 
+    name_type_t best_type() const {
+        if (this->has_type(double_long)) return double_long;
+        else if (this->has_type(single_long)) return single_long;
+        return single_short;
+    }
+
+    // Returns the "best" (longest) name
+    range_t best_name() const {
+        return this->names[this->best_type()];
+    }
+    
     /* We want a value if we have a non-empty value range */
     bool has_value() const {
         return ! value.empty();
     }
 
-    // Returns true if the options have the same name, as determined by their respective ranges in src.
-    template<typename string_t>
-    bool has_same_name(const option_t &opt2, const string_t &src) const {
+    /* Hackish? Returns true if we share a name type */
+    bool name_types_overlap(const option_t &rhs) const {
         bool result = false;
-        if (this->name.length == opt2.name.length) {
-            // Name lengths must be the same
-            if (this->name == opt2.name) {
-                // Identical ranges
+        size_t idx = NAME_TYPE_COUNT;
+        while (idx--) {
+            if (!this->names[idx].empty() && !rhs.names[idx].empty()) {
                 result = true;
-            } else {
-                result = (0 == src.compare(this->name.start, this->name.length, src, opt2.name.start, opt2.name.length));
+                break;
             }
         }
         return result;
     }
     
-    bool operator==(const option_t &rhs) const {
-        return this->type == rhs.type &&
-               this->separator == rhs.separator &&
-               this->name == rhs.name &&
-               this->value == rhs.value;
+    // Returns true if the options have the same name, as determined by their respective ranges in src.
+    template<typename string_t>
+    bool has_same_name(const option_t &opt2, const string_t &src) const {
+        bool result = false;
+        size_t idx = NAME_TYPE_COUNT;
+        while (idx-- && !result) {
+            const range_t r1 = this->names[idx], r2 = opt2.names[idx];
+            if (r1.length > 0 && r1.length == r2.length) {
+                // Name lengths must be the same
+                if (r1 == r2) {
+                    // Identical ranges
+                    result = true;
+                } else {
+                    result = (0 == src.compare(r1.start, r1.length, src, r2.start, r2.length));
+                }
+            }
+        }
+        return result;
     }
 
     /* Helper function for dumping */
@@ -180,13 +205,9 @@ struct option_t {
     string_t describe(const string_t &src) const {
         string_t result;
         string_t tmp;
-        
+        range_t name = this->best_name();
         result.append(src, name.start, name.length);
-        if (! corresponding_long_name.empty()){
-            result.push_back('/');
-            result.append(src, corresponding_long_name.start, corresponding_long_name.length);
-        }
-
+        
         if (! value.empty()) {
             result.push_back(':');
             result.push_back(' ');
@@ -207,45 +228,50 @@ struct option_t {
             result.append(tmp);
         }
 
-        
         return result;
     }
     
-    // Returns the "longest" name (using corresponding_long_name if possible), plucking it out of the given source. Includes dashes.
     template<typename string_t>
-    string_t longest_name_as_string(const string_t &src) const {
+    string_t name_as_string(name_type_t type, const string_t &src) const {
+        assert(type < NAME_TYPE_COUNT);
+        const unsigned dash_count = (type == double_long ? 2 : 1);
+        const range_t name_range = this->names[type];
+        assert(! name_range.empty());
         string_t result;
-        // Everyone gets at least one dash; doubles get two
-        bool use_long_name = ! this->corresponding_long_name.empty();
-        result.push_back('-');
-        if (use_long_name || this->type == double_long) {
-            result.push_back('-');
-        }
-        const range_t &effective_range = use_long_name ? this->corresponding_long_name : this->name;
-        result.append(src, effective_range.start, effective_range.length);
+        result.reserve(dash_count + name_range.length);
+        result.append(dash_count, '-');
+        result.append(src, name_range.start, name_range.length);
         return result;
     }
-    
-    // Returns the normal name (short or long), plucking it out of the given source. Includes dashes.
+
+    // Returns the "best" name, plucking it out of the given source. Includes dashes.
     template<typename string_t>
-    string_t name_as_string(const string_t &src) const {
-        string_t result;
-        result.push_back('-');
-        if (this->type == double_long) {
-            result.push_back('-');
+    string_t best_name_as_string(const string_t &src) const {
+        return this->name_as_string(this->best_type(), src);
+    }
+    
+    /* Acquire "guts" from another option wherever we have blanks */
+    void merge_from(const option_t &rhs) {
+        for (size_t i=0; i < NAME_TYPE_COUNT; i++) {
+            this->names[i].replace_if_empty(rhs.names[i]);
         }
-        result.append(src, this->name.start, this->name.length);
-        return result;
+        // Ensure we copy over the separator type
+        if (this->value.empty()) {
+            this->separator = rhs.separator;
+        }
+        this->value.replace_if_empty(rhs.value);
+        this->description_range.replace_if_empty(rhs.description_range);
+        this->default_value_range.replace_if_empty(rhs.default_value_range);
     }
     
     /* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
     template<typename string_t>
-    static option_t parse_from_string(const string_t &str, range_t *remaining, std::vector<error_t<string_t> >* errors = NULL );
+    static bool parse_from_string(const string_t &str, range_t *remaining, option_t *result, std::vector<error_t<string_t> >* errors = NULL );
 
     /* Variant for when the remaining range is uninteresting. */
     template<typename string_t>
-    static option_t parse_from_string(const string_t &str, range_t range, std::vector<error_t<string_t> > *errors = NULL) {
-        return parse_from_string(str, &range, errors);
+    static bool parse_from_string(const string_t &str, range_t range, option_t *result, std::vector<error_t<string_t> > *errors = NULL) {
+        return parse_from_string(str, &range, result, errors);
     }
 
 };

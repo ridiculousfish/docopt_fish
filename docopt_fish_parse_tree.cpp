@@ -292,7 +292,7 @@ struct parse_context_t {
             }
             
             /* Hackish place to do this */
-            assign_corresponding_option_long_names(result);
+            collapse_corresponding_options(result);
             
             status = parsed_ok;
         }
@@ -409,7 +409,11 @@ struct parse_context_t {
         // This second test is to avoid matching '--'
         if (range.length > 1 && src.at(range.start) == '-' && ! (range.length == 2 && src.at(range.start + 1) == '-')) {
             // It's an option
-            option_t opt_from_usage_section = option_t::parse_from_string(src, &range, &this->errors);
+            option_t opt_from_usage_section;
+            if (! option_t::parse_from_string(src, &range, &opt_from_usage_section, &this->errors)) {
+                return parsed_error;
+            }
+            assert(opt_from_usage_section.best_name().length > 0);
             
             // See if we have a corresponding option in the options section
             const option_t *opt_from_options_section = NULL;
@@ -422,7 +426,7 @@ struct parse_context_t {
             }
             
             // We may have to parse a variable
-            if (opt_from_usage_section.name.length > 0 && opt_from_usage_section.separator == option_t::sep_space) {
+            if (opt_from_usage_section.separator == option_t::sep_space) {
                 // Looks like an option without a separator. See if the next token is a variable
                 range_t next = this->peek_word().range;
                 if (next.length > 2 && src.at(next.start) == '<' && src.at(next.end() - 1) == '>') {
@@ -534,7 +538,7 @@ struct parse_context_t {
      Here we need to mark -e's corresponding long name as --erase, and same for -a/--add.
      This applies if we have exactly two options.
      */
-    void assign_corresponding_option_long_names(alternation_list_t *list) {
+    void collapse_corresponding_options(alternation_list_t *list) {
         assert(list != NULL);
         // Must have exactly 2 alternations
         if (list->alternations.size() != 2) {
@@ -543,17 +547,17 @@ struct parse_context_t {
         option_t *first = single_option(&list->alternations[0]);
         option_t *second = single_option(&list->alternations[1]);
 
-        /* Both options must be non-NULL, and their values must agree (perhaps both empty) */
+        /* Both options must be non-NULL, and they must not have overlapping name types, and their values must agree (perhaps both empty) */
         bool options_correspond = (first != NULL && second != NULL &&
+                                   ! first->name_types_overlap(*second) &&
                                    0 == this->source->compare(first->value.start, first->value.length, *this->source,
                                                               second->value.start, second->value.length));
         if (options_correspond) {
-            /* Weird way to sync them, but it works */
-            if (first->corresponding_long_name.empty()) {
-                first->corresponding_long_name = second->corresponding_long_name;
-            } else if (second->corresponding_long_name.empty()) {
-                second->corresponding_long_name = first->corresponding_long_name;
-            }
+            // Merge them. Note: this merge_from call writes deep into our tree!
+            // Then delete the second alternation
+            first->merge_from(*second);
+            list->alternations.pop_back();
+            assert(list->alternations.size() == 1);
         }
     }
 };
