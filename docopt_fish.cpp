@@ -942,6 +942,10 @@ struct argv_separation_state_t {
     const string_t &arg() const {
         return this->argv.at(this->idx);
     }
+    
+    bool has_double_dash_at(size_t idx) const {
+        return idx < this->argv.size() && str_equals("--", this->argv.at(idx));
+    }
 };
 
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx.
@@ -1022,7 +1026,7 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
                 // The arg was (hopefully) specified as --foo bar
                 // The index is of the next argument, and the range is the entire argument
                 // Maybe do double-dash
-                if (st->idx + 1 < st->argv.size() && str_equals("--", st->argv.at(st->idx + 1))) {
+                if (st->has_double_dash_at(st->idx + 1)) {
                     st->saw_double_dash = true;
                     st->idx += 1;
                 }
@@ -1173,7 +1177,7 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
         // We don't support -f=bar style. I don't know of any commands that use this.
         // TODO: support delimiter-free style (gcc -Dmacro=something)
         // Handle possible double-dash
-        if (st->idx + 1 < st->argv.size() && str_equals("--", st->argv.at(st->idx + 1))) {
+        if (st->has_double_dash_at(st->idx + 1)) {
             st->saw_double_dash = true;
             st->idx += 1;
         }
@@ -1223,7 +1227,7 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
             // double-dash means everything remaining is positional
             out_positionals->push_back(positional_argument_t(st.idx));
             st.idx += 1;
-        } else if (str_equals("--", st.arg())) {
+        } else if (st.has_double_dash_at(st.idx)) {
             // Literal --. The remaining arguments are positional.
             st.saw_double_dash = true;
             st.idx += 1;
