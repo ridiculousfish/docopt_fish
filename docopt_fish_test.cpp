@@ -1811,8 +1811,20 @@ static void test_correctness()
                 }
             },
         },
-
-
+        
+        /* Case 96, -- support */
+        {   "bind --add <file>",
+            {
+                {   "--add -- --test", // argv
+                    "--add:%1\n"
+                    "<file>:--test\n"
+                },
+                {   "--add -- --", // argv
+                    "--add:%1\n"
+                    "<file>:--"
+                }
+            },
+        },
 
         {NULL, {}}
     }

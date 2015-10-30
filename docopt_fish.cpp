@@ -931,7 +931,7 @@ void uniqueize_options(option_list_t *options, bool error_on_duplicates, error_l
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx.
 TODO: merge with parse_unseparated_short, etc
 */
-bool parse_long(const string_list_t &argv, option_t::name_type_t type, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion = NULL) const {
+bool parse_long(const string_list_t &argv, option_t::name_type_t type, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion, bool *out_saw_double_dash) const {
     const string_t &arg = argv.at(*idx);
     assert(type == option_t::single_long || type == option_t::double_long);
     assert(substr_equals("--", arg, (type == option_t::double_long ? 2 : 1)));
@@ -1005,6 +1005,11 @@ bool parse_long(const string_list_t &argv, option_t::name_type_t type, parse_fla
             } else {
                 // The arg was (hopefully) specified as --foo bar
                 // The index is of the next argument, and the range is the entire argument
+                // Maybe do double-dash
+                if (*idx + 1 < argv.size() && str_equals("--", argv.at(*idx + 1))) {
+                    *out_saw_double_dash = true;
+                    *idx += 1;
+                }
                 if (*idx + 1 < argv.size()) {
                     *idx += 1;
                     arg_index = *idx;
@@ -1092,9 +1097,8 @@ bool parse_unseparated_short(const string_list_t &argv, parse_flags_t flags, siz
     return success;
 }
 
-
 // Given a list of short options, parse out an argument
-bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion) const {
+bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, const option_list_t &options, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion, bool *out_saw_double_dash) const {
     const string_t &arg = argv.at(*idx);
     assert(substr_equals("-", arg, 1));
     assert(arg.size() > 1); // must not be just a single dash
@@ -1152,6 +1156,12 @@ bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, co
     if (! errored && last_option_has_argument) {
         // We don't support -f=bar style. I don't know of any commands that use this.
         // TODO: support delimiter-free style (gcc -Dmacro=something)
+        // Handle possible double-dash
+        if (*idx + 1 < argv.size() && str_equals("--", argv.at(*idx + 1))) {
+            *out_saw_double_dash = true;
+            *idx += 1;
+        }
+        
         if (*idx + 1 < argv.size()) {
             val_idx_for_last_option = *idx + 1;
             val_range_for_last_option = range_t(0, argv.at(*idx + 1).size());
@@ -1190,18 +1200,20 @@ bool parse_short(const string_list_t &argv, parse_flags_t flags, size_t *idx, co
 /* The Python implementation calls this "parse_argv" */
 void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, string_t *out_suggestion = NULL) const {
 
+    // double_dash means that all remaining values are arguments
+    bool saw_double_dash = false;
     size_t idx = 0;
     while (idx < argv.size()) {
-        const string_t arg = argv.at(idx);
-        if (str_equals("--", arg)) {
-            // Literal --. The remaining arguments are positional. Insert everything remaining and exit early
-            while (++idx < argv.size()) {
-                out_positionals->push_back(positional_argument_t(idx));
-            }
-            break;
+        const string_t &arg = argv.at(idx);
+        if (saw_double_dash) {
+            // double-dash means everything remaining is positional
+            out_positionals->push_back(positional_argument_t(idx));
+        } else if (str_equals("--", arg)) {
+            // Literal --. The remaining arguments are positional.
+            saw_double_dash = true;
         } else if (substr_equals("--", arg, 2)) {
             // Leading long option
-            if (parse_long(argv, option_t::double_long, flags, &idx, options, out_resolved_options, out_errors, out_suggestion)) {
+            if (parse_long(argv, option_t::double_long, flags, &idx, options, out_resolved_options, out_errors, out_suggestion, &saw_double_dash)) {
                 // parse_long will have updated idx and out_resolved_options
             } else {
                 // This argument is unused
@@ -1218,11 +1230,11 @@ void separate_argv_into_options_and_positionals(const string_list_t &argv, const
              We cache the errors locally so that failing to parse it as a long option doesn't report an error if it parses successfully as a short option. This may result in duplicate error messages.
              */
             error_list_t local_long_errors, local_short_errors;
-            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, &local_long_errors, out_suggestion)) {
+            if (parse_long(argv, option_t::single_long, flags, &idx, options, out_resolved_options, &local_long_errors, out_suggestion, &saw_double_dash)) {
                 // parse_long succeeded
             } else if (parse_unseparated_short(argv, flags, &idx, options, out_resolved_options, &local_short_errors, out_suggestion)) {
                 // parse_unseparated_short will have updated idx and out_resolved_options
-            } else if (parse_short(argv, flags, &idx, options, out_resolved_options, &local_short_errors, out_suggestion)) {
+            } else if (parse_short(argv, flags, &idx, options, out_resolved_options, &local_short_errors, out_suggestion, &saw_double_dash)) {
                 // parse_short succeeded.
             } else {
                 /* Unparseable argument.
@@ -1353,6 +1365,14 @@ public:
             if (! state->consumed_options.at(i)) {
                 const resolved_option_t &opt = this->resolved_options.at(i);
                 used_indexes.at(opt.name_idx_in_argv) = false;
+            }
+        }
+        
+        /* Don't report the first -- as unused */
+        for (size_t i=0; i < this->argv.size(); i++) {
+            if (str_equals("--", this->argv.at(i))) {
+                used_indexes.at(i) = true;
+                break;
             }
         }
 
@@ -1810,7 +1830,7 @@ option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const po
     
     match_state_list_t result;
     match(this->usages, &init_state, &ctx, &result);
-
+    
     if (log_stuff) {
         fprintf(stderr, "Matched %lu way(s)\n", result.size());
         for (size_t i=0; i < result.size(); i++) {
