@@ -262,7 +262,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
             const string_t &key = iter->first;
             typename string_map_t::const_iterator result = expected.find(key);
             if (result == expected.end()) {
-                err("Test %lu.%lu: Unexpected key %ls", test_idx, arg_idx, wide(key));
+                err("Test %lu.%lu: Unexpected key %ls with count %u", test_idx, arg_idx, wide(key), iter->second.count);
             }
         }
     }
@@ -1813,16 +1813,24 @@ static void test_correctness()
         },
         
         /* Case 96, -- support */
-        {   "bind --add <file>",
+        {   "bind --add <file>\n"
+            "bind <name>",
             {
                 {   "--add -- --test", // argv
                     "--add:%1\n"
                     "<file>:--test\n"
+                    "<name>:%0"
                 },
                 {   "--add -- --", // argv
                     "--add:%1\n"
-                    "<file>:--"
-                }
+                    "<file>:--\n"
+                    "<name>:%0"
+                },
+                {   "-- --add", // argv
+                    "<name>:--add\n"
+                    "--add:%0"
+                },
+                
             },
         },
 
