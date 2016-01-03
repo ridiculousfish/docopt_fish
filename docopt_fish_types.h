@@ -15,6 +15,113 @@
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
+/* Class representing a range of a string */
+struct range_t {
+    size_t start;
+    size_t length;
+    range_t() : start(0), length(0) {}
+    range_t(size_t s, size_t l) : start(s), length(l) {}
+    
+    /* Returns start + length, dying on overflow */
+    size_t end() const {
+        size_t result = start + length;
+        assert(result >= start); //don't overflow
+        return result;
+    }
+    
+    /* Returns whether the range is empty */
+    bool empty() const {
+        return length == 0;
+    }
+    
+    /* Equality and inequality */
+    bool operator==(const range_t &rhs) const {
+        return this->start == rhs.start && this->length == rhs.length;
+    }
+    
+    bool operator!=(const range_t &rhs) const {
+        return !(*this == rhs);
+    }
+    
+    /* Merges a range into this range. After merging, the receiver is the smallest range containing every index that is in either range. Empty ranges are discarded. */
+    void merge(const range_t &rhs) {
+        if (this->empty()) {
+            *this = rhs;
+        } else if (! rhs.empty()) {
+            this->start = std::min(this->start, rhs.start);
+            this->length = std::max(this->end(), rhs.end()) - this->start;
+        }
+    }
+    
+    /* If the receiver is empty, replace it with the new range */
+    void replace_if_empty(const range_t &rhs) {
+        if (this->empty()) {
+            *this = rhs;
+        }
+    }
+};
+
+typedef std::vector<range_t> range_list_t;
+
+/* Our "rstring" string type tracks a range and base pointer. This enables both efficient sharing (fewer copies) and precise error messages, since we know the location of the error. CHAR is suggested to be either char or wchar_t. rstrings are views on top of immutable underlying data. Note that these are not null terminated. */
+template <typename CHAR>
+class rstring_t {
+    const CHAR *base;
+    range_t range;
+public:
+    size_t length() const {
+        return this->range.length();
+    }
+    
+    CHAR at(size_t idx) const {
+        assert(idx <= range.length);
+        return this->base[idx + this->range.start];
+    }
+    
+    CHAR operator[](size_t idx) const {
+        return this->at(idx);
+    }
+    
+    int compare(const rstring_t &rhs) const {
+        if (this == &rhs) {
+            return 0;
+        }
+        if (this->base == rhs.base && this->range == rhs.range) {
+            return 0;
+        }
+        for (size_t i=0; i < this->length() && i < rhs.length(); i++) {
+            if (this->at(i) != rhs.at(i)) {
+                return this->at(i) < rhs.at(i) ? -1 : 1;
+            }
+        }
+        // Data is equal, compare ranges
+        if (this->length() != rhs.length()) {
+            return this->length() < rhs.length() ? -1 : 1;
+        }
+        return 0;
+    }
+    
+    bool operator==(const rstring_t &rhs) const {
+        return this->compare(rhs) == 0;
+    }
+    
+    bool operator!=(const rstring_t &rhs) const {
+        return this->compare(rhs) != 0;
+    }
+    
+    bool operator<(const rstring_t &rhs) const {
+        return this->compare(rhs) < 0;
+    }
+    
+    const std::basic_string<CHAR> std_string() const {
+        if (range.length == 0) {
+            return std::basic_string<CHAR>();
+        }
+        return std::basic_string<CHAR>(this->base + this->range.start, this->range.length);
+    }
+    
+    rstring_t() : base(NULL), range() {}
+};
 
 /* Overloads */
 UNUSED
@@ -43,55 +150,6 @@ static inline std::wstring widen(const std::string &t) {
     result.insert(result.begin(), t.begin(), t.end());
     return result;
 }
-
-
-/* Class representing a range of a string */
-struct range_t {
-    size_t start;
-    size_t length;
-    range_t() : start(0), length(0) {}
-    range_t(size_t s, size_t l) : start(s), length(l) {}
-    
-    /* Returns start + length, dying on overflow */
-    size_t end() const {
-        size_t result = start + length;
-        assert(result >= start); //don't overflow
-        return result;
-    }
-    
-    /* Returns whether the range is empty */
-    bool empty() const {
-        return length == 0;
-    }
-    
-    /* Equality and inequality */
-    bool operator==(const range_t &rhs) const {
-        return this->start == rhs.start && this->length == rhs.length;
-    }
-
-    bool operator!=(const range_t &rhs) const {
-        return !(*this == rhs);
-    }
-
-    /* Merges a range into this range. After merging, the receiver is the smallest range containing every index that is in either range. Empty ranges are discarded. */
-    void merge(const range_t &rhs) {
-        if (this->empty()) {
-            *this = rhs;
-        } else if (! rhs.empty()) {
-            this->start = std::min(this->start, rhs.start);
-            this->length = std::max(this->end(), rhs.end()) - this->start;
-        }
-    }
-    
-    /* If the receiver is empty, replace it with the new range */
-    void replace_if_empty(const range_t &rhs) {
-        if (this->empty()) {
-            *this = rhs;
-        }
-    }
-};
-
-typedef std::vector<range_t> range_list_t;
 
 
 /* A token is just a range of some string, with a type */
