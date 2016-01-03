@@ -28,6 +28,7 @@ OPEN_DOCOPT_IMPL
 template<typename string_t>
 struct parse_context_t {
     typedef typename string_t::value_type char_t;
+    typedef rstring<char_t> rstring_t;
 
     static bool char_is_valid_in_word(char_t c) {
         const char *invalid = ".|()[],<> \t\n";
@@ -405,12 +406,12 @@ struct parse_context_t {
            "usage: prog [-m (<msg>)]"
         */
         const string_t &src = *this->source;
-        range_t range = word.range;
+        rstring_t remaining(src, word.range);
         // This second test is to avoid matching '--'
-        if (range.length > 1 && src.at(range.start) == '-' && ! (range.length == 2 && src.at(range.start + 1) == '-')) {
+        if (remaining.length() > 1 && remaining[0] == '-' && ! (remaining.length() == 2 && remaining[1] == '-')) {
             // It's an option
             option_t opt_from_usage_section;
-            if (! option_t::parse_from_string(src, &range, &opt_from_usage_section, &this->errors)) {
+            if (! option_t::parse_from_string(&remaining, &opt_from_usage_section, &this->errors)) {
                 return parsed_error;
             }
             assert(opt_from_usage_section.best_name().length > 0);

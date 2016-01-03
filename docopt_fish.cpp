@@ -105,108 +105,101 @@ static bool char_is_valid_in_bracketed_word(char_t c) {
     return std::find(invalid, end, c) == end;
 }
 
-template<typename string_t, typename T>
-static range_t scan_while(const string_t &str, range_t *remaining, T func) {
-    range_t result(remaining->start, 0);
-    while (result.end() < remaining->end() && func(str.at(result.end()))) {
-        result.length += 1;
-        remaining->start += 1;
-        remaining->length -= 1;
+template<typename RSTRING, typename T>
+static RSTRING scan_while(RSTRING *remaining, T func) {
+    size_t amt = 0;
+    while (amt < remaining->length() && func(remaining->at(amt))) {
+        amt++;
     }
+    RSTRING result = remaining->substr(0, amt);
+    *remaining = remaining->substr(amt);
     return result;
 }
 
 // Returns a new range where leading and trailing whitespace has been trimmed
-template<typename string_t>
-static range_t trim_whitespace(const range_t &range, const string_t &src) {
-    assert(range.end() <= src.size());
-    size_t left = range.start, right = range.end();
-    while (left < right && isspace(src.at(left)))
-    {
+template<typename RSTRING>
+static RSTRING trim_whitespace(const RSTRING &src) {
+    size_t left = 0, right = src.length();
+    while (left < right && isspace(src.at(left))) {
         left++;
     }
-    while (right > left && isspace(src.at(right - 1)))
-    {
+    while (right > left && isspace(src.at(right - 1))) {
         right--;
     }
     assert(left <= right);
-    return range_t(left, right - left);
+    return src.substr(left, right - left);
 }
 
-template<typename string_t>
-static range_t scan_1_char(const string_t &str, range_t *remaining, typename string_t::value_type c) {
-    range_t result(remaining->start, 0);
-    if (result.end() < remaining->end() && str.at(result.end()) == c) {
-        result.length += 1;
-        remaining->start += 1;
-        remaining->length -= 1;
+template<typename RSTRING>
+static RSTRING scan_1_char(RSTRING *remaining, typename RSTRING::value_type c) {
+    if (remaining->length() > 0 && remaining->at(0) == c) {
+        RSTRING result = remaining->substr(0, 1);
+        *remaining = remaining->substr(1);
+        return result;
     }
-    return result;
+    return remaining->substr(0, 0);
 }
 
 
-/* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
-template<typename string_t>
-bool option_t::parse_from_string(const string_t &str, range_t *remaining, option_t *result, std::vector<error_t<string_t> >* errors UNUSED) {
-    assert(remaining->length > 0);
+/* Given an inout string, parse out an option and return it. Update the string to reflect the number of characters used. */
+template<typename rstring_t>
+bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t<typename rstring_t::stdstring> >* errors UNUSED) {
+    assert(! remaining->empty());
     
-    typedef typename string_t::value_type char_t;
+    typedef typename rstring_t::value_type char_t;
     
     bool errored = false;
     
     // Count how many leading dashes
-    const size_t start = remaining->start;
-    range_t leading_dash_range = scan_while(str, remaining, it_equals<'-'>);
-    assert(leading_dash_range.length > 0);
-    if (leading_dash_range.length > 2) {
-        append_error(errors, start, error_excessive_dashes, "Too many dashes");
+    rstring_t leading_dashes = scan_while(remaining, it_equals<'-'>);
+    const size_t dash_count = leading_dashes.length();
+    assert(dash_count > 0);
+    if (dash_count > 2) {
+        append_error(errors, leading_dashes.range().start, error_excessive_dashes, "Too many dashes");
     }
-    const size_t dash_count = leading_dash_range.length;
 
     // Walk over characters valid in a name
-    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter<char_t>);
+    rstring_t name = scan_while(remaining, char_is_valid_in_parameter<char_t>);
     
     // Check to see if there's a space
-    range_t space_separator = scan_while(str, remaining, isspace);
+    rstring_t space_separator = scan_while(remaining, isspace);
 
     // Check to see if there's an = sign
-    const range_t equals_range = scan_while(str, remaining, it_equals<'='>);
-    if (equals_range.length > 1) {
-        append_error(errors, equals_range.start, error_excessive_equal_signs, "Too many equal signs");
+    const rstring_t equals = scan_while(remaining, it_equals<'='>);
+    if (equals.length() > 1) {
+        append_error(errors, equals.range().start, error_excessive_equal_signs, "Too many equal signs");
         errored = true;
     }
 
     // Try to scan a variable
     // TODO: If we have a naked equals sign (foo = ) generate an error
-    scan_while(str, remaining, isspace);
+    scan_while(remaining, isspace);
     
-    range_t variable_range;
-    range_t open_sign = scan_1_char(str, remaining, '<');
+    rstring_t variable;
+    rstring_t open_sign = scan_1_char(remaining, '<');
     if (! open_sign.empty()) {
-        range_t variable_name_range = scan_while(str, remaining, char_is_valid_in_bracketed_word<char_t>);
-        range_t close_sign = scan_1_char(str, remaining, '>');
-        if (variable_name_range.empty()) {
-            append_error(errors, variable_name_range.start, error_invalid_variable_name, "Missing variable name");
+        rstring_t variable_name = scan_while(remaining, char_is_valid_in_bracketed_word<char_t>);
+        rstring_t close_sign = scan_1_char(remaining, '>');
+        if (variable_name.empty()) {
+            append_error(errors, variable_name.range().start, error_invalid_variable_name, "Missing variable name");
             errored = true;
         } else if (close_sign.empty()) {
-            append_error(errors, open_sign.start, error_invalid_variable_name, "Missing '>' to match this '<'");
+            append_error(errors, open_sign.range().start, error_invalid_variable_name, "Missing '>' to match this '<'");
             errored = true;
         } else {
-            variable_range.merge(open_sign);
-            variable_range.merge(variable_name_range);
-            variable_range.merge(close_sign);
+            variable = open_sign.merge(variable_name).merge(close_sign);
         }
         
         // Check to see what the next character is. If it's not whitespace or the end of the string, generate an error.
-        if (! close_sign.empty() && ! remaining->empty() && char_is_valid_in_parameter(str.at(remaining->start))) {
-            append_error(errors, remaining->start, error_invalid_variable_name, "Extra stuff after closing '>'");
+        if (! close_sign.empty() && ! remaining->empty() && char_is_valid_in_parameter(remaining->at(0))) {
+            append_error(errors, remaining->range().start, error_invalid_variable_name, "Extra stuff after closing '>'");
             errored = true;
         }
     }
     
     // Report an error for cases like --foo=
-    if (variable_range.empty() && ! equals_range.empty()) {
-        append_error(errors, equals_range.start, error_invalid_variable_name, "Missing variable for this assignment");
+    if (variable.empty() && ! equals.empty()) {
+        append_error(errors, equals.range().start, error_invalid_variable_name, "Missing variable for this assignment");
         errored = true;
     }
     
@@ -215,9 +208,9 @@ bool option_t::parse_from_string(const string_t &str, range_t *remaining, option
     // Otherwise, the space matters: 'foo <bar>' is space-separated, and 'foo<bar>' has no separator
     // Hackish: store sep_space for options without a separator
     option_t::separator_t separator;
-    if (variable_range.empty()) {
+    if (variable.empty()) {
         separator = option_t::sep_space;
-    } else if (! equals_range.empty()) {
+    } else if (! equals.empty()) {
         separator = option_t::sep_equals;
     } else if (! space_separator.empty()) {
         separator = option_t::sep_space;
@@ -226,14 +219,14 @@ bool option_t::parse_from_string(const string_t &str, range_t *remaining, option
     }
     
     // TODO: generate an error on long options with no separators (--foo<bar>). Only short options support these.
-    if (separator == option_t::sep_none && (dash_count > 1 || name_range.length > 1)) {
-        append_error(errors, name_range.start, error_bad_option_separator, "Long options must use a space or equals separator");
+    if (separator == option_t::sep_none && (dash_count > 1 || name.length() > 1)) {
+        append_error(errors, name.range().start, error_bad_option_separator, "Long options must use a space or equals separator");
         errored = true;
     }
     
     // Generate errors for missing name
-    if (name_range.empty()) {
-        append_error(errors, name_range.start, error_invalid_option_name, "Missing option name");
+    if (name.empty()) {
+        append_error(errors, name.range().start, error_invalid_option_name, "Missing option name");
         errored = true;
     }
     
@@ -241,14 +234,14 @@ bool option_t::parse_from_string(const string_t &str, range_t *remaining, option
     name_type_t type;
     if (dash_count > 1) {
         type = double_long;
-    } else if (name_range.length > 1) {
+    } else if (name.length() > 1) {
         type = single_long;
     } else {
         type = single_short;
     }
     
     // Create and return the option
-    *result = option_t(type, name_range, variable_range, separator);
+    *result = option_t(type, name.range(), variable.range(), separator);
     return ! errored;
 }
 
@@ -259,6 +252,10 @@ class docopt_impl OPEN_DOCOPT_IMPL
 
 /* A character in string_t; likely either char or wchar_t */
 typedef typename string_t::value_type char_t;
+
+/* The range string type */
+typedef rstring<char_t> rstring_t;
+typedef std::vector<rstring_t> rstring_list_t;
 
 #pragma mark -
 #pragma mark Scanning
@@ -536,69 +533,66 @@ void collect_options_and_variables(const usage_list_t &usages, option_list_t *ou
 static option_t parse_option_from_argument(const string_t &str, option_t::name_type_t type, error_list_t *errors UNUSED) {
     assert(! str.empty());
     assert(str.at(0) == char_t('-'));
-
-    range_t remaining_storage(0, str.size());
-    range_t * const remaining = &remaining_storage;
+    
+    rstring_t remaining_storage(str);
+    rstring_t *const remaining = &remaining_storage;
     
     // Swallow leading dashes
     // TODO: the caller should do this for us
-    scan_while(str, remaining, it_equals<'-'>);
+    scan_while(remaining, it_equals<'-'>);
     
     // Walk over characters valid in a name
-    range_t name_range = scan_while(str, remaining, char_is_valid_in_parameter<char_t>);
+    const rstring_t name = scan_while(remaining, char_is_valid_in_parameter<char_t>);
     
     // Check to see if there's an = sign
-    const range_t equals_range = scan_1_char(str, remaining, char_t('='));
+    const rstring_t equals = scan_1_char(remaining, char_t('='));
     
     // If we got an equals sign, the rest is the value
     // It can have any character at all, since it's coming from the argument, not from the usage spec
-    range_t value_range;
-    if (! equals_range.empty()) {
-        value_range = *remaining;
-        remaining->start = remaining->end();
-        remaining->length = 0;
+    rstring_t value;
+    if (! equals.empty()) {
+        value = *remaining;
     }
     
     // Return the option
-    return option_t(type, name_range, value_range, equals_range.empty() ? option_t::sep_space : option_t::sep_equals);
+    return option_t(type, name.range(), value.range(), equals.empty() ? option_t::sep_space : option_t::sep_equals);
 }
 
-/* Given an option spec in the given range, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
-option_t parse_one_option_spec(const range_t &range, error_list_t *errors) const {
-    assert(! range.empty());
-    assert(this->source.at(range.start) == char_t('-'));
-    const size_t end = range.end();
-
+/* Given an option spec, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
+option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) const {
+    assert(! spec.empty() && spec[0] == char_t('-'));
+    const size_t end = spec.length();
     option_t result;
 
     // Look for two spaces. Those separate the description.
     // This is a two-space "C-string"
     const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
-    size_t options_end = this->source.find(two_spaces, range.start);
+    size_t options_end = spec.find(two_spaces);
     if (options_end > end) {
         options_end = end; // no description
     }
 
     // Determine the description range (possibly empty). Trim leading and trailing whitespace
-    range_t description_range = range_t(options_end, end - options_end);
-    description_range = trim_whitespace(description_range, this->source);
-    result.description_range = description_range;
+    rstring_t description = trim_whitespace(spec.substr(options_end));
+    result.description_range = description.range();
     
     // Parse out a "default:" value.
-    if (! description_range.empty()) {
+    if (! description.empty()) {
         // TODO: handle the case where there's more than one
         const char *default_prefix = "[default:";
-        size_t default_prefix_loc = find_case_insensitive(this->source, default_prefix, description_range);
+        // TODO: rstring
+        size_t default_prefix_loc = find_case_insensitive(this->source, default_prefix, description.range());
         if (default_prefix_loc != string_t::npos) {
             size_t default_value_start = default_prefix_loc + strlen(default_prefix);
             // Skip over spaces
-            while (default_value_start < description_range.end() && isspace(this->source.at(default_value_start))) {
+            // TODO: rstring
+            while (default_value_start < description.range().end() && isspace(this->source.at(default_value_start))) {
                 default_value_start++;
             }
             
             // Find the closing ']'
             size_t default_value_end = this->source.find(char_t(']'), default_value_start);
-            if (default_value_end >= description_range.end()) {
+            if (default_value_end >= description.range().end()) {
                 // Note: The above check covers npos too
                 append_error(errors, default_prefix_loc, error_missing_close_bracket_in_default, "Missing ']' to match opening '['");
             } else {
@@ -608,35 +602,32 @@ option_t parse_one_option_spec(const range_t &range, error_list_t *errors) const
     }
 
     // Parse the options portion
-    assert(options_end >= range.start);
-    range_t remaining(range.start, options_end - range.start);
-    scan_while(this->source, &remaining, isspace);
+    rstring_t remaining = spec.substr(0, options_end);
+    scan_while(&remaining, isspace);
     while (! remaining.empty()) {
-    
-        if (this->source.at(remaining.start) != char_t('-')) {
-            append_error(errors, remaining.start, error_invalid_option_name, "Not an option");
+        if (remaining[0] != char_t('-')) {
+            append_error(errors, remaining.range().start, error_invalid_option_name, "Not an option");
             break;
         }
     
         option_t opt;
-        if (! option_t::parse_from_string(this->source, &remaining, &opt, errors)) {
+        if (! option_t::parse_from_string(&remaining, &opt, errors)) {
             // Failed to get an option, give up
             break;
         }
         result.merge_from(opt);
         
         // Skip over commas, which separate arguments
-        scan_while(this->source, &remaining, isspace);
-        scan_while(this->source, &remaining, it_equals<','>);
-        scan_while(this->source, &remaining, isspace);
+        scan_while(&remaining, isspace);
+        scan_while(&remaining, it_equals<','>);
+        scan_while(&remaining, isspace);
     }
         
     return result;
 }
 
 // Computes the indent for a line starting at start and extending len. Tabs are treated as 4 spaces. newlines are unexpected, and treated as one space.
-static size_t compute_indent(const string_t &src, size_t start, size_t len)
-{
+static size_t compute_indent(const string_t &src, size_t start, size_t len) {
     const size_t tabstop = 4;
     assert(src.size() >= len);
     assert(start + len >= start); // no overflow
@@ -677,6 +668,7 @@ static bool find_header(const string_t &src, const range_t &line_range, range_t 
 
 /* Walk over the lines of our source, starting from the beginning. */
 void populate_by_walking_lines(error_list_t *out_errors) {
+    // TODO: needs rstring work
     /* Distinguish between normal (docopt) and exposition (e.g. description). */
     enum mode_t {
         mode_normal,
@@ -685,7 +677,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
     
     // We need to parse the usage spec ranges after all of the Options
     // This is because we need the options to disambiguate some usages
-    range_list_t usage_spec_ranges;
+    rstring_list_t usage_specs;
     
     range_t line_range;
     while (get_next_line(this->source, &line_range)) {
@@ -700,12 +692,12 @@ void populate_by_walking_lines(error_list_t *out_errors) {
          
          Also note that a (nonempty) line indented more than the previous line is considered a continuation of that line.
          */
+        const rstring_t line(this->source, line_range);
         
-        range_t trimmed_line_range = trim_whitespace(line_range, this->source);
-        assert(trimmed_line_range.start >= line_range.start);
+        rstring_t trimmed_line = trim_whitespace(line);
         
         range_t header_range;
-        if (find_header(this->source, trimmed_line_range, &header_range)) {
+        if (find_header(this->source, trimmed_line.range(), &header_range)) {
             // Set mode based on header, and remove header from line
             // The headers we know about are Usage, Synopsis, Options, and Arguments (case insensitive)
             // Everything else is considered exposition
@@ -719,12 +711,12 @@ void populate_by_walking_lines(error_list_t *out_errors) {
             
             // Remove the header range from the trimmed line
             size_t header_end = header_range.end();
-            assert(header_end <= trimmed_line_range.end());
-            trimmed_line_range = trim_whitespace(range_t(header_end, trimmed_line_range.end() - header_end), this->source);
+            assert(header_end <= trimmed_line.range().end());
+            trimmed_line = trim_whitespace(rstring_t(this->source, range_t(header_end, trimmed_line.range().end() - header_end)));
         }
         
         // Skip exposition or empty lines
-        if (mode == mode_exposition || trimmed_line_range.empty()) {
+        if (mode == mode_exposition || trimmed_line.empty()) {
             continue;
         }
         
@@ -735,60 +727,60 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         
           Here 'foo' is indented more than 'bar'.
         */
-        const size_t line_indent = compute_indent(this->source, line_range.start, trimmed_line_range.start - line_range.start);
+        const size_t line_indent = compute_indent(this->source, line.range().start, trimmed_line.range().start - line.range().start);
         
         // Determine the "line group." That is, this line plus all subsequent nonempty lines
         // that are indented more than this line.
-        range_t line_group_range = trimmed_line_range;
-        range_t all_consumed_lines = line_range;
-        range_t next_line = line_range;
-        while (get_next_line(this->source, &next_line)) {
-            range_t trimmed_next_line = trim_whitespace(next_line, this->source);
-            size_t next_line_indent = compute_indent(this->source, next_line.start, trimmed_next_line.start - next_line.start);
+        rstring_t line_group = trimmed_line;
+        rstring_t all_consumed_lines(this->source, line_range);
+        range_t next_line_range = line_range;
+        while (get_next_line(this->source, &next_line_range)) {
+            const rstring_t next_line(this->source, next_line_range);
+            rstring_t trimmed_next_line = trim_whitespace(next_line);
+            size_t next_line_indent = compute_indent(this->source, next_line.range().start, trimmed_next_line.range().start - next_line.range().start);
             if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
                 break;
             }
-            line_group_range.merge(next_line);
-            all_consumed_lines.merge(next_line);
+            line_group = line_group.merge(next_line);
+            all_consumed_lines = all_consumed_lines.merge(next_line);
         }
         
-        char_t first_char = this->source.at(line_group_range.start);
+        char_t first_char = line_group[0];
         if (first_char == '-') {
             // It's an option spec
-            this->shortcut_options.push_back(this->parse_one_option_spec(line_group_range, out_errors));
+            this->shortcut_options.push_back(this->parse_one_option_spec(line_group, out_errors));
             
         } else if (first_char == '<') {
             // It's a variable command spec
-            const variable_command_map_t new_var_cmds = parse_one_variable_command_spec(line_group_range, out_errors);
+            const variable_command_map_t new_var_cmds = parse_one_variable_command_spec(line_group, out_errors);
             for (typename variable_command_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
                 if (!this->variables_to_commands.insert(*iter).second) {
-                    append_error(out_errors, line_group_range.start, error_one_variable_multiple_commands, "Duplicate command for variable");
+                    append_error(out_errors, line_group.range().start, error_one_variable_multiple_commands, "Duplicate command for variable");
                 }
             }
             
         } else if (isalnum(first_char) || first_char == '_') {
             // It's a usage spec. We will come back to this.
-            usage_spec_ranges.push_back(line_group_range);
+            usage_specs.push_back(line_group);
             
         } else {
             // It's an error
-            append_error(out_errors, trimmed_line_range.start, error_unknown_leader, "Lines must start with a normal character, less-than sign, or dash.");
+            append_error(out_errors, trimmed_line.range().start, error_unknown_leader, "Lines must start with a normal character, less-than sign, or dash.");
             break;
         }
         
         // Note the line range we consumed, for the next iteration of the loop
-        line_range = all_consumed_lines;
+        line_range = all_consumed_lines.range();
     }
     
     // Ensure our shortcut options don't have duplicates
     this->uniqueize_options(&this->shortcut_options, true /* error on duplicates */, out_errors);
     
     // Now parse our usage_spec_ranges
-    size_t usages_count = usage_spec_ranges.size();
+    size_t usages_count = usage_specs.size();
     this->usages.resize(usages_count);
-    for (size_t i=0; i < usages_count; i++)
-    {
-        parse_one_usage<string_t>(this->source, usage_spec_ranges.at(i), this->shortcut_options, &this->usages.at(i), out_errors);
+    for (size_t i=0; i < usages_count; i++) {
+        parse_one_usage<string_t>(this->source, usage_specs.at(i).range(), this->shortcut_options, &this->usages.at(i), out_errors);
     }
 }
 
@@ -855,22 +847,19 @@ range_list_t source_ranges_for_section(const char *name, bool include_other_top_
 }
 
 /* Given a variable spec, parse out a condition map */
-variable_command_map_t parse_one_variable_command_spec(const range_t &range, error_list_t *out_errors) const {
+variable_command_map_t parse_one_variable_command_spec(const rstring_t &spec, error_list_t *out_errors) const {
     // A specification look like this:
     // <pid> stuff
     variable_command_map_t result;
-    assert(this->source.at(range.start) == '<');
-    const size_t close_bracket = this->source.find('>', range.start);
-    if (close_bracket >= range.end()) {
-        // note: this covers npos too
-        append_error(out_errors, range.start, error_missing_close_variable, "No > to balance this <");
+    assert(! spec.empty() && spec[0] == '<');
+    const size_t close_bracket = spec.find('>');
+    if (close_bracket == rstring_t::npos) {
+        append_error(out_errors, spec.range().start, error_missing_close_variable, "No > to balance this <");
     } else {
-        assert(close_bracket < range.end());
-        range_t key_range(range.start, close_bracket - range.start + 1);
-        range_t value(key_range.end(), range.end() - key_range.end());
-        key_range = trim_whitespace(key_range, this->source);
-        value = trim_whitespace(value, this->source);
-        result[string_for_range(key_range)] = value;
+        assert(close_bracket < spec.length());
+        rstring_t key = trim_whitespace(spec.substr(0, close_bracket+1));
+        rstring_t value = trim_whitespace(spec.substr(close_bracket+1));
+        result[key.std_string()] = value.range();
     }
     return result;
 }

@@ -65,28 +65,45 @@ typedef std::vector<range_t> range_list_t;
 
 /* Our "rstring" string type tracks a range and base pointer. This enables both efficient sharing (fewer copies) and precise error messages, since we know the location of the error. CHAR is suggested to be either char or wchar_t. rstrings are views on top of immutable underlying data. Note that these are not null terminated. */
 template <typename CHAR>
-class rstring_t {
-    const CHAR *base;
-    range_t range;
+class rstring {
+    const CHAR *base_;
+    range_t range_;
+
 public:
+    typedef CHAR value_type;
+    typedef std::basic_string<CHAR> stdstring;
+
+private:
+    static size_t cstrlen(const CHAR *c) {
+        size_t idx = 0;
+        while (c[idx] != 0) {
+            idx++;
+        }
+        return idx;
+    }
+    
+public:
+    
+    static const size_t npos = size_t(-1);
+    
     size_t length() const {
-        return this->range.length();
+        return this->range_.length;
+    }
+    
+    bool empty() const {
+        return this->range_.empty();
     }
     
     CHAR at(size_t idx) const {
-        assert(idx <= range.length);
-        return this->base[idx + this->range.start];
+        assert(idx <= range_.length);
+        return this->base_[idx + this->range_.start];
     }
     
-    CHAR operator[](size_t idx) const {
-        return this->at(idx);
-    }
-    
-    int compare(const rstring_t &rhs) const {
+    int compare(const rstring &rhs) const {
         if (this == &rhs) {
             return 0;
         }
-        if (this->base == rhs.base && this->range == rhs.range) {
+        if (this->base == rhs.base_ && this->range_ == rhs.range_) {
             return 0;
         }
         for (size_t i=0; i < this->length() && i < rhs.length(); i++) {
@@ -101,26 +118,95 @@ public:
         return 0;
     }
     
-    bool operator==(const rstring_t &rhs) const {
+    rstring substr(const range_t &r) const {
+        assert(r.end() <= this->length());
+        return rstring(this->base_, range_t(this->range_.start + r.start, r.length));
+    }
+    
+    // Finds needle in self, and returns the location or npos
+    size_t find(const CHAR *needle) const {
+        size_t len = rstring::cstrlen(needle);
+        if (len == 0) {
+            return 0;
+        }
+        const CHAR *where = std::search(this->begin(), this->end(),
+                                        needle, needle + len);
+        assert(where >= this->begin() && where <= this->end());
+        return where == this->end() ? npos : where - this->begin();
+    }
+    
+    size_t find(CHAR needle) const {
+        const CHAR *where = std::find(this->begin(), this->end(), needle);
+        if (where == this->end()) {
+            return npos;
+        }
+        assert(where >= this->begin() && where <= this->end());
+        return where == this->end() ? npos : where - this->begin();
+    }
+
+    rstring substr(size_t offset, size_t length) const {
+        return this->substr(range_t(offset, length));
+    }
+
+    rstring substr(size_t offset) const {
+        assert(offset <= this->length());
+        return this->substr(offset, this->length() - offset);
+    }
+    
+    range_t range() const {
+        return this->range_;
+    }
+    
+    /* Merges another string into this string. The strings must have the same base pointer. */
+    rstring merge(const rstring &rhs) const {
+        assert(this->base_ == rhs.base_);
+        range_t merged = this->range_;
+        merged.merge(rhs.range());
+        return rstring(this->base_, merged);
+    }
+
+    
+    bool operator==(const rstring &rhs) const {
         return this->compare(rhs) == 0;
     }
     
-    bool operator!=(const rstring_t &rhs) const {
+    bool operator!=(const rstring &rhs) const {
         return this->compare(rhs) != 0;
     }
     
-    bool operator<(const rstring_t &rhs) const {
+    bool operator<(const rstring &rhs) const {
         return this->compare(rhs) < 0;
     }
     
-    const std::basic_string<CHAR> std_string() const {
-        if (range.length == 0) {
-            return std::basic_string<CHAR>();
-        }
-        return std::basic_string<CHAR>(this->base + this->range.start, this->range.length);
+    CHAR operator[](size_t idx) const {
+        return this->at(idx);
     }
     
-    rstring_t() : base(NULL), range() {}
+    const std::basic_string<CHAR> std_string() const {
+        if (this->empty()) {
+            return std::basic_string<CHAR>();
+        }
+        return std::basic_string<CHAR>(this->base_ + this->range_.start, this->range_.length);
+    }
+                    
+    /* Iterator junk */
+    typedef const CHAR *iterator;
+    iterator begin() const {
+        return this->base_ + this->range_.start;
+    }
+
+    iterator end() const {
+        return this->base_ + this->range_.end();
+    }
+
+    explicit rstring() : base_(NULL), range_() {}
+    explicit rstring(const CHAR *b, const range_t &r) : base_(b), range_(r) {}
+    
+    // Constructor from std::string. Note this borrows the storage so we must not outlive it.
+    explicit rstring(const stdstring &b) : base_(b.c_str()), range_(0, b.length()) {}
+    explicit rstring(const stdstring &b, const range_t &r) : base_(b.c_str()), range_(r) {
+        assert(r.end() <= b.size());
+    }
 };
 
 /* Overloads */
@@ -323,8 +409,8 @@ struct option_t {
     }
     
     /* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
-    template<typename string_t>
-    static bool parse_from_string(const string_t &str, range_t *remaining, option_t *result, std::vector<error_t<string_t> >* errors = NULL );
+    template<typename rstring>
+    static bool parse_from_string(rstring *remaining, option_t *result, std::vector<error_t<typename rstring::stdstring> >* errors = NULL);
 
     /* Variant for when the remaining range is uninteresting. */
     template<typename string_t>
