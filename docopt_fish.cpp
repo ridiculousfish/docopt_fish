@@ -105,42 +105,6 @@ static bool char_is_valid_in_bracketed_word(char_t c) {
     return std::find(invalid, end, c) == end;
 }
 
-template<typename RSTRING, typename T>
-static RSTRING scan_while(RSTRING *remaining, T func) {
-    size_t amt = 0;
-    while (amt < remaining->length() && func(remaining->at(amt))) {
-        amt++;
-    }
-    RSTRING result = remaining->substr(0, amt);
-    *remaining = remaining->substr(amt);
-    return result;
-}
-
-// Returns a new range where leading and trailing whitespace has been trimmed
-template<typename RSTRING>
-static RSTRING trim_whitespace(const RSTRING &src) {
-    size_t left = 0, right = src.length();
-    while (left < right && isspace(src.at(left))) {
-        left++;
-    }
-    while (right > left && isspace(src.at(right - 1))) {
-        right--;
-    }
-    assert(left <= right);
-    return src.substr(left, right - left);
-}
-
-template<typename RSTRING>
-static RSTRING scan_1_char(RSTRING *remaining, typename RSTRING::value_type c) {
-    if (remaining->length() > 0 && remaining->at(0) == c) {
-        RSTRING result = remaining->substr(0, 1);
-        *remaining = remaining->substr(1);
-        return result;
-    }
-    return remaining->substr(0, 0);
-}
-
-
 /* Given an inout string, parse out an option and return it. Update the string to reflect the number of characters used. */
 template<typename rstring_t>
 bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t<typename rstring_t::stdstring> >* errors UNUSED) {
@@ -151,7 +115,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::ve
     bool errored = false;
     
     // Count how many leading dashes
-    rstring_t leading_dashes = scan_while(remaining, it_equals<'-'>);
+    rstring_t leading_dashes = remaining->scan_while(it_equals<'-'>);
     const size_t dash_count = leading_dashes.length();
     assert(dash_count > 0);
     if (dash_count > 2) {
@@ -159,13 +123,13 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::ve
     }
 
     // Walk over characters valid in a name
-    rstring_t name = scan_while(remaining, char_is_valid_in_parameter<char_t>);
+    rstring_t name = remaining->scan_while(char_is_valid_in_parameter<char_t>);
     
     // Check to see if there's a space
-    rstring_t space_separator = scan_while(remaining, isspace);
+    rstring_t space_separator = remaining->scan_while(isspace);
 
     // Check to see if there's an = sign
-    const rstring_t equals = scan_while(remaining, it_equals<'='>);
+    const rstring_t equals = remaining->scan_while(it_equals<'='>);
     if (equals.length() > 1) {
         append_error(errors, equals.range().start, error_excessive_equal_signs, "Too many equal signs");
         errored = true;
@@ -173,13 +137,13 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::ve
 
     // Try to scan a variable
     // TODO: If we have a naked equals sign (foo = ) generate an error
-    scan_while(remaining, isspace);
+    remaining->scan_while(isspace);
     
     rstring_t variable;
-    rstring_t open_sign = scan_1_char(remaining, '<');
+    rstring_t open_sign = remaining->scan_1_char('<');
     if (! open_sign.empty()) {
-        rstring_t variable_name = scan_while(remaining, char_is_valid_in_bracketed_word<char_t>);
-        rstring_t close_sign = scan_1_char(remaining, '>');
+        rstring_t variable_name = remaining->scan_while(char_is_valid_in_bracketed_word<char_t>);
+        rstring_t close_sign = remaining->scan_1_char('>');
         if (variable_name.empty()) {
             append_error(errors, variable_name.range().start, error_invalid_variable_name, "Missing variable name");
             errored = true;
@@ -539,13 +503,13 @@ static option_t parse_option_from_argument(const string_t &str, option_t::name_t
     
     // Swallow leading dashes
     // TODO: the caller should do this for us
-    scan_while(remaining, it_equals<'-'>);
+    remaining->scan_while(it_equals<'-'>);
     
     // Walk over characters valid in a name
-    const rstring_t name = scan_while(remaining, char_is_valid_in_parameter<char_t>);
+    const rstring_t name = remaining->scan_while(char_is_valid_in_parameter<char_t>);
     
     // Check to see if there's an = sign
-    const rstring_t equals = scan_1_char(remaining, char_t('='));
+    const rstring_t equals = remaining->scan_1_char(char_t('='));
     
     // If we got an equals sign, the rest is the value
     // It can have any character at all, since it's coming from the argument, not from the usage spec
@@ -573,7 +537,7 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
     }
 
     // Determine the description range (possibly empty). Trim leading and trailing whitespace
-    rstring_t description = trim_whitespace(spec.substr(options_end));
+    rstring_t description = spec.substr(options_end).trim_whitespace();
     result.description_range = description.range();
     
     // Parse out a "default:" value.
@@ -603,7 +567,7 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
 
     // Parse the options portion
     rstring_t remaining = spec.substr(0, options_end);
-    scan_while(&remaining, isspace);
+    remaining.scan_while(isspace);
     while (! remaining.empty()) {
         if (remaining[0] != char_t('-')) {
             append_error(errors, remaining.range().start, error_invalid_option_name, "Not an option");
@@ -618,9 +582,9 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
         result.merge_from(opt);
         
         // Skip over commas, which separate arguments
-        scan_while(&remaining, isspace);
-        scan_while(&remaining, it_equals<','>);
-        scan_while(&remaining, isspace);
+        remaining.scan_while(isspace);
+        remaining.scan_while(it_equals<','>);
+        remaining.scan_while(isspace);
     }
         
     return result;
@@ -694,7 +658,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
          */
         const rstring_t line(this->source, line_range);
         
-        rstring_t trimmed_line = trim_whitespace(line);
+        rstring_t trimmed_line = line.trim_whitespace();
         
         range_t header_range;
         if (find_header(this->source, trimmed_line.range(), &header_range)) {
@@ -712,7 +676,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
             // Remove the header range from the trimmed line
             size_t header_end = header_range.end();
             assert(header_end <= trimmed_line.range().end());
-            trimmed_line = trim_whitespace(rstring_t(this->source, range_t(header_end, trimmed_line.range().end() - header_end)));
+            trimmed_line = rstring_t(this->source, range_t(header_end, trimmed_line.range().end() - header_end)).trim_whitespace();
         }
         
         // Skip exposition or empty lines
@@ -736,7 +700,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         range_t next_line_range = line_range;
         while (get_next_line(this->source, &next_line_range)) {
             const rstring_t next_line(this->source, next_line_range);
-            rstring_t trimmed_next_line = trim_whitespace(next_line);
+            rstring_t trimmed_next_line = next_line.trim_whitespace();
             size_t next_line_indent = compute_indent(this->source, next_line.range().start, trimmed_next_line.range().start - next_line.range().start);
             if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
                 break;
@@ -857,8 +821,8 @@ variable_command_map_t parse_one_variable_command_spec(const rstring_t &spec, er
         append_error(out_errors, spec.range().start, error_missing_close_variable, "No > to balance this <");
     } else {
         assert(close_bracket < spec.length());
-        rstring_t key = trim_whitespace(spec.substr(0, close_bracket+1));
-        rstring_t value = trim_whitespace(spec.substr(close_bracket+1));
+        rstring_t key = spec.substr(0, close_bracket+1).trim_whitespace();
+        rstring_t value = spec.substr(close_bracket+1).trim_whitespace();
         result[key.std_string()] = value.range();
     }
     return result;

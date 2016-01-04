@@ -198,6 +198,46 @@ public:
     iterator end() const {
         return this->base_ + this->range_.end();
     }
+    
+    // Parsing stuff
+    
+    // Returns a prefix of self that satisfies the function.
+    // Adjusts self to be the remainder after the prefix.
+    template<typename F>
+    rstring scan_while(F func) {
+        size_t amt = 0;
+        while (amt < this->length() && func(this->at(amt))) {
+            amt++;
+        }
+        rstring result = this->substr(0, amt);
+        *this = this->substr(amt);
+        return result;
+    }
+    
+    // If this begins with c, returns a string containing c
+    // and adjusts self to the remainder. Otherwise returns
+    // an empty string
+    rstring scan_1_char(value_type c) {
+        rstring result = this->substr(0, 0);
+        if (this->length() > 0 && this->at(0) == c) {
+            result = this->substr(0, 1);
+            *this = this->substr(1);
+        }
+        return result;
+    }
+    
+    // Returns a new string with leading and trailing whitespace trimmed
+    rstring trim_whitespace() const {
+        size_t left = 0, right = this->length();
+        while (left < right && isspace(this->at(left))) {
+            left++;
+        }
+        while (right > left && isspace(this->at(right - 1))) {
+            right--;
+        }
+        assert(left <= right);
+        return this->substr(left, right - left);
+    }
 
     explicit rstring() : base_(NULL), range_() {}
     explicit rstring(const CHAR *b, const range_t &r) : base_(b), range_(r) {}
