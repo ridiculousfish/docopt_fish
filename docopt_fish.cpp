@@ -89,28 +89,24 @@ static void append_argv_error(std::vector<error_t<string_t> > *errors, size_t ar
 
 
 template<char T>
-static bool it_equals(int c) { return c == T; }
+static bool it_equals(rstring_t::char_t c) { return c == T; }
 
-template<typename char_t>
-static bool char_is_valid_in_parameter(char_t c) {
+static bool char_is_valid_in_parameter(rstring_t::char_t c) {
     const char *invalid = ".|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
-template<typename char_t>
-static bool char_is_valid_in_bracketed_word(char_t c) {
+static bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
     const char *invalid = "|()[]>\t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
 /* Given an inout string, parse out an option and return it. Update the string to reflect the number of characters used. */
-template<typename rstring_t>
-bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t<typename rstring_t::stdstring> >* errors UNUSED) {
+template<typename string_t>
+bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t<string_t> >* errors UNUSED) {
     assert(! remaining->empty());
-    
-    typedef typename rstring_t::value_type char_t;
     
     bool errored = false;
     
@@ -123,7 +119,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::ve
     }
 
     // Walk over characters valid in a name
-    rstring_t name = remaining->scan_while(char_is_valid_in_parameter<char_t>);
+    rstring_t name = remaining->scan_while(char_is_valid_in_parameter);
     
     // Check to see if there's a space
     rstring_t space_separator = remaining->scan_while(isspace);
@@ -142,7 +138,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::ve
     rstring_t variable;
     rstring_t open_sign = remaining->scan_1_char('<');
     if (! open_sign.empty()) {
-        rstring_t variable_name = remaining->scan_while(char_is_valid_in_bracketed_word<char_t>);
+        rstring_t variable_name = remaining->scan_while(char_is_valid_in_bracketed_word);
         rstring_t close_sign = remaining->scan_1_char('>');
         if (variable_name.empty()) {
             append_error(errors, variable_name.range().start, error_invalid_variable_name, "Missing variable name");
@@ -216,10 +212,6 @@ class docopt_impl OPEN_DOCOPT_IMPL
 
 /* A character in string_t; likely either char or wchar_t */
 typedef typename string_t::value_type char_t;
-
-/* The range string type */
-typedef rstring<char_t> rstring_t;
-typedef std::vector<rstring_t> rstring_list_t;
 
 #pragma mark -
 #pragma mark Scanning
@@ -318,7 +310,7 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
 typedef std::vector<error_t<string_t> > error_list_t;
 
 /* Class representing a map from variable names to conditions */
-typedef std::map<string_t, range_t> variable_command_map_t;
+typedef std::map<rstring_t, range_t> variable_command_map_t;
 
 /* List of usages */
 typedef std::vector<usage_t> usage_list_t;
@@ -506,7 +498,7 @@ static option_t parse_option_from_argument(const string_t &str, option_t::name_t
     remaining->scan_while(it_equals<'-'>);
     
     // Walk over characters valid in a name
-    const rstring_t name = remaining->scan_while(char_is_valid_in_parameter<char_t>);
+    const rstring_t name = remaining->scan_while(char_is_valid_in_parameter);
     
     // Check to see if there's an = sign
     const rstring_t equals = remaining->scan_1_char(char_t('='));
@@ -529,9 +521,7 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
     option_t result;
 
     // Look for two spaces. Those separate the description.
-    // This is a two-space "C-string"
-    const char_t two_spaces[] = {char_t(' '), char_t(' '), char_t('\0')};
-    size_t options_end = spec.find(two_spaces);
+    size_t options_end = spec.find("  ");
     if (options_end > end) {
         options_end = end; // no description
     }
@@ -641,7 +631,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
     
     // We need to parse the usage spec ranges after all of the Options
     // This is because we need the options to disambiguate some usages
-    rstring_list_t usage_specs;
+    std::vector<rstring_t> usage_specs;
     
     range_t line_range;
     while (get_next_line(this->source, &line_range)) {
@@ -823,7 +813,7 @@ variable_command_map_t parse_one_variable_command_spec(const rstring_t &spec, er
         assert(close_bracket < spec.length());
         rstring_t key = spec.substr(0, close_bracket+1).trim_whitespace();
         rstring_t value = spec.substr(close_bracket+1).trim_whitespace();
-        result[key.std_string()] = value.range();
+        result[key] = value.range();
     }
     return result;
 }
@@ -1984,9 +1974,10 @@ string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t fla
 
 string_t commands_for_variable(const string_t &var_name) const {
     string_t result;
-    typename variable_command_map_t::const_iterator where = this->variables_to_commands.find(var_name);
+    variable_command_map_t::const_iterator where = this->variables_to_commands.find(rstring_t(var_name));
     if (where != this->variables_to_commands.end()) {
         const range_t &cond_range = where->second;
+        // TODO: more rstring_t
         result.assign(this->source, cond_range.start, cond_range.length);
     }
     return result;

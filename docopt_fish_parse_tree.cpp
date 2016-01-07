@@ -27,8 +27,7 @@ OPEN_DOCOPT_IMPL
 /* Context passed around in our recursive descent parser */
 template<typename string_t>
 struct parse_context_t {
-    typedef typename string_t::value_type char_t;
-    typedef rstring<char_t> rstring_t;
+    typedef unsigned int char_t;
 
     static bool char_is_valid_in_word(char_t c) {
         const char *invalid = ".|()[],<> \t\n";
@@ -45,37 +44,15 @@ struct parse_context_t {
     static bool char_is_space_or_tab(char_t c) {
         return c == ' ' || c == '\t';
     }
-
-    inline range_t scan_1_char(range_t *remaining, char_t c) {
-        range_t result(remaining->start, 0);
-        if (result.end() < remaining->end() && this->source->at(result.end()) == c) {
-            result.length += 1;
-            remaining->start += 1;
-            remaining->length -= 1;
-        }
-        return result;
-    }
-
-    template<typename T>
-    inline range_t scan_while(range_t *remaining, T func) {
-        size_t idx = remaining->start;
-        const size_t end = remaining->end();
-        assert(end <= this->source->size());
-        while (idx < end && func((*this->source)[idx])) {
-            idx++;
-        }
-        range_t result(remaining->start, idx - remaining->start);
-        remaining->start = result.end();
-        remaining->length -= result.length;
-        return result;
-    }
-        
-     // Note unowned pointer reference. A parse context is stack allocated and transient.
-    const string_t *source;
-    const option_list_t *shortcut_options;
     
-    // How much of source remains to be parsed
-    range_t remaining_range;
+    // Note unowned pointer references. A parse context is stack allocated and transient.
+    // Initial string we're parsing
+    const string_t * const source;
+    
+    // Range of source remains to be parsed
+    rstring_t remaining;
+    
+    const option_list_t *shortcut_options;
     
     // The initial indent for the usage_t that we are parsing. If we reach a line that is indented further than this, we treat it as a continuation of the previous line.
     size_t initial_indent;
@@ -83,24 +60,24 @@ struct parse_context_t {
     // Errors we generate
     vector<error_t<string_t> > errors;
     
-    parse_context_t(const string_t &src, const range_t &usage_range, const option_list_t &shortcuts) : source(&src), shortcut_options(&shortcuts), remaining_range(usage_range), initial_indent(-1)
+    parse_context_t(const string_t &src, const range_t &usage_range, const option_list_t &shortcuts) : source(&src), remaining(src, usage_range), shortcut_options(&shortcuts), initial_indent(-1)
     {}
     
     /* Consume leading whitespace. Newlines are meaningful if their associated lines are indented the same or less than initial_indent. If they are indented more, we swallow those. */
     void consume_leading_whitespace() {
         for (;;) {
-            scan_while(&remaining_range, char_is_space_or_tab);
-            const range_t saved_remaining = this->remaining_range;
-            if (scan_1_char(&remaining_range, '\n').empty()) {
+            this->remaining.scan_while(char_is_space_or_tab);
+            const rstring_t saved_remaining = this->remaining;
+            if (this->remaining.scan_1_char('\n').empty()) {
                 // Not a newline
-                remaining_range = saved_remaining;
+                this->remaining = saved_remaining;
                 break;
             }
             
             // Got a newline. Compare our indent. If we're indented more, we swallow it and keep going!
             size_t indent = indent_for_current_line();
             if (indent <= initial_indent) {
-                this->remaining_range = saved_remaining;
+                this->remaining = saved_remaining;
                 break;
             }
         }
@@ -108,7 +85,7 @@ struct parse_context_t {
     
     /* Returns true if there are no more next tokens */
     bool is_at_end() const {
-        return remaining_range.length == 0;
+        return this->remaining.empty();
     }
     
     /* Rounds a value up to the next tabstop */
@@ -130,13 +107,12 @@ struct parse_context_t {
         
         // Walk backwards until we hit the string beginning, or a newline, then sum until we hit the range start
         // We can't sum backwards because we can't compute the tabstops
+        const range_t remaining_range = this->remaining.range();
         size_t start = remaining_range.start;
-        while (start > 0 && source->at(start - 1) != '\n')
-        {
+        while (start > 0 && source->at(start - 1) != '\n') {
             start -= 1;
         }
-        for (size_t idx = start; idx < remaining_range.start; idx++)
-        {
+        for (size_t idx = start; idx < remaining_range.start; idx++) {
             char_t c = source->at(idx);
             if (c == '\t') {
                 result = round_to_next_tabstop(result);
@@ -167,7 +143,7 @@ struct parse_context_t {
     bool scan(char_t c, token_t *tok = NULL) {
         this->consume_leading_whitespace();
         token_t storage;
-        storage.range = scan_1_char(&remaining_range, c);
+        storage.range = this->remaining.scan_1_char(c).range();
         if (tok) {
             *tok = storage;
         }
@@ -178,7 +154,7 @@ struct parse_context_t {
         this->consume_leading_whitespace();
         bool success = true;
         token_t string_tok;
-        const range_t saved_remaining = this->remaining_range;
+        const rstring_t saved_remaining = this->remaining;
         for (size_t i=0; c[i] != '\0'; i++) {
             token_t char_tok;
             if (! this->scan(c[i], &char_tok)) {
@@ -190,7 +166,7 @@ struct parse_context_t {
         
         // If we did not scan all the characters, restore our initial state
         if (! success) {
-            this->remaining_range = saved_remaining;
+            this->remaining = saved_remaining;
             string_tok.range = range_t(0, 0);
         }
         if (tok) {
@@ -202,21 +178,21 @@ struct parse_context_t {
     bool scan_word(token_t *tok) {
         this->consume_leading_whitespace();
         /* A word may have embedded <...>. These may contain spaces. They may also abut: --foo<abc def>bar' is one word. So we use a loop. */
-        range_t result;
+        rstring_t result;
         for (;;) {
             // Scan non-bracketed sequence. This may be empty (in which case the merge does nothing)
-            result.merge(scan_while(&remaining_range, char_is_valid_in_word));
+            result = result.merge(this->remaining.scan_while(char_is_valid_in_word));
             // Scan bracketed sequence
-            range_t bracket_start = scan_1_char(&remaining_range, '<');
+            rstring_t bracket_start = this->remaining.scan_1_char('<');
             if (! bracket_start.empty()) {
-                scan_while(&remaining_range, char_is_valid_in_bracketed_word);
-                range_t bracket_end = scan_1_char(&remaining_range, '>');
+                this->remaining.scan_while(char_is_valid_in_bracketed_word);
+                rstring_t bracket_end = this->remaining.scan_1_char('>');
                 if (bracket_end.empty()) {
                     // TODO: report unclosed bracket
                 } else {
                     // Merging the bracket ranges will include the contents
-                    result.merge(bracket_start);
-                    result.merge(bracket_end);
+                    result = result.merge(bracket_start);
+                    result = result.merge(bracket_end);
                 }
             }
             // If we got an empty bracket range, then we're done; otherwise start again
@@ -224,23 +200,23 @@ struct parse_context_t {
                 break;
             }
         }
-        tok->range = result;
-        return ! tok->range.empty();
+        tok->range = result.range();
+        return ! result.empty();
     }
     
     bool peek(const char *s) {
-        const range_t saved_range = remaining_range;
+        const rstring_t saved = this->remaining;
         token_t tok;
         bool result = scan(s, &tok);
-        remaining_range = saved_range;
+        this->remaining = saved;
         return result;
     }
     
     token_t peek_word() {
-        const range_t saved_range = remaining_range;
+        const rstring_t saved = this->remaining;
         token_t tok;
         scan_word(&tok);
-        remaining_range = saved_range;
+        this->remaining = saved;
         return tok;
     }
     
