@@ -253,21 +253,24 @@ public:
     char_t operator[](size_t idx) const {
         return this->at(idx);
     }
-    
-    template<typename stdchar_t>
-    const std::basic_string<stdchar_t> std_string() const {
-        typedef std::basic_string<stdchar_t> string_t;
+
+    // Copies our contents into the given std::string
+    template<typename stdstring_t>
+    void copy_to(stdstring_t *outstr) const {
         const size_t length = this->length();
-        if (length == 0) {
-            return string_t();
-        }
-        string_t result(length);
+        outstr->resize(length);
         for (size_t i=0; i < length; i++) {
-            result[i] = this->at(i);
+            (*outstr)[i] = this->at(i);
         }
+    }
+    
+    template<typename stdstring_t>
+    const stdstring_t std_string() const {
+        stdstring_t result;
+        this->copy_to(&result);
         return result;
     }
-                    
+
     // Parsing stuff
     
     // Returns a prefix of self that satisfies the function.
@@ -340,7 +343,6 @@ public:
 
     template<typename stdchar_t>
     explicit rstring_t(const std::basic_string<stdchar_t> &b, const range_t &r) : range_(r), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
-
 };
 
 /* Overloads */

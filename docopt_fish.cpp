@@ -13,7 +13,10 @@
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
+#warning Why?
 static const size_t npos = (size_t)(-1);
+
+typedef std::vector<rstring_t> rstring_list_t;
 
 // Narrow implementation
 static inline size_t find_case_insensitive(const std::string &haystack, const char *needle, const range_t &haystack_range) {
@@ -284,10 +287,9 @@ public:
 
 /* Helper class for collecting clauses from a tree */
 struct clause_collector_t : public node_visitor_t<clause_collector_t> {
-#warning More rstring_t
     option_list_t options;
-    range_list_t fixeds;
-    range_list_t variables;
+    rstring_list_t fixeds;
+    rstring_list_t variables;
     
     // The requested types we capture
     void accept(const option_clause_t& node) {
@@ -295,11 +297,11 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
     }
     
     void accept(const fixed_clause_t& node) {
-        fixeds.push_back(node.word.range());
+        fixeds.push_back(node.word);
     }
     
     void accept(const variable_clause_t& node) {
-        variables.push_back(node.word.range());
+        variables.push_back(node.word);
     }
     
     // Other types we ignore
@@ -341,10 +343,10 @@ option_list_t shortcut_options;
 option_list_t all_options;
 
 /* All of the variables that appear (like <kn>) from the "Usage:" sections */
-range_list_t all_variables;
+rstring_list_t all_variables;
 
 /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
-range_list_t all_static_arguments;
+rstring_list_t all_static_arguments;
 
 /* Map from variable names to the commands that populate them */
 variable_command_map_t variables_to_commands;
@@ -463,7 +465,7 @@ static bool substr_equals(const char *a, const string_t &b, size_t len) {
 }
 
 /* Collects options, i.e. tokens of the form --foo */
-void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, range_list_t *out_variables, range_list_t *out_static_arguments) const {
+void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) const {
     clause_collector_t collector;
     for (size_t i=0; i < usages.size(); i++) {
         collector.begin(usages.at(i));
@@ -621,7 +623,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
     
     // We need to parse the usage spec ranges after all of the Options
     // This is because we need the options to disambiguate some usages
-    std::vector<rstring_t> usage_specs;
+    rstring_list_t usage_specs;
     
     range_t line_range;
     while (get_next_line(this->source, &line_range)) {
@@ -1727,7 +1729,7 @@ void match(const variable_clause_t &node, match_state_t *state, match_context_t 
     }
 }
 
-option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options, const range_list_t &all_variables, parse_flags_t flags) {
+option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options, const rstring_list_t &all_variables, parse_flags_t flags) {
     // If we aren't asked to do empty args, then skip it
     if (! (flags & flag_generate_empty_args)) {
         return map;
@@ -1757,7 +1759,7 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     // Fill in variables
     string_t name;
     for (size_t i=0; i < all_variables.size(); i++) {
-        const range_t &var_range = all_variables.at(i);
+        const range_t &var_range = all_variables.at(i).range();
         name.assign(this->source, var_range.start, var_range.length);
         // As above, we merely invoke operator[]
         result[name];
@@ -1765,7 +1767,7 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     
     // Fill in static arguments
     for (size_t i=0; i < all_static_arguments.size(); i++) {
-        const range_t &range = all_static_arguments.at(i);
+        const range_t range = all_static_arguments.at(i).range();
         name.assign(this->source, range.start, range.length);
         // As above, we merely invoke operator[]
         result[name];
@@ -1775,7 +1777,7 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
 }
 
 /* Matches argv */
-option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const range_list_t &all_variables, index_list_t *out_unused_arguments, bool log_stuff = false) {
+option_map_t match_argv(const string_list_t &argv, parse_flags_t flags, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const rstring_list_t &all_variables, index_list_t *out_unused_arguments, bool log_stuff = false) {
     /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
     match_context_t ctx(flags | flag_stop_after_consuming_everything, positionals, resolved_options, argv);
     match_state_t init_state;
@@ -2035,8 +2037,8 @@ std::vector<string_t> get_variables() const {
     
     // Include explicit variables
     for (size_t i=0; i < this->all_variables.size(); i++) {
-        const range_t &r = this->all_variables.at(i);
-        result.push_back(string_for_range(r));
+        const rstring_t &r = this->all_variables.at(i);
+        result.push_back(r.std_string<string_t>());
     }
     
     // Include variables that are part of options
