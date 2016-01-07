@@ -140,42 +140,28 @@ struct parse_context_t {
         return result;
     }
     
-    bool scan(char_t c, token_t *tok = NULL) {
+    // Try scanning a single character
+    bool scan(char_t c, rstring_t *tok = NULL) {
         this->consume_leading_whitespace();
-        token_t storage;
-        storage.range = this->remaining.scan_1_char(c).range();
+        rstring_t scanned = this->remaining.scan_1_char(c);
         if (tok) {
-            *tok = storage;
+            *tok = scanned;
         }
-        return ! storage.range.empty();
+        return ! scanned.empty();
     }
     
-    bool scan(const char *c, token_t *tok) {
+    // Try scanning a string
+    bool scan(const char *c, rstring_t *tok = NULL) {
         this->consume_leading_whitespace();
-        bool success = true;
-        token_t string_tok;
-        const rstring_t saved_remaining = this->remaining;
-        for (size_t i=0; c[i] != '\0'; i++) {
-            token_t char_tok;
-            if (! this->scan(c[i], &char_tok)) {
-                success = false;
-                break;
-            }
-            string_tok.range.merge(char_tok.range);
-        }
-        
-        // If we did not scan all the characters, restore our initial state
-        if (! success) {
-            this->remaining = saved_remaining;
-            string_tok.range = range_t(0, 0);
-        }
+        rstring_t scanned = this->remaining.scan_string(c);
         if (tok) {
-            *tok = string_tok;
+            *tok = scanned;
         }
-        return success;
+        return ! scanned.empty();
     }
+
     
-    bool scan_word(token_t *tok) {
+    bool scan_word(rstring_t *tok) {
         this->consume_leading_whitespace();
         /* A word may have embedded <...>. These may contain spaces. They may also abut: --foo<abc def>bar' is one word. So we use a loop. */
         rstring_t result;
@@ -200,21 +186,21 @@ struct parse_context_t {
                 break;
             }
         }
-        tok->range = result.range();
+        *tok = result;
         return ! result.empty();
     }
     
     bool peek(const char *s) {
         const rstring_t saved = this->remaining;
-        token_t tok;
+        rstring_t tok;
         bool result = scan(s, &tok);
         this->remaining = saved;
         return result;
     }
     
-    token_t peek_word() {
+    rstring_t peek_word() {
         const rstring_t saved = this->remaining;
-        token_t tok;
+        rstring_t tok;
         scan_word(&tok);
         this->remaining = saved;
         return tok;
@@ -247,7 +233,7 @@ struct parse_context_t {
         result->alternations.reserve(2);
         while (status == parsed_ok) {
             // Scan a vert bar if we're not first
-            token_t bar;
+            rstring_t bar;
             if (! first && ! this->scan('|', &bar)) {
                 status = parsed_done;
                 break;
@@ -255,7 +241,7 @@ struct parse_context_t {
             status = try_parse_appending(&result->alternations);
             if (status == parsed_done) {
                 if (! first) {
-                    append_error(&this->errors, bar.range.start, error_trailing_vertical_bar, "Trailing vertical bar");
+                    append_error(&this->errors, bar.range().start, error_trailing_vertical_bar, "Trailing vertical bar");
                     status = parsed_error;
                 }
                 break;
@@ -325,16 +311,16 @@ struct parse_context_t {
     
     // Parse a simple clause
     parse_result_t parse(simple_clause_t *result) {
-        token_t word = this->peek_word();
-        if (word.range.empty()) {
+        rstring_t word = this->peek_word();
+        if (word.empty()) {
             // Nothing remaining to parse
             return parsed_done;
         }
         
-        char_t c = this->source->at(word.range.start);
+        char_t c = word[0];
         if (c == '<') {
             return this->try_parse_auto(&result->variable);
-        } else if (c == '-' && word.range.length > 1) {
+        } else if (c == '-' && word.length() > 1) {
             // A naked '-', is to be treated as a fixed value
             return this->try_parse_auto(&result->option);
         } else {
@@ -344,7 +330,7 @@ struct parse_context_t {
 
     // Parse options clause
     parse_result_t parse(option_clause_t *result) {
-        token_t word;
+        rstring_t word;
         if (! this->scan_word(&word)) {
             return parsed_done;
         }
@@ -381,8 +367,7 @@ struct parse_context_t {
          
            "usage: prog [-m (<msg>)]"
         */
-        const string_t &src = *this->source;
-        rstring_t remaining(src, word.range);
+        rstring_t remaining = word;
         // This second test is to avoid matching '--'
         if (remaining.length() > 1 && remaining[0] == '-' && ! (remaining.length() == 2 && remaining[1] == '-')) {
             // It's an option
@@ -396,7 +381,7 @@ struct parse_context_t {
             const option_t *opt_from_options_section = NULL;
             for (size_t i=0; i < this->shortcut_options->size(); i++) {
                 const option_t &test_op = this->shortcut_options->at(i);
-                if (opt_from_usage_section.has_same_name(test_op, src)) {
+                if (opt_from_usage_section.has_same_name(test_op, *this->source)) {
                     opt_from_options_section = &test_op;
                     break;
                 }
@@ -405,16 +390,16 @@ struct parse_context_t {
             // We may have to parse a variable
             if (opt_from_usage_section.separator == option_t::sep_space) {
                 // Looks like an option without a separator. See if the next token is a variable
-                range_t next = this->peek_word().range;
-                if (next.length > 2 && src.at(next.start) == '<' && src.at(next.end() - 1) == '>') {
+                rstring_t next = this->peek_word();
+                if (next.length() > 2 && next[0] == '<' && next[next.length() - 1] == '>') {
                     // It's a variable. See if we have a presence in options.
                     bool options_section_implies_no_value = (opt_from_options_section && opt_from_options_section->value.empty());
                     if (! options_section_implies_no_value) {
-                        token_t variable;
+                        rstring_t variable;
                         bool scanned = this->scan_word(&variable);
                         assert(scanned); // Should always succeed, since we peeked at the word
-                        word.range.merge(variable.range);
-                        opt_from_usage_section.value = variable.range;
+                        word = word.merge(variable);
+                        opt_from_usage_section.value = variable.range();
                     }
                 }
             }
@@ -453,7 +438,7 @@ struct parse_context_t {
         }
         
         parse_result_t status; // should be set in every branch
-        token_t token;
+        rstring_t token;
         // Note that options must come before trying to parse it as a list, because "[options]" itself looks like a list
         if (this->scan("[options]", &token)) {
             result->production = 3;
@@ -461,25 +446,24 @@ struct parse_context_t {
         } else if (this->scan('(', &token) || this->scan('[', &token)) {
             status = this->try_parse_auto(&result->alternation_list);
             if (status != parsed_error) {
-                char_t c = this->source->at(token.range.start);
-                assert(c == char_t('(') || c == char_t('['));
-                bool is_paren = (c == char_t('('));
-                token_t close_token;
-                if (this->scan(char_t(is_paren ? ')' : ']'), &close_token)) {
+                assert(token[0] == '(' || token[0] == '[');
+                bool is_paren = (token[0] == '(');
+                rstring_t close_token;
+                if (this->scan(is_paren ? ')' : ']', &close_token)) {
                     result->production = is_paren ? 1 : 2;
                     parse(&result->opt_ellipsis); // never fails
                 } else {
                     // No closing bracket or paren
                     if (is_paren) {
-                        append_error(&this->errors, token.range.start, error_missing_close_paren, "Missing ')' to match opening '('");
+                        append_error(&this->errors, token.range().start, error_missing_close_paren, "Missing ')' to match opening '('");
                     } else {
-                        append_error(&this->errors, token.range.start, error_missing_close_bracket, "Missing ']' to match opening '['");
+                        append_error(&this->errors, token.range().start, error_missing_close_bracket, "Missing ']' to match opening '['");
                     }
                     status = parsed_error;
                 }
             }
         } else if (this->scan("...", &token)) {
-            append_error(&this->errors, token.range.start, error_leading_ellipsis, "Ellipsis may only follow an expression");
+            append_error(&this->errors, token.range().start, error_leading_ellipsis, "Ellipsis may only follow an expression");
             status = parsed_error;
         } else if (this->peek("|")) {
             // End of an alternation list

@@ -282,12 +282,35 @@ public:
         *this = this->substr(amt);
         return result;
     }
+
+    // If this begins with c, returns a string containing c
+    // and adjusts self to the remainder. Otherwise returns
+    // an empty string.
+    rstring_t scan_string(const char *c) {
+        rstring_t result;
+        size_t len = strlen(c);
+        if (len <= this->length()) {
+            size_t i = 0;
+            for (i=0; i < len; i++) {
+                if (this->at(i) != c[i]) {
+                    break;
+                }
+            }
+            if (i == len) {
+                // Prefix matches prefix
+                result = this->substr(0, len);
+                *this = this->substr(len);
+            }
+        }
+        return result;
+    }
+
     
     // If this begins with c, returns a string containing c
     // and adjusts self to the remainder. Otherwise returns
     // an empty string
     rstring_t scan_1_char(char_t c) {
-        rstring_t result = this->substr(0, 0);
+        rstring_t result;
         if (this->length() > 0 && this->at(0) == c) {
             result = this->substr(0, 1);
             *this = this->substr(1);
@@ -308,7 +331,7 @@ public:
         return this->substr(left, right - left);
     }
 
-    explicit rstring_t() : base_(NULL), range_() {}
+    explicit rstring_t() : base_(NULL), range_(), width_(width1) {}
     explicit rstring_t(const char_t *b, const range_t &r) : base_(b), range_(r) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
@@ -347,20 +370,6 @@ static inline std::wstring widen(const std::string &t) {
     result.insert(result.begin(), t.begin(), t.end());
     return result;
 }
-
-
-/* A token is just a range of some string, with a type */
-#warning nix token_t, just use rstring_t
-struct token_t {
-    range_t range;
-    token_t(const range_t &r) : range(r) {}
-    token_t() {}
-
-    bool empty() const {
-        return range.empty();
-    }
-};
-typedef std::vector<token_t> token_list_t;
 
 typedef std::vector<size_t> index_list_t;
 

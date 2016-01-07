@@ -246,21 +246,21 @@ public:
         depth -= 1;
     }
     
-    void accept(const token_t &t1) {
+    void accept(const rstring_t &t1) {
         if (! t1.empty()) {
             std::string result(2 * depth, ' ');
             char buff[32];
             
             if (src != NULL) {
-                const string_t word(*src, t1.range.start, t1.range.length);
+                const string_t word(*src, t1.range().start, t1.range().length);
                 snprintf(buff, sizeof buff, "'%ls' ", widen(word).c_str());
             }
             result.append(buff);
             
-            if (t1.range.length == 1) {
-                snprintf(buff, sizeof buff, "{%lu}", t1.range.start);
+            if (t1.length() == 1) {
+                snprintf(buff, sizeof buff, "{%lu}", t1.range().start);
             } else {
-                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.range.start, t1.range.length);
+                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.range().start, t1.range().length);
             }
             result.append(buff);
             lines.push_back(result);
@@ -284,6 +284,7 @@ public:
 
 /* Helper class for collecting clauses from a tree */
 struct clause_collector_t : public node_visitor_t<clause_collector_t> {
+#warning More rstring_t
     option_list_t options;
     range_list_t fixeds;
     range_list_t variables;
@@ -294,11 +295,11 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
     }
     
     void accept(const fixed_clause_t& node) {
-        fixeds.push_back(node.word.range);
+        fixeds.push_back(node.word.range());
     }
     
     void accept(const variable_clause_t& node) {
-        variables.push_back(node.word.range);
+        variables.push_back(node.word.range());
     }
     
     // Other types we ignore
@@ -459,17 +460,6 @@ static bool substr_equals(const char *a, const char_t *b, size_t len) {
 /* Helper function for string equality. Returns true if a and b are equal up to the first len characters */
 static bool substr_equals(const char *a, const string_t &b, size_t len) {
     return substr_equals(a, b.c_str(), len);
-}
-
-/* Returns true if the given token matches the given narrow string, up to len characters */
-bool token_substr_equals(const token_t &tok, const char *str, size_t len) const {
-    assert(tok.range.end() <= this->source.length());
-    if (len > tok.range.length) {
-        /* If our token is too short, then it doesn't match */
-        return false;
-    } else {
-        return substr_equals(str, this->source.c_str() + tok.range.start, len);
-    }
 }
 
 /* Collects options, i.e. tokens of the form --foo */
@@ -1692,7 +1682,7 @@ void match(const option_clause_t &node, match_state_t *state, match_context_t *c
 void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Fixed argument
     // Compare the next positional to this static argument
-    const range_t &range = node.word.range;
+    const range_t &range = node.word.range();
     if (ctx->has_more_positionals(state)) {
         const positional_argument_t &positional = ctx->next_positional(state);
         const string_t &name = ctx->argv.at(positional.idx_in_argv);
@@ -1717,7 +1707,7 @@ void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ct
 
 void match(const variable_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Variable argument
-    const range_t &range = node.word.range;
+    const range_t &range = node.word.range();
     if (ctx->has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
         const string_t name = string_for_range(range);
@@ -2028,7 +2018,7 @@ std::vector<string_t> get_command_names() const {
     std::set<string_t> seen;
     for (size_t i=0; i < this->usages.size(); i++) {
         const usage_t &usage = this->usages.at(i);
-        range_t name_range = usage.prog_name.range;
+        range_t name_range = usage.prog_name.range();
         if (! name_range.empty()) {
             const string_t name(this->source, name_range.start, name_range.length);
             if (seen.insert(name).second) {
