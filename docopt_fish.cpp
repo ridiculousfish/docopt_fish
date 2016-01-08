@@ -414,20 +414,6 @@ static bool get_next_line(const string_t &str, range_t *inout_range, size_t end 
     return success;
 }
 
-/* Returns true if the given range of this->source equals the given string. Optionally specify a start and length in the given string. */
-#warning Eliminate this
-bool range_equals_string(const range_t &range, const string_t &str, size_t start_in_str = 0, size_t len_in_str = npos) const {
-    assert(range.end() <= this->source.size());
-    assert(start_in_str <= str.size());
-    // clamp length to the maximum allowed
-    len_in_str = std::min(len_in_str, str.size() - start_in_str);
-    bool result = false;
-    if (range.length == len_in_str) {
-        result = ! this->source.compare(range.start, range.length, str, start_in_str, len_in_str);
-    }
-    return result;
-}
-
 /* Returns true if the two strings are equal. */
 static bool str_equals(const char *a, const string_t &str) {
     size_t len = str.size();
@@ -1679,11 +1665,10 @@ void match(const option_clause_t &node, match_state_t *state, match_context_t *c
 void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ctx, match_state_list_t *resulting_states) const {
     // Fixed argument
     // Compare the next positional to this static argument
-    const range_t &range = node.word.range();
     if (ctx->has_more_positionals(state)) {
         const positional_argument_t &positional = ctx->next_positional(state);
         const string_t &name = ctx->argv.at(positional.idx_in_argv);
-        if (name.size() == range.length && this->range_equals_string(range, name)) {
+        if (node.word == rstring_t(name)) {
             // The static argument matches
             state->argument_values[name].count += 1;
             ctx->acquire_next_positional(state);
@@ -1693,7 +1678,7 @@ void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ct
     } else {
         // No more positionals. Maybe suggest one.
         if (ctx->flags & flag_generate_suggestions) {
-            state->suggested_next_arguments.insert(string_for_range(range));
+            state->suggested_next_arguments.insert(node.word.std_string<string_t>());
         }
         // Append the state if we are allowing incomplete
         if (ctx->flags & flag_match_allow_incomplete) {

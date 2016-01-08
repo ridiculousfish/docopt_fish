@@ -238,11 +238,11 @@ public:
     }
 
     bool operator==(const rstring_t &rhs) const {
-        return this->compare(rhs) == 0;
+        return this->length() == rhs.length() && this->compare(rhs) == 0;
     }
     
     bool operator!=(const rstring_t &rhs) const {
-        return this->compare(rhs) != 0;
+        return ! (*this == rhs);
     }
     
     bool operator<(const rstring_t &rhs) const {
