@@ -402,23 +402,6 @@ public:
     explicit rstring_t(const std::basic_string<stdchar_t> &b, const range_t &r) : range_(r), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
 };
 
-/* Overloads */
-
-#warning why?
-UNUSED
-static inline void assign_narrow_string_to_string(const char *s, std::string *result) {
-    *result = s;
-}
-
-UNUSED
-static inline void assign_narrow_string_to_string(const char *s, std::wstring *result) {
-    size_t len = std::strlen(s);
-    for (size_t i=0; i < len; i++) {
-        char c = s[i];
-        assert(c >= 0 && (unsigned char)c <= 127); //ASCII only
-        result->push_back(wchar_t(c));
-    }
-}
 
 UNUSED
 static inline const std::wstring &widen(const std::wstring &t) {

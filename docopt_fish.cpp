@@ -13,12 +13,9 @@
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
-#warning Why?
 static const size_t npos = (size_t)(-1);
 
 typedef std::vector<rstring_t> rstring_list_t;
-
-/* List of errors */
 typedef std::vector<error_t> error_list_t;
 
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
