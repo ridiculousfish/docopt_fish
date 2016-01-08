@@ -252,6 +252,25 @@ public:
     char_t operator[](size_t idx) const {
         return this->at(idx);
     }
+    
+    // Can compare against const char *
+    // These are always statically known, so the strlen is free
+    bool has_prefix(const char *s) const {
+        size_t len = strlen(s);
+        if (len > this->length()) {
+            return false;
+        }
+        for (size_t i=0; i < len; i++) {
+            if (this->at(i) != s[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    bool is_double_dash() const {
+        return this->length() == 2 && this->at(0) == '-' && this->at(1) == '-';
+    }
 
     // Copies our contents into the given std::string
     template<typename stdstring_t>
@@ -334,7 +353,7 @@ public:
     }
 
     explicit rstring_t() : base_(NULL), range_(0, 0), width_(width1) {}
-    explicit rstring_t(const char_t *b, const range_t &r) : base_(b), range_(r) {}
+    explicit rstring_t(const char_t *b, const range_t &r) : base_(b), range_(r), width_(resolve_width<char_t>()) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
     template<typename stdchar_t>
