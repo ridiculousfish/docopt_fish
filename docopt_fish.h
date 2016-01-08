@@ -46,7 +46,7 @@ namespace docopt_fish
         /* Text of the error. This is an immortal string literal, but may someday need to be a std::string. */
         const char *text;
         
-        error_t() : location(-1), argument_index(-1), code(0)
+        error_t() : location(-1), argument_index(-1), code(0), text(NULL)
         {}
     };
     

@@ -25,23 +25,20 @@ OPEN_DOCOPT_IMPL
 #pragma mark -
 
 /* Context passed around in our recursive descent parser */
-template<typename string_t>
 struct parse_context_t {
-    typedef unsigned int char_t;
-
-    static bool char_is_valid_in_word(char_t c) {
+    static bool char_is_valid_in_word(rstring_t::char_t c) {
         const char *invalid = ".|()[],<> \t\n";
         const char *end = invalid + strlen(invalid);
         return std::find(invalid, end, c) == end;
     }
 
-    static bool char_is_valid_in_bracketed_word(char_t c) {
+    static bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
         const char *invalid = "|()[]>\t\n";
         const char *end = invalid + strlen(invalid);
         return std::find(invalid, end, c) == end;
     }
 
-    static bool char_is_whitespace(char_t c) {
+    static bool char_is_whitespace(rstring_t::char_t c) {
         return isspace(c);
     }
     
@@ -68,7 +65,7 @@ struct parse_context_t {
     }
     
     // Try scanning a single character
-    bool scan(char_t c, rstring_t *tok = NULL) {
+    bool scan(char c, rstring_t *tok = NULL) {
         this->consume_leading_whitespace();
         rstring_t scanned = this->remaining.scan_1_char(c);
         if (tok) {
@@ -236,7 +233,7 @@ struct parse_context_t {
             return parsed_done;
         }
         
-        char_t c = word[0];
+        rstring_t::char_t c = word[0];
         if (c == '<') {
             return this->try_parse_auto(&result->variable);
         } else if (c == '-' && word.length() > 1) {
@@ -443,13 +440,14 @@ struct parse_context_t {
 
 void usage_t::make_default() {
     // hackish?
+    // Note the only reason this is safe is that string literals are immortal
     const char *storage = "command [options]";
     const rstring_t src(storage, strlen(storage));
     parse_one_usage(src, option_list_t(), this, NULL /* errors */);
 }
 
 bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {
-    parse_context_t<std::string> ctx(source, shortcut_options);
+    parse_context_t ctx(source, shortcut_options);
     parse_result_t status = ctx.parse(out_usage);
     assert(! (status == parsed_error && ctx.errors.empty()));
     if (out_errors) {
