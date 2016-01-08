@@ -33,7 +33,6 @@ namespace docopt_fish
     };
     
     /* Represents an error. */
-    template<typename string_t>
     struct error_t {
         /* Location of the token where the error occurred, in either the docopt doc or the argument */
         size_t location;
@@ -44,8 +43,8 @@ namespace docopt_fish
         /* Internal code, for use in the tests */
         int code;
         
-        /* Text of the error */
-        string_t text;
+        /* Text of the error. This is an immortal string literal, but may someday need to be a std::string. */
+        const char *text;
         
         error_t() : location(-1), argument_index(-1), code(0)
         {}
@@ -81,7 +80,7 @@ namespace docopt_fish
         
         typedef base_argument_t<string_t> argument_t;
         typedef std::map<string_t, argument_t> argument_map_t;
-        typedef std::vector<error_t<string_t> > error_list_t;
+        typedef std::vector<error_t> error_list_t;
         
         /* Sets the docopt doc for this parser. Returns any parse errors by reference. Returns true if successful. */
         bool set_doc(const string_t &doc, error_list_t *out_errors);

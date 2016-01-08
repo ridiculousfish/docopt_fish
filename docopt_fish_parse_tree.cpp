@@ -53,7 +53,7 @@ struct parse_context_t {
     const option_list_t *shortcut_options;
     
     // Errors we generate
-    vector<error_t<string_t> > errors;
+    vector<error_t> errors;
     
     parse_context_t(const rstring_t &usage, const option_list_t &shortcuts) : remaining(usage), shortcut_options(&shortcuts) { }
     
@@ -445,28 +445,18 @@ void usage_t::make_default() {
     // hackish?
     const char *storage = "command [options]";
     const rstring_t src(storage, strlen(storage));
-    vector<error_t<std::string> > *null_errors = NULL;
-    parse_one_usage<std::string>(src, option_list_t(), this, null_errors);
+    parse_one_usage(src, option_list_t(), this, NULL /* errors */);
 }
 
-template<typename string_t>
-bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<string_t> > *out_errors)
-{
-    parse_context_t<string_t> ctx(source, shortcut_options);
-    parse_result_t status = ctx.template parse(out_usage);
+bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {
+    parse_context_t<std::string> ctx(source, shortcut_options);
+    parse_result_t status = ctx.parse(out_usage);
     assert(! (status == parsed_error && ctx.errors.empty()));
     if (out_errors) {
         out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
     }
     return status != parsed_error;
 }
-
-// Force template instantiation
-template bool parse_one_usage(const rstring_t &, const option_list_t &, usage_t *, vector<error_t<std::string> > *);
-
-
-template bool parse_one_usage<std::wstring>(const rstring_t &, const option_list_t &, usage_t *, vector<error_t<std::wstring> > *);
-
 
 CLOSE_DOCOPT_IMPL /* namespace */
 

@@ -18,9 +18,11 @@ static const size_t npos = (size_t)(-1);
 
 typedef std::vector<rstring_t> rstring_list_t;
 
+/* List of errors */
+typedef std::vector<error_t> error_list_t;
+
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
-template <typename string_t>
-static void append_argv_error(std::vector<error_t<string_t> > *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
+static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
     append_error(errors, pos_in_arg, code, txt, arg_idx);
 }
 
@@ -40,8 +42,7 @@ static bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
 }
 
 /* Given an inout string, parse out an option and return it. Update the string to reflect the number of characters used. */
-template<typename string_t>
-bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t<string_t> >* errors UNUSED) {
+bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_list_t *errors UNUSED) {
     assert(! remaining->empty());
     
     bool errored = false;
@@ -235,9 +236,6 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
     template<typename IGNORED_TYPE>
     void accept(const IGNORED_TYPE& t UNUSED) {}
 };
-
-/* Class representing an error */
-typedef std::vector<error_t<string_t> > error_list_t;
 
 /* Class representing a map from variable names to commands */
 typedef std::map<rstring_t, rstring_t> variable_command_map_t;
@@ -579,7 +577,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
     size_t usages_count = usage_specs.size();
     this->usages.resize(usages_count);
     for (size_t i=0; i < usages_count; i++) {
-        parse_one_usage<string_t>(usage_specs.at(i), this->shortcut_options, &this->usages.at(i), out_errors);
+        parse_one_usage(usage_specs.at(i), this->shortcut_options, &this->usages.at(i), out_errors);
     }
 }
 
@@ -1890,14 +1888,14 @@ template<typename string_t>
 std::map<string_t, base_argument_t<string_t> >
 argument_parser_t<string_t>::parse_arguments(const std::vector<string_t> &argv,
                                             parse_flags_t flags,
-                                            std::vector<error_t<string_t> > *out_errors,
+                                            error_list_t *out_errors,
                                             std::vector<size_t> *out_unused_arguments) const {
     return impl->best_assignment_for_argv(argv, flags, out_errors, out_unused_arguments);
 }
 
 
 template<typename string_t>
-bool argument_parser_t<string_t>::set_doc(const string_t &doc, std::vector<error_t<string_t> > *out_errors) {
+bool argument_parser_t<string_t>::set_doc(const string_t &doc, error_list_t *out_errors) {
     docopt_impl<string_t> *new_impl = new docopt_impl<string_t>(doc);
     
     bool preflighted = new_impl->preflight(out_errors);

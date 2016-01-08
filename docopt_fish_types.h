@@ -579,28 +579,24 @@ struct option_t {
     }
     
     /* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
-    template<typename string_t>
-    static bool parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t<string_t> >* errors = NULL);
+    static bool parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t> *errors = NULL);
 
     /* Variant for when the remaining range is uninteresting. */
-    template<typename string_t>
-    static bool parse_from_string(rstring_t str, option_t *result, std::vector<error_t<string_t> > *errors = NULL) {
+    static bool parse_from_string(rstring_t str, option_t *result, std::vector<error_t> *errors = NULL) {
         return parse_from_string(&str, result, errors);
     }
 
 };
 typedef std::vector<option_t> option_list_t;
 
-#warning needs rstring
-template <typename string_t>
-static void append_error(std::vector<error_t<string_t> > *errors, size_t where, int code, const char *txt, size_t arg_idx = -1) {
+inline void append_error(std::vector<error_t> *errors, size_t where, int code, const char *txt, size_t arg_idx = -1) {
     if (errors != NULL) {
         errors->resize(errors->size() + 1);
-        error_t<string_t> *error = &errors->back();
+        error_t *error = &errors->back();
         error->location = where;
         error->code = code;
         error->argument_index = arg_idx;
-        assign_narrow_string_to_string(txt, &error->text);
+        error->text = txt;
     }
 }
 
