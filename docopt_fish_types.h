@@ -71,10 +71,15 @@ private:
 
     rstring_t(const void *base, range_t range, width_t width) : range_(range), base_(base), width_(width) {}
     
-    explicit rstring_t(const char_t *b, const range_t &r) : base_(b), range_(r), width_(resolve_width<char_t>()) {}
+    explicit rstring_t(const char_t *b, const range_t &r) : range_(r), base_(b), width_(resolve_width<char_t>()) {}
     
     width_t width() const {
         return this->width_;
+    }
+    
+    // Avoid bad sign extension
+    static inline char_t to_char(char c) {
+        return static_cast<unsigned char>(c);
     }
     
     template<typename T>
@@ -118,7 +123,7 @@ private:
                         // outside of ASCII, no match possible
                         break;
                     }
-                    char his = needle[inner];
+                    char_t his = to_char(needle[inner]);
                     bool matches = (mine == his || (case_insensitive && tolower(mine) == tolower(his)));
                     if (! matches) {
                         // no match at 'outer'
@@ -299,7 +304,8 @@ public:
             return false;
         }
         for (size_t i=0; i < len; i++) {
-            if (this->at(i) != s[i]) {
+            char_t si = to_char(s[i]);
+            if (this->at(i) != si) {
                 return false;
             }
         }
@@ -351,7 +357,8 @@ public:
         if (len <= this->length()) {
             size_t i = 0;
             for (i=0; i < len; i++) {
-                if (this->at(i) != c[i]) {
+                char_t ci = to_char(c[i]);
+                if (this->at(i) != ci) {
                     break;
                 }
             }
@@ -368,9 +375,9 @@ public:
     // If this begins with c, returns a string containing c
     // and adjusts self to the remainder. Otherwise returns
     // an empty string
-    rstring_t scan_1_char(char_t c) {
+    rstring_t scan_1_char(char c) {
         rstring_t result;
-        if (this->length() > 0 && this->at(0) == c) {
+        if (this->length() > 0 && this->at(0) == to_char(c)) {
             result = this->substr(0, 1);
             *this = this->substr_from(1);
         }
@@ -390,7 +397,7 @@ public:
         return this->substr(left, right - left);
     }
 
-    explicit rstring_t() : base_(NULL), range_(0, 0), width_(width1) {}
+    explicit rstring_t() : range_(0, 0), base_(NULL), width_(width1) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
     template<typename stdchar_t>
