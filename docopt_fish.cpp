@@ -204,7 +204,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, std::ve
     }
     
     // Create and return the option
-    *result = option_t(type, name.range(), variable.range(), separator);
+    *result = option_t(type, name, variable, separator);
     return ! errored;
 }
 
@@ -377,9 +377,9 @@ struct resolved_option_t {
     size_t value_idx_in_argv;
     
     // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar, -Dfoo)
-    range_t value_range_in_arg;
+    rstring_t value_in_arg;
 
-    resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const range_t &val_range) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), value_range_in_arg(val_range)
+    resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const rstring_t &value) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), value_in_arg(value)
     {}
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
@@ -415,6 +415,7 @@ static bool get_next_line(const string_t &str, range_t *inout_range, size_t end 
 }
 
 /* Returns true if the given range of this->source equals the given string. Optionally specify a start and length in the given string. */
+#warning Eliminate this
 bool range_equals_string(const range_t &range, const string_t &str, size_t start_in_str = 0, size_t len_in_str = npos) const {
     assert(range.end() <= this->source.size());
     assert(start_in_str <= str.size());
@@ -444,6 +445,7 @@ static bool str_equals(const char *a, const string_t &str) {
 }
 
 /* Helper function for string equality. Returns true if a and b are equal up to the first len characters */
+#warning Kill me
 static bool substr_equals(const char *a, const char_t *b, size_t len) {
     bool equals = true;
     for (size_t i=0; i < len; i++) {
@@ -503,7 +505,7 @@ static option_t parse_option_from_argument(const string_t &str, option_t::name_t
     }
     
     // Return the option
-    return option_t(type, name.range(), value.range(), equals.empty() ? option_t::sep_space : option_t::sep_equals);
+    return option_t(type, name, value, equals.empty() ? option_t::sep_space : option_t::sep_equals);
 }
 
 /* Given an option spec, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
@@ -520,7 +522,7 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
 
     // Determine the description range (possibly empty). Trim leading and trailing whitespace
     rstring_t description = spec.substr(options_end).trim_whitespace();
-    result.description_range = description.range();
+    result.description = description;
     
     // Parse out a "default:" value.
     if (! description.empty()) {
@@ -542,7 +544,7 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
                 // Note: The above check covers npos too
                 append_error(errors, default_prefix_loc, error_missing_close_bracket_in_default, "Missing ']' to match opening '['");
             } else {
-                result.default_value_range = range_t(default_value_start, default_value_end - default_value_start);
+                result.default_value = rstring_t(this->source, range_t(default_value_start, default_value_end - default_value_start));
             }
         }
     }
@@ -810,11 +812,6 @@ variable_command_map_t parse_one_variable_command_spec(const rstring_t &spec, er
     return result;
 }
 
-/* Returns true if the two options have the same name */
-bool options_have_same_name(const option_t &opt1, const option_t &opt2) const {
-    return opt1.has_same_name(opt2, this->source);
-}
-
 /* Given a list of options, verify that any duplicate options are in agreement, and remove all but one. TODO: make this not N^2. */
 void uniqueize_options(option_list_t *options, bool error_on_duplicates, error_list_t *errors) const {
     std::vector<size_t> matching_indexes;
@@ -827,17 +824,17 @@ void uniqueize_options(option_list_t *options, bool error_on_duplicates, error_l
         for (size_t match_cursor = cursor + 1; match_cursor < options->size(); match_cursor++) {
             const option_t &current_match = options->at(best_match_idx);
             const option_t &maybe_match = options->at(match_cursor);
-            if (this->options_have_same_name(current_match, maybe_match)) {
+            if (current_match.has_same_name(maybe_match)) {
                 if (error_on_duplicates) {
                     // Generate an error, and then continue on
-                    append_error(errors, maybe_match.best_name().start, error_option_duplicated_in_options_section, "Option specified more than once");
+                    append_error(errors, maybe_match.best_name().range().start, error_option_duplicated_in_options_section, "Option specified more than once");
                 }
                 // This index matched
                 matching_indexes.push_back(match_cursor);
                 
                 // This argument matches.
                 // TODO: verify agreement in the parameters, etc.
-                if (maybe_match.description_range.length > current_match.description_range.length) {
+                if (maybe_match.description.length() > current_match.description.length()) {
                     // The second one has a better description. Keep it.
                     best_match_idx = match_cursor;
                 }
@@ -896,15 +893,15 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
     option_t arg_as_option = parse_option_from_argument(arg, type, &local_errors);
     assert(arg_as_option.separator != option_t::sep_none);
     
-    const range_t arg_name = arg_as_option.names[type];
+    const rstring_t arg_name = arg_as_option.names[type];
     assert(! arg_name.empty());
+    const size_t arg_length = arg_name.length();
     
     /* Get list of matching long options. */
     option_list_t matches;
     for (size_t i=0; i < st->options.size(); i++) {
         const option_t &opt = st->options.at(i);
-        // This comparison is terrifying. It's just comparing two substrings: one in source (the given option) and the name portion of the argument
-        if (opt.has_type(type) && this->range_equals_string(opt.names[type], arg, arg_name.start, arg_name.length)) {
+        if (opt.has_type(type) && opt.names[type] == arg_name) {
             // Should never have separator_none for long options
             assert(opt.separator != option_t::sep_none);
             matches.push_back(opt);
@@ -919,7 +916,7 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
             // Here we confirm that the option's name is longer than the name portion of the argument.
             // If they are equal; we would have had an exact match above; if the option is shorter, then the argument is not a prefix of it.
             // If the option is longer, we then do a substring comparison, up to the number of characters determined by the argument
-            if (opt.has_type(type) && opt.names[type].length > arg_name.length && this->source.compare(opt.names[type].start, arg_name.length, arg, arg_name.start, arg_name.length) == 0) {
+            if (opt.has_type(type) && opt.names[type].length() > arg_length && arg_name == opt.names[type].substr(0, arg_length)) {
                 prefix_matches.push_back(opt);
             }
         }
@@ -949,13 +946,13 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
         const option_t &match = matches.at(0);
 
         /* Ensure the option and argument agree on having a value */
-        range_t value_range(0, 0);
+        rstring_t value;
         const size_t name_idx = st->idx;
         size_t arg_index = npos;
         if (match.has_value()) {
             if (arg_as_option.has_value()) {
                 // The arg was specified as --foo=bar. The range is the value portion; the index is the same as our argument.
-                value_range = arg_as_option.value;
+                value = arg_as_option.value;
                 arg_index = st->idx;
             } else {
                 // The arg was (hopefully) specified as --foo bar
@@ -968,10 +965,10 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
                 if (st->idx + 1 < st->argv.size()) {
                     st->idx += 1;
                     arg_index = st->idx;
-                    value_range = range_t(0, st->argv.at(arg_index).size());
+                    value = rstring_t(st->argv.at(arg_index));
                 } else if ((st->flags & flag_generate_suggestions) && out_suggestion != NULL) {
                     // We are at the last argument, and we expect a value. Return the value as a suggestion.
-                    out_suggestion->assign(this->source, match.value.start, match.value.length);
+                    match.value.copy_to(out_suggestion);
                     errored = true;
                 } else {
                     append_argv_error(out_errors, st->idx, error_option_has_missing_argument, "Option expects an argument");
@@ -994,7 +991,7 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
         }
         
         if (! errored) {
-            out_result->push_back(resolved_option_t(match, name_idx, arg_index, value_range));
+            out_result->push_back(resolved_option_t(match, name_idx, arg_index, value));
             st->idx += 1;
             success = true;
         }
@@ -1004,9 +1001,9 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
 
 // Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator. TODO: Use out_suggestion
 bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion UNUSED) const {
-    const string_t &arg = st->arg();
-    assert(substr_equals("-", arg, 1));
-    assert(arg.size() > 1); // must not be just a single dash
+    const rstring_t arg(st->arg());
+    // must not be just a single dash
+    assert(arg.length() > 1 && arg.at(0) == '-');
     bool success = false;
     
     // Construct the list of options in-order, corresponding to this argument
@@ -1022,7 +1019,7 @@ bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t
             // Candidate short option.
             // This looks something like -DNDEBUG. We want to see if the D matches.
             // Compare the character at offset 1 (to account for the dash) and length 1 (since it's a short option)
-            if (this->range_equals_string(opt.names[option_t::single_short], arg, 1, 1)) {
+            if (opt.names[option_t::single_short].at(0) == arg.at(1)) {
                 // Expect to always want a value here
                 matches.push_back(opt);
             }
@@ -1034,14 +1031,14 @@ bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t
     if (matches.size() == 1) {
         // Try to extract the value. This is very simple: it starts at index 2 and goes to the end of the arg.
         const option_t &match = matches.at(0);
-        if (arg.size() <= 2) {
+        if (arg.length() <= 2) {
             append_argv_error(out_errors, st->idx, error_option_has_missing_argument, "Option expects an argument");
         } else {
             // Got one
             size_t name_idx = st->idx;
             size_t value_idx = st->idx;
-            range_t value_range = range_t(2, arg.size() - 2);
-            out_result->push_back(resolved_option_t(match, name_idx, value_idx, value_range));
+            rstring_t value = arg.substr(2);
+            out_result->push_back(resolved_option_t(match, name_idx, value_idx, value));
             st->idx += 1;
             success = true;
         }
@@ -1065,12 +1062,11 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
     
     std::vector<option_t> matches;
     for (size_t idx_in_arg=1; idx_in_arg < arg.size() && ! errored; idx_in_arg++) {
-        /* Get list of short options matching this resolved option. These are pointers into our options array */
+        /* Get list of short options matching this resolved option. */
         matches.clear();
         for (size_t i=0; i < st->options.size(); i++) {
             const option_t &opt = st->options.at(i);
-            // This comparison is terrifying. It's just comparing two substrings: one in source (the given option) and the name portion of the argument. We pass 1 because the length of the string is 1.
-            if (opt.has_type(option_t::single_short) && this->range_equals_string(opt.names[option_t::single_short], arg, idx_in_arg, 1)) {
+            if (opt.has_type(option_t::single_short) && opt.names[option_t::single_short].at(0) == arg.at(idx_in_arg)) {
                 matches.push_back(opt);
             }
         }
@@ -1105,7 +1101,7 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
     }
     
     // If we have an argument, determine its index
-    range_t val_range_for_last_option(0, 0);
+    rstring_t value_for_last_option;
     const size_t name_idx = st->idx;
     size_t val_idx_for_last_option = npos;
     if (! errored && last_option_has_argument) {
@@ -1119,11 +1115,11 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
         
         if (st->idx + 1 < st->argv.size()) {
             val_idx_for_last_option = st->idx + 1;
-            val_range_for_last_option = range_t(0, st->argv.at(st->idx + 1).size());
+            value_for_last_option = rstring_t(st->argv.at(st->idx + 1));
         } else if ((st->flags & flag_generate_suggestions) && out_suggestion != NULL) {
             // We are at the last argument, and we expect a value. Return the value as a suggestion.
             const option_t &match = options_for_argument.back();
-            out_suggestion->assign(this->source, match.value.start, match.value.length);
+            match.value.copy_to(out_suggestion);
             errored = true;
         } else {
             append_argv_error(out_errors, st->idx, error_option_has_missing_argument, "Option expects an argument");
@@ -1136,14 +1132,14 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
         for (size_t i=0; i < options_for_argument.size(); i++) {
             // Most options have no value.
             size_t val_idx = npos;
-            range_t val_range(0, 0);
+            rstring_t value;
             if (i + 1 == options_for_argument.size() && last_option_has_argument) {
                 // This is the last option
-                val_range = val_range_for_last_option;
+                value = value_for_last_option;
                 val_idx = val_idx_for_last_option;
             }
             const option_t &opt = options_for_argument.at(i);
-            out_result->push_back(resolved_option_t(opt, name_idx, val_idx, val_range));
+            out_result->push_back(resolved_option_t(opt, name_idx, val_idx, value));
         }
         
         // Update the index
@@ -1564,7 +1560,7 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
                 if (ctx->flags & flag_generate_suggestions) {
                     for (size_t i=0; i < this->shortcut_options.size(); i++) {
                         const option_t &opt = this->shortcut_options.at(i);
-                        state->suggested_next_arguments.insert(opt.best_name_as_string(this->source));
+                        state->suggested_next_arguments.insert(opt.best_name_as_string<string_t>());
                     }
                 }
                 state_destructive_append_to(state, resulting_states);
@@ -1597,7 +1593,7 @@ bool match_options(const option_list_t &options_in_doc, match_state_t *state, ma
             // Skip ones that have already been consumed
             if (! state->consumed_options.at(i)) {
                 // See if the option from argv has the same key range as the option in the document
-                if (options_have_same_name(ctx->resolved_options.at(i).option, opt_in_doc)) {
+                if (ctx->resolved_options.at(i).option.has_same_name(opt_in_doc)) {
                     resolved_opt_idx = i;
                     break;
                 }
@@ -1610,18 +1606,17 @@ bool match_options(const option_list_t &options_in_doc, match_state_t *state, ma
             //  - The option name, like -foo
             //  - The option's argument value (if any)
             const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
-            const string_t name = opt_in_doc.best_name_as_string(this->source);
+            const string_t name = opt_in_doc.best_name_as_string<string_t>();
             
             // Update the option value, creating it if necessary
             state->argument_values[name].count += 1;
             
             // Update the option argument vlaue
             if (opt_in_doc.has_value() && resolved_opt.value_idx_in_argv != npos) {
-                const string_t variable_name(this->source, opt_in_doc.value.start, opt_in_doc.value.length);
+                const string_t variable_name = opt_in_doc.value.std_string<string_t>();
                 
-                const string_t &arg_with_value = ctx->argv.at(resolved_opt.value_idx_in_argv);
-                const range_t value_range = resolved_opt.value_range_in_arg;
-                state->argument_values[variable_name].values.push_back(string_t(arg_with_value, value_range.start, value_range.length));
+                const rstring_t &value = resolved_opt.value_in_arg;
+                state->argument_values[variable_name].values.push_back(value.std_string<string_t>());
             }
             
             successful_match = true;
@@ -1643,7 +1638,7 @@ bool match_options(const option_list_t &options_in_doc, match_state_t *state, ma
             while (type_idx--) {
                 option_t::name_type_t type = static_cast<option_t::name_type_t>(type_idx);
                 if (suggestion.has_type(type)) {
-                    state->suggested_next_arguments.insert(suggestion.name_as_string(type, this->source));
+                    state->suggested_next_arguments.insert(suggestion.name_as_string<string_t>(type));
                 }
             }
             made_suggestion = true;
@@ -1740,18 +1735,18 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     option_map_t result = map;
     for (size_t i=0; i < all_options.size(); i++) {
         const option_t &opt = all_options.at(i);
-        string_t name = opt.best_name_as_string(this->source);
+        string_t name = opt.best_name_as_string<string_t>();
         // We merely invoke operator[]; this will do the insertion with a default value if necessary.
         // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
         result[name];
         
-        if (opt.has_value() && ! opt.default_value_range.empty()) {
+        if (opt.has_value() && ! opt.default_value.empty()) {
             // Maybe apply the default value for the variable
-            const string_t variable_name(this->source, opt.value.start, opt.value.length);
+            string_t variable_name = opt.value.std_string<string_t>();
             arg_t *var_arg = &result[variable_name];
             if (var_arg->values.empty())
             {
-                var_arg->values.push_back(string_for_range(opt.default_value_range));
+                var_arg->values.push_back(opt.default_value.std_string<string_t>());
             }
         }
     }
@@ -1882,7 +1877,7 @@ bool preflight(error_list_t *out_errors) {
         const option_t &shortcut_opt = this->shortcut_options.at(i);
         for (size_t j=0; j < usage_options.size(); j++) {
             const option_t &usage_opt = usage_options.at(j);
-            if (options_have_same_name(shortcut_opt, usage_opt)) {
+            if (shortcut_opt.has_same_name(usage_opt)) {
                 // Remove this shortcut, and decrement the index to reflect the position shift of the remaining items
                 this->shortcut_options.erase(this->shortcut_options.begin() + i);
                 i-=1;
@@ -1983,31 +1978,32 @@ string_t description_for_option(const string_t &given_option_name) const {
 
     string_t result;
     const bool has_double_dash = (given_option_name.at(1) == '-');
-    // We have to go through our options and compare their short_name or corresponding_long_name to the given string
+    // We have to go through our options and compare their names to the given string
+    const rstring_t needle(given_option_name);
     for (size_t i=0; i < this->all_options.size(); i++) {
         const option_t &opt = this->all_options.at(i);
         bool matches = false;
         
         // We can skip options without descriptions
-        if (opt.description_range.empty()) {
+        if (opt.description.empty()) {
             continue;
         }
         
         // Double-dash
         if (opt.has_type(option_t::double_long) && has_double_dash) {
-            matches = matches || this->range_equals_string(opt.names[option_t::double_long], given_option_name, 2);
+            matches = matches || opt.names[option_t::double_long] == needle.substr(2);
         }
         // Single dash
         if (opt.has_type(option_t::single_long) && !has_double_dash) {
-            matches = matches || this->range_equals_string(opt.names[option_t::single_long], given_option_name, 1);
+            matches = matches || opt.names[option_t::single_long] == needle.substr(1);
         }
         // Short
         if (opt.has_type(option_t::single_short) && !has_double_dash) {
-            matches = matches || this->range_equals_string(opt.names[option_t::single_short], given_option_name, 1);
+            matches = matches || opt.names[option_t::single_short] == needle.substr(1);
         }
         
         if (matches) {
-            result.assign(this->source, opt.description_range.start, opt.description_range.length);
+            opt.description.copy_to(&result);
             break;
         }
     }
@@ -2043,9 +2039,9 @@ std::vector<string_t> get_variables() const {
     
     // Include variables that are part of options
     for (size_t i=0; i < this->all_options.size(); i++) {
-        const range_t &r = this->all_options.at(i).value;
+        const rstring_t &r = this->all_options.at(i).value;
         if (! r.empty()) {
-            result.push_back(string_for_range(r));
+            result.push_back(r.std_string<string_t>());
         }
     }
     

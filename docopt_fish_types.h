@@ -52,13 +52,6 @@ struct range_t {
             this->length = std::max(this->end(), rhs.end()) - this->start;
         }
     }
-    
-    /* If the receiver is empty, replace it with the new range */
-    void replace_if_empty(const range_t &rhs) {
-        if (this->empty()) {
-            *this = rhs;
-        }
-    }
 };
 
 typedef std::vector<range_t> range_list_t;
@@ -237,6 +230,12 @@ public:
             return rstring_t(this->base_, merged, this->width_);
         }
     }
+    
+    void replace_if_empty(const rstring_t &rhs) {
+        if (this->empty()) {
+            *this = rhs;
+        }
+    }
 
     bool operator==(const rstring_t &rhs) const {
         return this->compare(rhs) == 0;
@@ -334,7 +333,7 @@ public:
         return this->substr(left, right - left);
     }
 
-    explicit rstring_t() : base_(NULL), range_(), width_(width1) {}
+    explicit rstring_t() : base_(NULL), range_(0, 0), width_(width1) {}
     explicit rstring_t(const char_t *b, const range_t &r) : base_(b), range_(r) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
@@ -346,6 +345,8 @@ public:
 };
 
 /* Overloads */
+
+#warning why?
 UNUSED
 static inline void assign_narrow_string_to_string(const char *s, std::string *result) {
     *result = s;
@@ -388,16 +389,16 @@ struct option_t {
         NAME_TYPE_COUNT
     };
 
-    range_t names[NAME_TYPE_COUNT];
+    rstring_t names[NAME_TYPE_COUNT];
 
     // value of the option, i.e. variable name. Empty for no value.
-    range_t value;
+    rstring_t value;
     
-    // Range of the description. Empty for none.
-    range_t description_range;
+    // Description. Empty for none.
+    rstring_t description;
     
-    // Range of the default value. Empty for none.
-    range_t default_value_range;
+    // Default value. Empty for none.
+    rstring_t default_value;
     
     // How we separate the name from the value
     enum separator_t {
@@ -408,7 +409,7 @@ struct option_t {
     
     option_t() : separator(sep_space) {}
     
-    option_t(enum name_type_t type, const range_t &name, const range_t &v, separator_t sep) : value(v), separator(sep) {
+    option_t(enum name_type_t type, const rstring_t &name, const rstring_t &v, separator_t sep) : value(v), separator(sep) {
         assert(type < NAME_TYPE_COUNT);
         this->names[type] = name;
     }
@@ -425,7 +426,7 @@ struct option_t {
     }
 
     // Returns the "best" (longest) name
-    range_t best_name() const {
+    rstring_t best_name() const {
         return this->names[this->best_type()];
     }
     
@@ -447,21 +448,14 @@ struct option_t {
         return result;
     }
     
-    // Returns true if the options have the same name, as determined by their respective ranges in src.
-    template<typename string_t>
-    bool has_same_name(const option_t &opt2, const string_t &src) const {
+    // Returns true if the options have the same name
+    bool has_same_name(const option_t &opt2) const {
         bool result = false;
-        size_t idx = NAME_TYPE_COUNT;
-        while (idx-- && !result) {
-            const range_t r1 = this->names[idx], r2 = opt2.names[idx];
-            if (r1.length > 0 && r1.length == r2.length) {
-                // Name lengths must be the same
-                if (r1 == r2) {
-                    // Identical ranges
-                    result = true;
-                } else {
-                    result = (0 == src.compare(r1.start, r1.length, src, r2.start, r2.length));
-                }
+        for (size_t i=0; i < NAME_TYPE_COUNT; i++) {
+            const rstring_t &s1 = this->names[i], &s2 = opt2.names[i];
+            if (s1.length() > 0 && s1 == s2) {
+                result = true;
+                break;
             }
         }
         return result;
@@ -469,21 +463,21 @@ struct option_t {
 
     /* Helper function for dumping */
     template<typename string_t>
-    string_t describe(const string_t &src) const {
+    string_t describe() const {
         string_t result;
         string_t tmp;
-        range_t name = this->best_name();
-        result.append(src, name.start, name.length);
+        rstring_t name = this->best_name();
+        result.append(name.std_string<string_t>());
         
         if (! value.empty()) {
             result.push_back(':');
             result.push_back(' ');
-            result.append(src, value.start, value.length);
+            result.append(value.std_string<string_t>());
         }
         result.push_back(' ');
         
         char range[64];
-        snprintf(range, sizeof range, "<%lu, %lu>", name.start, name.length);
+        snprintf(range, sizeof range, "<%lu, %lu>", name.range().start, name.range().length);
         assign_narrow_string_to_string(range, &tmp);
         result.append(tmp);
         
@@ -499,22 +493,22 @@ struct option_t {
     }
     
     template<typename string_t>
-    string_t name_as_string(name_type_t type, const string_t &src) const {
+    string_t name_as_string(name_type_t type) const {
         assert(type < NAME_TYPE_COUNT);
         const unsigned dash_count = (type == double_long ? 2 : 1);
-        const range_t name_range = this->names[type];
-        assert(! name_range.empty());
+        const rstring_t name = this->names[type];
+        assert(! name.empty());
         string_t result;
-        result.reserve(dash_count + name_range.length);
-        result.append(dash_count, '-');
-        result.append(src, name_range.start, name_range.length);
+        result.reserve(dash_count + name.length());
+        name.copy_to(&result);
+        result.insert(0, dash_count, '-');
         return result;
     }
 
     // Returns the "best" name, plucking it out of the given source. Includes dashes.
     template<typename string_t>
-    string_t best_name_as_string(const string_t &src) const {
-        return this->name_as_string(this->best_type(), src);
+    string_t best_name_as_string() const {
+        return this->name_as_string<string_t>(this->best_type());
     }
     
     /* Acquire "guts" from another option wherever we have blanks */
@@ -527,8 +521,8 @@ struct option_t {
             this->separator = rhs.separator;
         }
         this->value.replace_if_empty(rhs.value);
-        this->description_range.replace_if_empty(rhs.description_range);
-        this->default_value_range.replace_if_empty(rhs.default_value_range);
+        this->description.replace_if_empty(rhs.description);
+        this->default_value.replace_if_empty(rhs.default_value);
     }
     
     /* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
@@ -544,6 +538,7 @@ struct option_t {
 };
 typedef std::vector<option_t> option_list_t;
 
+#warning needs rstring
 template <typename string_t>
 static void append_error(std::vector<error_t<string_t> > *errors, size_t where, int code, const char *txt, size_t arg_idx = -1) {
     if (errors != NULL) {

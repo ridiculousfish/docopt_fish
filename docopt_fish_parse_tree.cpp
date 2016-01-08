@@ -375,13 +375,13 @@ struct parse_context_t {
             if (! option_t::parse_from_string(&remaining, &opt_from_usage_section, &this->errors)) {
                 return parsed_error;
             }
-            assert(opt_from_usage_section.best_name().length > 0);
+            assert(! opt_from_usage_section.best_name().empty());
             
             // See if we have a corresponding option in the options section
             const option_t *opt_from_options_section = NULL;
             for (size_t i=0; i < this->shortcut_options->size(); i++) {
                 const option_t &test_op = this->shortcut_options->at(i);
-                if (opt_from_usage_section.has_same_name(test_op, *this->source)) {
+                if (opt_from_usage_section.has_same_name(test_op)) {
                     opt_from_options_section = &test_op;
                     break;
                 }
@@ -399,7 +399,7 @@ struct parse_context_t {
                         bool scanned = this->scan_word(&variable);
                         assert(scanned); // Should always succeed, since we peeked at the word
                         word = word.merge(variable);
-                        opt_from_usage_section.value = variable.range();
+                        opt_from_usage_section.value = variable;
                     }
                 }
             }
@@ -510,9 +510,8 @@ struct parse_context_t {
 
         /* Both options must be non-NULL, and they must not have overlapping name types, and their values must agree (perhaps both empty) */
         bool options_correspond = (first != NULL && second != NULL &&
-                                   ! first->name_types_overlap(*second) &&
-                                   0 == this->source->compare(first->value.start, first->value.length, *this->source,
-                                                              second->value.start, second->value.length));
+                                   first->value == second->value &&
+                                   ! first->name_types_overlap(*second));
         if (options_correspond) {
             // Merge them. Note: this merge_from call writes deep into our tree!
             // Then delete the second alternation
