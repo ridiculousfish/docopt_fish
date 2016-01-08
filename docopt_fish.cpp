@@ -18,78 +18,11 @@ static const size_t npos = (size_t)(-1);
 
 typedef std::vector<rstring_t> rstring_list_t;
 
-// Narrow implementation
-static inline size_t find_case_insensitive(const std::string &haystack, const char *needle, const range_t &haystack_range) {
-    const size_t needle_len = strlen(needle);
-    assert(needle_len > 0);
-    if (needle_len > haystack_range.length) {
-        // needle is longer than haystack, no possible match
-        return std::wstring::npos;
-    }
-    size_t search_end = haystack_range.end() - needle_len;
-    
-    const char *haystack_cstr = haystack.c_str();
-    const char first_down = tolower(needle[0]);
-    const char first_up = toupper(needle[0]);
-    for (size_t i = haystack_range.start; i <= search_end; i++) {
-        // Common case
-        char c = haystack_cstr[i];
-        if (c != first_down && c != first_up) {
-            continue;
-        }
-        if (0==strncasecmp(needle + 1, haystack_cstr + i + 1, needle_len - 1)) {
-            return i;
-        }
-    }
-    return std::string::npos;
-}
-
-// Nasty wide implementation
-static inline size_t find_case_insensitive(const std::wstring &haystack, const char *needle, const range_t &haystack_range) {
-    // Nasty implementation
-    // The assumption here is that needle is always ASCII; thus it suffices to do an ugly tolower comparison
-    assert(haystack_range.end() <= haystack.size());
-    const size_t needle_len = strlen(needle);
-    assert(needle_len > 0);
-    if (needle_len > haystack_range.length) {
-        // needle is longer than haystack, no possible match
-        return std::wstring::npos;
-    }
-
-    const wchar_t *haystack_cstr = haystack.c_str();
-    size_t search_end = haystack_range.end() - needle_len;
-    const char first_down = tolower(needle[0]);
-    const char first_up = toupper(needle[0]);
-    
-    for (size_t i=haystack_range.start; i <= search_end; i++) {
-        // Common case
-        wchar_t wc = haystack_cstr[i];
-        if (wc != first_down && wc != first_up) {
-            continue;
-        }
-        
-        // See if we have a match at i
-        size_t j;
-        for (j = 1; j < needle_len; j++) {
-            wchar_t wc = haystack_cstr[i + j];
-            if (wc > 127 || tolower((char)wc) != tolower(needle[j])) {
-                break;
-            }
-        }
-        if (j == needle_len) {
-            // Matched them all
-            return i;
-        }
-    }
-    return std::wstring::npos;
-}
-
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 template <typename string_t>
 static void append_argv_error(std::vector<error_t<string_t> > *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
     append_error(errors, pos_in_arg, code, txt, arg_idx);
 }
-
 
 template<char T>
 static bool it_equals(rstring_t::char_t c) { return c == T; }
