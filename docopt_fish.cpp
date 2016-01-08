@@ -139,18 +139,8 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     return ! errored;
 }
 
-
-/* Wrapper template class that takes either a string or wstring as string_t */
-template<typename string_t>
-class docopt_impl OPEN_DOCOPT_IMPL
-
-#pragma mark -
-#pragma mark Scanning
-#pragma mark -
-
 /* Helper class for pretty-printing */
 class node_dumper_t : public node_visitor_t<node_dumper_t> {
-    string_t text;
     unsigned int depth;
     
     std::vector<std::string> lines;
@@ -181,7 +171,7 @@ public:
             std::string tmp;
             t1.copy_to(&tmp);
             result += "'" + tmp + "'";
-
+            
             char buff[32];
             if (t1.length() == 1) {
                 snprintf(buff, sizeof buff, "{%lu}", t1.range().start);
@@ -205,7 +195,6 @@ public:
         return result;
     }
 };
-
 
 /* Helper class for collecting clauses from a tree */
 struct clause_collector_t : public node_visitor_t<clause_collector_t> {
@@ -231,6 +220,15 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
     void accept(const IGNORED_TYPE& t UNUSED) {}
 };
 
+
+/* Wrapper template class that takes either a string or wstring as string_t */
+template<typename string_t>
+class docopt_impl OPEN_DOCOPT_IMPL
+
+#pragma mark -
+#pragma mark Scanning
+#pragma mark -
+
 /* Class representing a map from variable names to commands */
 typedef std::map<rstring_t, rstring_t> variable_command_map_t;
 
@@ -239,9 +237,9 @@ typedef std::vector<usage_t> usage_list_t;
 
 /* Constructor takes the source */
 public:
-const string_t source2;
+const string_t storage;
 const rstring_t rsource;
-docopt_impl(const string_t &s) : source2(s), rsource(source2) {}
+docopt_impl(const string_t &s) : storage(s), rsource(storage) {}
 
 #pragma mark -
 #pragma mark Instance Variables
