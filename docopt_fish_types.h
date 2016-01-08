@@ -462,31 +462,26 @@ struct option_t {
     }
 
     /* Helper function for dumping */
-    template<typename string_t>
-    string_t describe() const {
-        string_t result;
-        string_t tmp;
+    std::string describe() const {
+        std::string result;
         rstring_t name = this->best_name();
-        result.append(name.std_string<string_t>());
+        result.append(name.std_string<std::string>());
         
         if (! value.empty()) {
             result.push_back(':');
             result.push_back(' ');
-            result.append(value.std_string<string_t>());
+            result.append(value.std_string<std::string>());
         }
         result.push_back(' ');
         
         char range[64];
         snprintf(range, sizeof range, "<%lu, %lu>", name.range().start, name.range().length);
-        assign_narrow_string_to_string(range, &tmp);
-        result.append(tmp);
+        result.append(range);
         
         if (this->separator == sep_none) {
-            assign_narrow_string_to_string(" (no sep)", &tmp);
-            result.append(tmp);
+            result += " (no sep)";
         } else if (this->separator == sep_equals) {
-            assign_narrow_string_to_string(" (= sep)", &tmp);
-            result.append(tmp);
+            result += " (= sep)";
         }
 
         return result;
