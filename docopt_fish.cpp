@@ -144,9 +144,6 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
 template<typename string_t>
 class docopt_impl OPEN_DOCOPT_IMPL
 
-/* A character in string_t; likely either char or wchar_t */
-typedef typename string_t::value_type char_t;
-
 #pragma mark -
 #pragma mark Scanning
 #pragma mark -
@@ -355,7 +352,7 @@ static option_t parse_option_from_argument(const rstring_t &str, option_t::name_
     const rstring_t name = remaining->scan_while(char_is_valid_in_parameter);
     
     // Check to see if there's an = sign
-    const rstring_t equals = remaining->scan_1_char(char_t('='));
+    const rstring_t equals = remaining->scan_1_char('=');
     
     // If we got an equals sign, the rest is the value
     // It can have any character at all, since it's coming from the argument, not from the usage spec
@@ -370,7 +367,7 @@ static option_t parse_option_from_argument(const rstring_t &str, option_t::name_
 
 /* Given an option spec, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
 option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) const {
-    assert(! spec.empty() && spec[0] == char_t('-'));
+    assert(! spec.empty() && spec[0] == '-');
     const size_t end = spec.length();
     option_t result;
 
@@ -406,7 +403,7 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
     rstring_t remaining = spec.substr(0, options_end);
     remaining.scan_while(isspace);
     while (! remaining.empty()) {
-        if (remaining[0] != char_t('-')) {
+        if (remaining[0] != '-') {
             append_error(errors, remaining.range().start, error_invalid_option_name, "Not an option");
             break;
         }
@@ -435,7 +432,7 @@ static size_t compute_indent(const rstring_t &src, size_t start, size_t len) {
     size_t result = 0;
     for (size_t i=start; i < start + len; i++)
     {
-        char_t c = src.at(i);
+        rstring_t::char_t c = src.at(i);
         if (c != L'\t') {
             // not a tab
             result += 1;
@@ -539,7 +536,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
             all_consumed_lines = all_consumed_lines.merge(next_line);
         }
         
-        char_t first_char = line_group[0];
+        rstring_t::char_t first_char = line_group[0];
         if (first_char == '-') {
             // It's an option spec
             this->shortcut_options.push_back(this->parse_one_option_spec(line_group, out_errors));
