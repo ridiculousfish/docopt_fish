@@ -225,12 +225,9 @@ class node_dumper_t : public node_visitor_t<node_dumper_t> {
     string_t text;
     unsigned int depth;
     
-    // Instances of this class are expected to be quite transient. src is unowned.
-    const string_t *src;
-    
     std::vector<std::string> lines;
     
-    node_dumper_t(const string_t *src_ptr) : depth(0), src(src_ptr) {}
+    node_dumper_t() : depth(0) {}
     
 public:
     template<typename NODE_TYPE>
@@ -252,14 +249,12 @@ public:
     void accept(const rstring_t &t1) {
         if (! t1.empty()) {
             std::string result(2 * depth, ' ');
+            
+            std::string tmp;
+            t1.copy_to(&tmp);
+            result += "'" + tmp + "'";
+
             char buff[32];
-            
-            if (src != NULL) {
-                const string_t word(*src, t1.range().start, t1.range().length);
-                snprintf(buff, sizeof buff, "'%ls' ", widen(word).c_str());
-            }
-            result.append(buff);
-            
             if (t1.length() == 1) {
                 snprintf(buff, sizeof buff, "{%lu}", t1.range().start);
             } else {
@@ -271,15 +266,14 @@ public:
     }
     
     template<typename NODE_TYPE>
-    static std::string dump_tree(const NODE_TYPE &node, const string_t &src) {
-        node_dumper_t dumper(&src);
+    static std::string dump_tree(const NODE_TYPE &node) {
+        node_dumper_t dumper;
         dumper.begin(node);
         std::string result;
         for (size_t i=0; i < dumper.lines.size(); i++) {
             result.append(dumper.lines.at(i));
             result.push_back('\n');
         }
-        dumper.src = NULL;
         return result;
     }
 };
@@ -312,16 +306,17 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
 /* Class representing an error */
 typedef std::vector<error_t<string_t> > error_list_t;
 
-/* Class representing a map from variable names to conditions */
-typedef std::map<rstring_t, range_t> variable_command_map_t;
+/* Class representing a map from variable names to commands */
+typedef std::map<rstring_t, rstring_t> variable_command_map_t;
 
 /* List of usages */
 typedef std::vector<usage_t> usage_list_t;
 
 /* Constructor takes the source */
 public:
-const string_t source;
-docopt_impl(const string_t &s) : source(s) {}
+const string_t source2;
+const rstring_t rsource;
+docopt_impl(const string_t &s) : source2(s), rsource(source2) {}
 
 #pragma mark -
 #pragma mark Instance Variables
@@ -378,33 +373,29 @@ struct resolved_option_t {
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
 
-/* Helper function to efficiently iterate over lines of a string 'source'. On input, inout_range.end() should be initialized to the start point for the iteration. On return, the range will contain the line, with its end pointing just after the trailing newline, or possibly at source.size(). The length of the line is thus the length of the range (and is guaranteed to be positive). Returns true if a line was returned, false if we reached the end.
-
-    If end is specified, it is treated as the end of the string (i.e. str.size())
-*/
-static bool get_next_line(const string_t &str, range_t *inout_range, size_t end = string_t::npos) {
-    const size_t effective_end = std::min(str.size(), end);
-    bool success = false;
-    if (inout_range->end() < effective_end)
-    {
-        // Start at the end of the last line, or zero if this is the first call
-        size_t line_start = inout_range->end();
-        size_t line_end;
-        size_t newline = str.find(char_t('\n'), line_start);
-        if (newline > effective_end) {
-            // Point just after the last character
-            line_end = effective_end;
-        } else {
-            // Point just after the newline
-            line_end = newline + 1;
-        }
-        // Empty lines are impossible
-        assert(line_end > line_start);
-        inout_range->start = line_start;
-        inout_range->length = line_end - line_start;
-        success = true;
+/* Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty. On return, it will contain the line, with its end pointing just after the trailing newline, or possibly at the end. Returns true if a line was returned, false if we reached the end. */
+static bool get_next_line(const rstring_t &base, rstring_t *inout_line) {
+    assert(inout_line != NULL);
+    if (inout_line->range().end() == base.range().end()) {
+        // Line exhausted
+        return false;
     }
-    return success;
+    
+    // Start at the end of the last line, or zero if this is the first call
+    // Subtract off base.range().start to make the line_start relative to base
+    size_t line_start = (inout_line->empty() ? 0 : inout_line->range().end() - base.range().start);
+    rstring_t remainder = base.substr_from(line_start);
+    size_t newline = remainder.find("\n");
+    if (newline == rstring_t::npos) {
+        // Take everything
+        *inout_line = remainder;
+    } else {
+        // Take through the newline
+        *inout_line = remainder.substr(0, newline+1);
+    }
+    // Empty lines are impossible
+    assert(! inout_line->empty());
+    return true;
 }
 
 /* Collects options, i.e. tokens of the form --foo */
@@ -462,30 +453,23 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
     }
 
     // Determine the description range (possibly empty). Trim leading and trailing whitespace
-    rstring_t description = spec.substr(options_end).trim_whitespace();
+    rstring_t description = spec.substr_from(options_end).trim_whitespace();
     result.description = description;
     
     // Parse out a "default:" value.
     if (! description.empty()) {
         // TODO: handle the case where there's more than one
         const char *default_prefix = "[default:";
-        // TODO: rstring
-        size_t default_prefix_loc = find_case_insensitive(this->source, default_prefix, description.range());
-        if (default_prefix_loc != string_t::npos) {
-            size_t default_value_start = default_prefix_loc + strlen(default_prefix);
-            // Skip over spaces
-            // TODO: rstring
-            while (default_value_start < description.range().end() && isspace(this->source.at(default_value_start))) {
-                default_value_start++;
-            }
+        size_t default_prefix_loc = description.find_case_insensitive(default_prefix);
+        if (default_prefix_loc != rstring_t::npos) {
+            rstring_t default_value = description.substr_from(default_prefix_loc + strlen(default_prefix)).trim_whitespace();
             
             // Find the closing ']'
-            size_t default_value_end = this->source.find(char_t(']'), default_value_start);
-            if (default_value_end >= description.range().end()) {
-                // Note: The above check covers npos too
-                append_error(errors, default_prefix_loc, error_missing_close_bracket_in_default, "Missing ']' to match opening '['");
+            size_t default_value_end = default_value.find("]");
+            if (default_value_end == rstring_t::npos) {
+                append_error(errors, default_value.range().start, error_missing_close_bracket_in_default, "Missing ']' to match opening '['");
             } else {
-                result.default_value = rstring_t(this->source, range_t(default_value_start, default_value_end - default_value_start));
+                result.default_value = default_value.substr(range_t(0, default_value_end));
             }
         }
     }
@@ -516,21 +500,18 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
 }
 
 // Computes the indent for a line starting at start and extending len. Tabs are treated as 4 spaces. newlines are unexpected, and treated as one space.
-static size_t compute_indent(const string_t &src, size_t start, size_t len) {
+static size_t compute_indent(const rstring_t &src, size_t start, size_t len) {
     const size_t tabstop = 4;
-    assert(src.size() >= len);
+    assert(src.length() >= len);
     assert(start + len >= start); // no overflow
     size_t result = 0;
     for (size_t i=start; i < start + len; i++)
     {
         char_t c = src.at(i);
-        if (c != L'\t')
-        {
+        if (c != L'\t') {
             // not a tab
             result += 1;
-        }
-        else
-        {
+        } else {
             // is a tab. Round up to the next highest multiple of tabstop.
             // If we're already a multiple of tabstop, we want to go bigger.
             result = (result + tabstop) / tabstop * tabstop;
@@ -539,20 +520,20 @@ static size_t compute_indent(const string_t &src, size_t start, size_t len) {
     return result;
 }
 
-static bool find_header(const string_t &src, const range_t &line_range, range_t *out_header_range) {
+static bool find_header(const rstring_t &src, rstring_t *out_header) {
     /* We are considered a header if we contain a colon, and only space / alpha text before it. */
-    bool result = false;
-    for (size_t i=line_range.start; i < line_range.end(); i++) {
-        char_t c = src[i];
+    bool success = false;
+    for (size_t i=0; i < src.length(); i++) {
+        rstring_t::char_t c = src[i];
         if (c == ':') {
-            *out_header_range = range_t(line_range.start, i + 1 - line_range.start);
-            result = true;
+            *out_header = src.substr(0, i + 1);
+            success = true;
             break;
         } else if (! (isalnum(c) || c == ' ')) {
             break;
         }
     }
-    return result;
+    return success;
 }
 
 /* Walk over the lines of our source, starting from the beginning. */
@@ -568,8 +549,8 @@ void populate_by_walking_lines(error_list_t *out_errors) {
     // This is because we need the options to disambiguate some usages
     rstring_list_t usage_specs;
     
-    range_t line_range;
-    while (get_next_line(this->source, &line_range)) {
+    rstring_t line;
+    while (get_next_line(this->rsource, &line)) {
         /* There are a couple of possibilitise for each line:
          
          1. It may have a header like "Usage:". If so, we want to strip that header, and optionally
@@ -581,12 +562,10 @@ void populate_by_walking_lines(error_list_t *out_errors) {
          
          Also note that a (nonempty) line indented more than the previous line is considered a continuation of that line.
          */
-        const rstring_t line(this->source, line_range);
-        
         rstring_t trimmed_line = line.trim_whitespace();
         
-        range_t header_range;
-        if (find_header(this->source, trimmed_line.range(), &header_range)) {
+        rstring_t header;
+        if (find_header(trimmed_line, &header)) {
             // Set mode based on header, and remove header from line
             // The headers we know about are Usage, Synopsis, Options, and Arguments (case insensitive)
             // Everything else is considered exposition
@@ -594,14 +573,13 @@ void populate_by_walking_lines(error_list_t *out_errors) {
             size_t keyword_count = sizeof keywords / sizeof *keywords;
             bool found_keyword = false;
             for (size_t i=0; i < keyword_count && !found_keyword; i++) {
-                found_keyword = (find_case_insensitive(this->source, keywords[i], header_range) != string_t::npos);
+                found_keyword = header.find_case_insensitive(keywords[i]) != rstring_t::npos;
             }
             mode = found_keyword ? mode_normal : mode_exposition;
             
             // Remove the header range from the trimmed line
-            size_t header_end = header_range.end();
-            assert(header_end <= trimmed_line.range().end());
-            trimmed_line = rstring_t(this->source, range_t(header_end, trimmed_line.range().end() - header_end)).trim_whitespace();
+            assert(header.length() <= trimmed_line.length());
+            trimmed_line = trimmed_line.substr_from(header.length()).trim_whitespace();
         }
         
         // Skip exposition or empty lines
@@ -616,17 +594,16 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         
           Here 'foo' is indented more than 'bar'.
         */
-        const size_t line_indent = compute_indent(this->source, line.range().start, trimmed_line.range().start - line.range().start);
+        const size_t line_indent = compute_indent(this->rsource, line.range().start, trimmed_line.range().start - line.range().start);
         
         // Determine the "line group." That is, this line plus all subsequent nonempty lines
         // that are indented more than this line.
         rstring_t line_group = trimmed_line;
-        rstring_t all_consumed_lines(this->source, line_range);
-        range_t next_line_range = line_range;
-        while (get_next_line(this->source, &next_line_range)) {
-            const rstring_t next_line(this->source, next_line_range);
+        rstring_t all_consumed_lines = line;
+        rstring_t next_line = line;
+        while (get_next_line(this->rsource, &next_line)) {
             rstring_t trimmed_next_line = next_line.trim_whitespace();
-            size_t next_line_indent = compute_indent(this->source, next_line.range().start, trimmed_next_line.range().start - next_line.range().start);
+            size_t next_line_indent = compute_indent(this->rsource, next_line.range().start, trimmed_next_line.range().start - next_line.range().start);
             if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
                 break;
             }
@@ -659,7 +636,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         }
         
         // Note the line range we consumed, for the next iteration of the loop
-        line_range = all_consumed_lines.range();
+        line = all_consumed_lines;
     }
     
     // Ensure our shortcut options don't have duplicates
@@ -669,70 +646,8 @@ void populate_by_walking_lines(error_list_t *out_errors) {
     size_t usages_count = usage_specs.size();
     this->usages.resize(usages_count);
     for (size_t i=0; i < usages_count; i++) {
-        parse_one_usage<string_t>(this->source, usage_specs.at(i).range(), this->shortcut_options, &this->usages.at(i), out_errors);
+        parse_one_usage<string_t>(usage_specs.at(i), this->shortcut_options, &this->usages.at(i), out_errors);
     }
-}
-
-/* Finds the headers containing name (for example, "Options:") and returns source ranges for them. Header lines are not included. We allow the section names to be indented, but must be less idented than the previous line. If include_unindented_lines is true, then non-header lines that are less indented are included:
-
-  Usage: foo
-  OTHER JUNK
-
-With include_unindented_lines set to false, OTHER JUNK is treated as a header line and so not included in Usage:. If set to true, it is.
-
- */
-range_list_t source_ranges_for_section(const char *name, bool include_other_top_level = false) const {
-    range_list_t result;
-    bool in_desired_section = false;
-    range_t line_range;
-    size_t current_header_indent = -1; //note: is huge
-    while (get_next_line(this->source, &line_range)) {
-        const range_t trimmed_line_range = trim_whitespace(line_range, this->source);
-        assert(trimmed_line_range.start >= line_range.start);
-        const size_t trimmed_line_start = trimmed_line_range.start;
-        size_t line_indent = compute_indent(this->source, line_range.start, trimmed_line_start - line_range.start);
-        
-        // It's a header line if its indent is not greater than the previous header and it's empty
-        size_t colon_pos = npos;
-        bool is_header = false;
-        bool is_other_top_level = false;
-        if (! trimmed_line_range.empty() && line_indent <= current_header_indent) {
-            colon_pos = find_colon(trimmed_line_range, this->source);
-            is_header = (colon_pos != npos);
-            is_other_top_level = (colon_pos == npos);
-        }
-        if (is_other_top_level && ! include_other_top_level) {
-            // Other top level junk, end the section
-            in_desired_section = false;
-        } else if (is_header) {
-            assert(colon_pos != npos && colon_pos >= line_range.start && colon_pos < line_range.end());
-            current_header_indent = line_indent;
-            
-            // Check to see if the name is found before the first colon
-            // Note that if name is not found at all, name_pos will have value npos, which is huge (and therefore not smaller than line_end)
-            size_t name_pos = find_case_insensitive(source, name, trimmed_line_range);
-            size_t line_end = trimmed_line_range.end();
-            in_desired_section = (name_pos < line_end && name_pos < colon_pos);
-
-            if (in_desired_section) {
-                // Append a new empty range. We will add to it.
-                result.push_back(range_t(0, 0));
-                
-                // Adjust this range to start after the header name
-                size_t line_end = line_range.end();
-                size_t new_start = name_pos + strlen(name);
-                assert(new_start <= line_end);
-                line_range.start = new_start;
-                line_range.length = line_end - new_start;
-            }
-        }
-
-        if (in_desired_section) {
-            // Extend the last range with this line
-            result.back().merge(line_range);
-        }
-    }
-    return result;
 }
 
 /* Given a variable spec, parse out a condition map */
@@ -747,8 +662,8 @@ variable_command_map_t parse_one_variable_command_spec(const rstring_t &spec, er
     } else {
         assert(close_bracket < spec.length());
         rstring_t key = spec.substr(0, close_bracket+1).trim_whitespace();
-        rstring_t value = spec.substr(close_bracket+1).trim_whitespace();
-        result[key] = value.range();
+        rstring_t value = spec.substr_from(close_bracket+1).trim_whitespace();
+        result[key] = value;
     }
     return result;
 }
@@ -978,7 +893,7 @@ bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t
             // Got one
             size_t name_idx = st->idx;
             size_t value_idx = st->idx;
-            rstring_t value = arg.substr(2);
+            rstring_t value = arg.substr_from(2);
             out_result->push_back(resolved_option_t(match, name_idx, value_idx, value));
             st->idx += 1;
             success = true;
@@ -1695,16 +1610,14 @@ option_map_t finalize_option_map(const option_map_t &map, const option_list_t &a
     // Fill in variables
     string_t name;
     for (size_t i=0; i < all_variables.size(); i++) {
-        const range_t &var_range = all_variables.at(i).range();
-        name.assign(this->source, var_range.start, var_range.length);
+        all_variables.at(i).copy_to(&name);
         // As above, we merely invoke operator[]
         result[name];
     }
     
     // Fill in static arguments
     for (size_t i=0; i < all_static_arguments.size(); i++) {
-        const range_t range = all_static_arguments.at(i).range();
-        name.assign(this->source, range.start, range.length);
+        all_static_arguments.at(i).copy_to(&name);
         // As above, we merely invoke operator[]
         result[name];
     }
@@ -1834,7 +1747,7 @@ bool preflight(error_list_t *out_errors) {
         std::string dumped;
         for (size_t i=0; i < this->usages.size(); i++)
         {
-            dumped += node_dumper_t::dump_tree(this->usages.at(i), this->source);
+            dumped += node_dumper_t::dump_tree(this->usages.at(i));
         }
         fprintf(stderr, "%s\n", dumped.c_str());
     }
@@ -1906,9 +1819,8 @@ string_t commands_for_variable(const string_t &var_name) const {
     string_t result;
     variable_command_map_t::const_iterator where = this->variables_to_commands.find(rstring_t(var_name));
     if (where != this->variables_to_commands.end()) {
-        const range_t &cond_range = where->second;
-        // TODO: more rstring_t
-        result.assign(this->source, cond_range.start, cond_range.length);
+        const rstring_t &command = where->second;
+        command.copy_to(&result);
     }
     return result;
 }
@@ -1934,15 +1846,15 @@ string_t description_for_option(const string_t &given_option_name) const {
         
         // Double-dash
         if (opt.has_type(option_t::double_long) && has_double_dash) {
-            matches = matches || opt.names[option_t::double_long] == needle.substr(2);
+            matches = matches || opt.names[option_t::double_long] == needle.substr_from(2);
         }
         // Single dash
         if (opt.has_type(option_t::single_long) && !has_double_dash) {
-            matches = matches || opt.names[option_t::single_long] == needle.substr(1);
+            matches = matches || opt.names[option_t::single_long] == needle.substr_from(1);
         }
         // Short
         if (opt.has_type(option_t::single_short) && !has_double_dash) {
-            matches = matches || opt.names[option_t::single_short] == needle.substr(1);
+            matches = matches || opt.names[option_t::single_short] == needle.substr_from(1);
         }
         
         if (matches) {
@@ -1956,15 +1868,12 @@ string_t description_for_option(const string_t &given_option_name) const {
 std::vector<string_t> get_command_names() const {
     /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
     std::vector<string_t> result;
-    std::set<string_t> seen;
+    std::set<rstring_t> seen;
     for (size_t i=0; i < this->usages.size(); i++) {
         const usage_t &usage = this->usages.at(i);
-        range_t name_range = usage.prog_name.range();
-        if (! name_range.empty()) {
-            const string_t name(this->source, name_range.start, name_range.length);
-            if (seen.insert(name).second) {
-                result.push_back(name);
-            }
+        const rstring_t name = usage.prog_name;
+        if (! name.empty() && seen.insert(name).second) {
+            result.push_back(name.std_string<string_t>());
         }
     }
     return result;

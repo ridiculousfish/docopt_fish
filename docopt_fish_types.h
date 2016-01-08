@@ -54,8 +54,6 @@ struct range_t {
     }
 };
 
-typedef std::vector<range_t> range_list_t;
-
 /* Our "rstring" string type tracks a range and base pointer. This enables both efficient sharing (fewer copies) and precise error messages, since we know the location of the error. CHAR is suggested to be either char or wchar_t. rstrings are views on top of immutable underlying data. Note that these are not null terminated. */
 class rstring_t {
 public:
@@ -72,6 +70,8 @@ private:
     } width_;
 
     rstring_t(const void *base, range_t range, width_t width) : range_(range), base_(base), width_(width) {}
+    
+    explicit rstring_t(const char_t *b, const range_t &r) : base_(b), range_(r), width_(resolve_width<char_t>()) {}
     
     width_t width() const {
         return this->width_;
@@ -97,17 +97,37 @@ private:
     }
 
     
-    template<typename T>
+    template<typename T, bool case_insensitive>
     size_t find_internal(const char *needle) const {
-        // use uint to avoid sign extension crap
-        const uint8_t *needle_start = reinterpret_cast<const uint8_t *>(needle);
-        const uint8_t *needle_end = reinterpret_cast<const uint8_t *>(needle + strlen(needle));
-        
-        const T *haystack_start = this->ptr_begin<T>();
-        const T *haystack_end = this->ptr_end<T>();
-        const T *where = std::search(haystack_start, haystack_end, needle_start, needle_end);
-        assert(where <= haystack_end);
-        return where == haystack_end ? npos : where - haystack_start;
+        const T *haystack = this->ptr_begin<T>();
+        size_t haystack_count = this->length();
+        for (size_t outer=0; outer < haystack_count; outer++) {
+            // See if there's a match at 'outer'
+            for (size_t inner = 0;;inner++) {
+                if (needle[inner] == '\0') {
+                    // we exhausted the needle, so we have a match at 'outer'
+                    return outer;
+                } else if (outer + inner >= haystack_count) {
+                    // ran off our end
+                    // this means that whatever's left is shorter than needle,
+                    // so we're done
+                    return npos;
+                } else {
+                    char_t mine = haystack[outer + inner];
+                    if (mine >= 256) {
+                        // outside of ASCII, no match possible
+                        break;
+                    }
+                    char his = needle[inner];
+                    bool matches = (mine == his || (case_insensitive && tolower(mine) == tolower(his)));
+                    if (! matches) {
+                        // no match at 'outer'
+                        break;
+                    }
+                }
+            }
+        }
+        return npos;
     }
     
     static inline unsigned int unreachable() {
@@ -145,25 +165,6 @@ public:
         }
     }
     
-    int compare(const rstring_t &rhs) const {
-        if (this == &rhs) {
-            return 0;
-        }
-        if (this->base_ == rhs.base_ && this->range_ == rhs.range_) {
-            return 0;
-        }
-        for (size_t i=0; i < this->length() && i < rhs.length(); i++) {
-            if (this->at(i) != rhs.at(i)) {
-                return this->at(i) < rhs.at(i) ? -1 : 1;
-            }
-        }
-        // Data is equal, compare ranges
-        if (this->length() != rhs.length()) {
-            return this->length() < rhs.length() ? -1 : 1;
-        }
-        return 0;
-    }
-    
     rstring_t substr(const range_t &r) const {
         assert(r.end() <= this->length());
         return rstring_t(this->base_, range_t(this->range_.start + r.start, r.length), this->width_);
@@ -173,11 +174,25 @@ public:
     size_t find(const char *needle) const {
         switch (this->width()) {
             case width1:
-                return this->find_internal<uint8_t>(needle);
+                return this->find_internal<uint8_t, false>(needle);
             case width2:
-                return this->find_internal<uint16_t>(needle);
+                return this->find_internal<uint16_t, false>(needle);
             case width4:
-                return this->find_internal<uint32_t>(needle);
+                return this->find_internal<uint32_t, false>(needle);
+            default:
+                unreachable();
+                return 0;
+        }
+    }
+    
+    size_t find_case_insensitive(const char *needle) const {
+        switch (this->width()) {
+            case width1:
+                return this->find_internal<uint8_t, true>(needle);
+            case width2:
+                return this->find_internal<uint16_t, true>(needle);
+            case width4:
+                return this->find_internal<uint32_t, true>(needle);
             default:
                 unreachable();
                 return 0;
@@ -208,13 +223,17 @@ public:
         return this->substr(range_t(offset, length));
     }
 
-    rstring_t substr(size_t offset) const {
+    rstring_t substr_from(size_t offset) const {
         assert(offset <= this->length());
         return this->substr(offset, this->length() - offset);
     }
     
     range_t range() const {
         return this->range_;
+    }
+    
+    const void *base() const {
+        return this->base_;
     }
     
     /* Merges another string into this string. If both strings are nonempty, they must have the same base pointer and width. */
@@ -236,7 +255,26 @@ public:
             *this = rhs;
         }
     }
-
+    
+    int compare(const rstring_t &rhs) const {
+        if (this == &rhs) {
+            return 0;
+        }
+        if (this->base_ == rhs.base_ && this->range_ == rhs.range_) {
+            return 0;
+        }
+        for (size_t i=0; i < this->length() && i < rhs.length(); i++) {
+            if (this->at(i) != rhs.at(i)) {
+                return this->at(i) < rhs.at(i) ? -1 : 1;
+            }
+        }
+        // Data is equal, compare ranges
+        if (this->length() != rhs.length()) {
+            return this->length() < rhs.length() ? -1 : 1;
+        }
+        return 0;
+    }
+    
     bool operator==(const rstring_t &rhs) const {
         return this->length() == rhs.length() && this->compare(rhs) == 0;
     }
@@ -300,7 +338,7 @@ public:
             amt++;
         }
         rstring_t result = this->substr(0, amt);
-        *this = this->substr(amt);
+        *this = this->substr_from(amt);
         return result;
     }
 
@@ -320,7 +358,7 @@ public:
             if (i == len) {
                 // Prefix matches prefix
                 result = this->substr(0, len);
-                *this = this->substr(len);
+                *this = this->substr_from(len);
             }
         }
         return result;
@@ -334,7 +372,7 @@ public:
         rstring_t result;
         if (this->length() > 0 && this->at(0) == c) {
             result = this->substr(0, 1);
-            *this = this->substr(1);
+            *this = this->substr_from(1);
         }
         return result;
     }
@@ -353,11 +391,12 @@ public:
     }
 
     explicit rstring_t() : base_(NULL), range_(0, 0), width_(width1) {}
-    explicit rstring_t(const char_t *b, const range_t &r) : base_(b), range_(r), width_(resolve_width<char_t>()) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
     template<typename stdchar_t>
     explicit rstring_t(const std::basic_string<stdchar_t> &b) : range_(0, b.length()), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
+    
+    explicit rstring_t(const char *s, size_t len) : range_(0, len), base_(s), width_(width1) {}
 
     template<typename stdchar_t>
     explicit rstring_t(const std::basic_string<stdchar_t> &b, const range_t &r) : range_(r), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}

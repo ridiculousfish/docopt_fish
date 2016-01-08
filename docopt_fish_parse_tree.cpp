@@ -41,103 +41,30 @@ struct parse_context_t {
         return std::find(invalid, end, c) == end;
     }
 
-    static bool char_is_space_or_tab(char_t c) {
-        return c == ' ' || c == '\t';
+    static bool char_is_whitespace(char_t c) {
+        return isspace(c);
     }
     
-    // Note unowned pointer references. A parse context is stack allocated and transient.
-    // Initial string we're parsing
-    const string_t * const source;
+    // Note unowned pointer references in rstring_t. A parse context is stack allocated and transient.
     
     // Range of source remains to be parsed
     rstring_t remaining;
-    
+
     const option_list_t *shortcut_options;
-    
-    // The initial indent for the usage_t that we are parsing. If we reach a line that is indented further than this, we treat it as a continuation of the previous line.
-    size_t initial_indent;
     
     // Errors we generate
     vector<error_t<string_t> > errors;
     
-    parse_context_t(const string_t &src, const range_t &usage_range, const option_list_t &shortcuts) : source(&src), remaining(src, usage_range), shortcut_options(&shortcuts), initial_indent(-1)
-    {}
+    parse_context_t(const rstring_t &usage, const option_list_t &shortcuts) : remaining(usage), shortcut_options(&shortcuts) { }
     
     /* Consume leading whitespace. Newlines are meaningful if their associated lines are indented the same or less than initial_indent. If they are indented more, we swallow those. */
     void consume_leading_whitespace() {
-        for (;;) {
-            this->remaining.scan_while(char_is_space_or_tab);
-            const rstring_t saved_remaining = this->remaining;
-            if (this->remaining.scan_1_char('\n').empty()) {
-                // Not a newline
-                this->remaining = saved_remaining;
-                break;
-            }
-            
-            // Got a newline. Compare our indent. If we're indented more, we swallow it and keep going!
-            size_t indent = indent_for_current_line();
-            if (indent <= initial_indent) {
-                this->remaining = saved_remaining;
-                break;
-            }
-        }
+        this->remaining.scan_while(char_is_whitespace);
     }
     
     /* Returns true if there are no more next tokens */
     bool is_at_end() const {
         return this->remaining.empty();
-    }
-    
-    /* Rounds a value up to the next tabstop */
-    static size_t round_to_next_tabstop(size_t val) {
-        const size_t tabstop = 4;
-        return (val + tabstop) / tabstop * tabstop;
-    }
-
-    /* Returns how much the current line is indented. The tabstop is 4. If the line is empty, we return -1 (which is huge, since we're unsigned).
-       This needs to look backwards in the string, even outside our range. Consider:
-       
-           Usage: prog foo
-                  prog bar
-       
-       The indent of "prog foo" must be 7.
-    */
-    size_t indent_for_current_line() const {
-        size_t result = 0;
-        
-        // Walk backwards until we hit the string beginning, or a newline, then sum until we hit the range start
-        // We can't sum backwards because we can't compute the tabstops
-        const range_t remaining_range = this->remaining.range();
-        size_t start = remaining_range.start;
-        while (start > 0 && source->at(start - 1) != '\n') {
-            start -= 1;
-        }
-        for (size_t idx = start; idx < remaining_range.start; idx++) {
-            char_t c = source->at(idx);
-            if (c == '\t') {
-                result = round_to_next_tabstop(result);
-            } else {
-                result += 1;
-            }
-        }
-        
-        // Walk forwards until we hit the next newline
-        for (size_t idx = remaining_range.start; idx < remaining_range.end(); idx++) {
-            char_t c = source->at(idx);
-            if (c == '\t') {
-                result = round_to_next_tabstop(result);
-            } else if (c == ' ') {
-                result += 1;
-            } else if (c == '\n') {
-                // Empty line
-                result = -1;
-                break;
-            } else {
-                // Not a whitespace character.
-                break;
-            }
-        }
-        return result;
     }
     
     // Try scanning a single character
@@ -279,14 +206,6 @@ struct parse_context_t {
     
     // Parse a usage_t
     parse_result_t parse(usage_t *result) {
-        // Suck up empty lines.
-        while (scan('\n')) {
-            continue;
-        }
-        
-        /* Determine the initial indent before consuming whitespace. Lines that are indented more than this are considered part of the existing usage */
-        this->initial_indent = this->indent_for_current_line();
-        
         consume_leading_whitespace();
         if (this->is_at_end()) {
             return parsed_done;
@@ -524,15 +443,16 @@ struct parse_context_t {
 
 void usage_t::make_default() {
     // hackish?
-    const std::string src = "command [options]";
+    const char *storage = "command [options]";
+    const rstring_t src(storage, strlen(storage));
     vector<error_t<std::string> > *null_errors = NULL;
-    parse_one_usage(src, range_t(0, src.size()), option_list_t(), this, null_errors);
+    parse_one_usage<std::string>(src, option_list_t(), this, null_errors);
 }
 
 template<typename string_t>
-bool parse_one_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<string_t> > *out_errors)
+bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<string_t> > *out_errors)
 {
-    parse_context_t<string_t> ctx(src, src_range, shortcut_options);
+    parse_context_t<string_t> ctx(source, shortcut_options);
     parse_result_t status = ctx.template parse(out_usage);
     assert(! (status == parsed_error && ctx.errors.empty()));
     if (out_errors) {
@@ -542,8 +462,10 @@ bool parse_one_usage(const string_t &src, const range_t &src_range, const option
 }
 
 // Force template instantiation
-template bool parse_one_usage<std::string>(const std::string &, const range_t &, const option_list_t &, usage_t *out_usage, vector<error_t<std::string> > *);
-template bool parse_one_usage<std::wstring>(const std::wstring &, const range_t &, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<std::wstring> > *);
+template bool parse_one_usage(const rstring_t &, const option_list_t &, usage_t *, vector<error_t<std::string> > *);
+
+
+template bool parse_one_usage<std::wstring>(const rstring_t &, const option_list_t &, usage_t *, vector<error_t<std::wstring> > *);
 
 
 CLOSE_DOCOPT_IMPL /* namespace */

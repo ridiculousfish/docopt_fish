@@ -263,7 +263,7 @@ struct variable_clause_t {
 };
 
 template<typename string_t>
-bool parse_one_usage(const string_t &src, const range_t &src_range, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<string_t> > *out_errors);
+bool parse_one_usage(const rstring_t &src, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t<string_t> > *out_errors);
 
 
 // Node visitor class, using CRTP. Child classes should override accept().
