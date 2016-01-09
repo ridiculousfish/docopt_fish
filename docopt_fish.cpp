@@ -239,8 +239,7 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
 };
 
 
-/* Wrapper template class that takes either a string or wstring as string_t */
-template<typename string_t>
+/* Wrapper class that takes either a string or wstring as string_t */
 class docopt_impl OPEN_DOCOPT_IMPL
 
 #pragma mark -
@@ -560,7 +559,7 @@ void populate_by_walking_lines(error_list_t *out_errors) {
         } else if (first_char == '<') {
             // It's a variable command spec
             const variable_command_map_t new_var_cmds = parse_one_variable_command_spec(line_group, out_errors);
-            for (typename variable_command_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
+            for (variable_command_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
                 if (!this->variables_to_commands.insert(*iter).second) {
                     append_error(out_errors, line_group.range().start, error_one_variable_multiple_commands, "Duplicate command for variable");
                 }
@@ -1006,7 +1005,6 @@ void separate_argv_into_options_and_positionals(const rstring_list_t &argv, cons
 }
 
 /* The result of parsing argv */
-typedef std::map<string_t, base_argument_t<string_t> > option_map_t;
 typedef std::map<rstring_t, base_argument_t<rstring_t> > option_rmap_t;
 
 struct match_state_t {
@@ -1524,8 +1522,9 @@ void match(const variable_clause_t &node, match_state_t *state, match_context_t 
     }
 }
 
-base_argument_t<string_t> finalize_argument(const arg_t &arg) {
-    base_argument_t<string_t> result;
+template<typename stdstring_t>
+base_argument_t<stdstring_t> finalize_argument(const arg_t &arg) {
+    base_argument_t<stdstring_t> result;
     result.count = arg.count;
     result.values.resize(arg.values.size());
     for (size_t i=0; i < arg.values.size(); i++) {
@@ -1535,12 +1534,12 @@ base_argument_t<string_t> finalize_argument(const arg_t &arg) {
 }
 
 /* Given an option map (using rstring), convert it to an option map using the given std::basic_string type. */
-option_map_t finalize_option_map(const option_rmap_t &map, const option_list_t &all_options, const rstring_list_t &all_variables, parse_flags_t flags) {
-    
-    option_map_t result;
+template<typename stdstring_t>
+typename argument_parser_t<stdstring_t>::argument_map_t finalize_option_map(const option_rmap_t &map, const option_list_t &all_options, const rstring_list_t &all_variables, parse_flags_t flags) {
+    typename argument_parser_t<stdstring_t>::argument_map_t result;
     // Turn our string_ts into std::strings
     for (option_rmap_t::const_iterator iter = map.begin(); iter != map.end(); ++iter) {
-        result[iter->first.std_string<string_t>()] = finalize_argument(iter->second);
+        result[iter->first.std_string<stdstring_t>()] = finalize_argument<stdstring_t>(iter->second);
     }
     
     // Handle empty args
@@ -1549,24 +1548,24 @@ option_map_t finalize_option_map(const option_rmap_t &map, const option_list_t &
         // This could be made more efficient via a single call to insert()
         for (size_t i=0; i < all_options.size(); i++) {
             const option_t &opt = all_options.at(i);
-            string_t name = opt.best_name_as_string<string_t>();
+            stdstring_t name = opt.best_name_as_string<stdstring_t>();
             // We merely invoke operator[]; this will do the insertion with a default value if necessary.
             // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
             result[name];
             
             if (opt.has_value() && ! opt.default_value.empty()) {
                 // Maybe apply the default value for the variable
-                string_t variable_name = opt.value.std_string<string_t>();
-                base_argument_t<string_t> *var_arg = &result[variable_name];
+                stdstring_t variable_name = opt.value.std_string<stdstring_t>();
+                base_argument_t<stdstring_t> *var_arg = &result[variable_name];
                 if (var_arg->values.empty())
                 {
-                    var_arg->values.push_back(opt.default_value.std_string<string_t>());
+                    var_arg->values.push_back(opt.default_value.std_string<stdstring_t>());
                 }
             }
         }
         
         // Fill in variables
-        string_t name;
+        stdstring_t name;
         for (size_t i=0; i < all_variables.size(); i++) {
             all_variables.at(i).copy_to(&name);
             // As above, we merely invoke operator[]
@@ -1585,7 +1584,9 @@ option_map_t finalize_option_map(const option_rmap_t &map, const option_list_t &
 }
 
 /* Matches argv */
-option_map_t match_argv(const rstring_list_t &argv, parse_flags_t flags, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const rstring_list_t &all_variables, index_list_t *out_unused_arguments, bool log_stuff = false) {
+template<typename stdstring_t>
+typename argument_parser_t<stdstring_t>::argument_map_t
+match_argv(const rstring_list_t &argv, parse_flags_t flags, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, const option_list_t &all_options, const rstring_list_t &all_variables, index_list_t *out_unused_arguments, bool log_stuff = false) {
     /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
     match_context_t ctx(flags | flag_stop_after_consuming_everything, positionals, resolved_options, argv);
     match_state_t init_state;
@@ -1638,7 +1639,7 @@ option_map_t match_argv(const rstring_list_t &argv, parse_flags_t flags, const p
         if (out_unused_arguments != NULL) {
             out_unused_arguments->swap(best_unused_args);
         }
-        return finalize_option_map(result.at(best_state_idx).argument_values, all_options, all_variables, flags);
+        return finalize_option_map<stdstring_t>(result.at(best_state_idx).argument_values, all_options, all_variables, flags);
     } else {
         // No states. Every argument is unused.
         if (out_unused_arguments != NULL) {
@@ -1647,7 +1648,7 @@ option_map_t match_argv(const rstring_list_t &argv, parse_flags_t flags, const p
                 out_unused_arguments->push_back(i);
             }
         }
-        return finalize_option_map(option_rmap_t(), all_options, all_variables, flags);
+        return finalize_option_map<stdstring_t>(option_rmap_t(), all_options, all_variables, flags);
     }
 }
 
@@ -1716,7 +1717,8 @@ bool preflight(error_list_t *out_errors) {
 }
 
 // TODO: make this const by stop touching error_list
-option_map_t best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments)
+template <typename stdstring_t>
+typename argument_parser_t<stdstring_t>::argument_map_t best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments)
 {
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
@@ -1725,9 +1727,7 @@ option_map_t best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t 
     this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, out_errors);
     
     // Produce an option map
-    option_map_t result = this->match_argv(argv, flags, positionals, resolved_options, all_options, all_variables, out_unused_arguments);
-    
-    return result;
+    return this->match_argv<stdstring_t>(argv, flags, positionals, resolved_options, all_options, all_variables, out_unused_arguments);
 }
 
 rstring_list_t suggest_next_argument(const rstring_list_t &argv, parse_flags_t flags) const
@@ -1772,23 +1772,22 @@ rstring_list_t suggest_next_argument(const rstring_list_t &argv, parse_flags_t f
     return all_suggestions;
 }
 
-string_t commands_for_variable(const string_t &var_name) const {
-    string_t result;
-    variable_command_map_t::const_iterator where = this->variables_to_commands.find(rstring_t(var_name));
+rstring_t commands_for_variable(const rstring_t &var_name) const {
+    rstring_t result;
+    variable_command_map_t::const_iterator where = this->variables_to_commands.find(var_name);
     if (where != this->variables_to_commands.end()) {
-        const rstring_t &command = where->second;
-        command.copy_to(&result);
+        result = where->second;
     }
     return result;
 }
 
-string_t description_for_option(const string_t &given_option_name) const {
-    if (given_option_name.size() < 2 || given_option_name.at(0) != '-')
+rstring_t description_for_option(const rstring_t &given_option_name) const {
+    if (given_option_name.length() < 2 || given_option_name.at(0) != '-')
     {
-        return string_t();
+        return rstring_t();
     }
 
-    string_t result;
+    rstring_t result;
     const bool has_double_dash = (given_option_name.at(1) == '-');
     // We have to go through our options and compare their names to the given string
     const rstring_t needle(given_option_name);
@@ -1808,42 +1807,44 @@ string_t description_for_option(const string_t &given_option_name) const {
         }
         
         if (matches) {
-            opt.description.copy_to(&result);
+            result = opt.description;
             break;
         }
     }
     return result;
 }
 
-std::vector<string_t> get_command_names() const {
+template<typename stdstring_t>
+std::vector<stdstring_t> get_command_names() const {
     /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
-    std::vector<string_t> result;
+    std::vector<stdstring_t> result;
     std::set<rstring_t> seen;
     for (size_t i=0; i < this->usages.size(); i++) {
         const usage_t &usage = this->usages.at(i);
         const rstring_t name = usage.prog_name;
         if (! name.empty() && seen.insert(name).second) {
-            result.push_back(name.std_string<string_t>());
+            result.push_back(name.std_string<stdstring_t>());
         }
     }
     return result;
 
 }
 
-std::vector<string_t> get_variables() const {
-    std::vector<string_t> result;
+template<typename stdstring_t>
+std::vector<stdstring_t> get_variables() const {
+    std::vector<stdstring_t> result;
     
     // Include explicit variables
     for (size_t i=0; i < this->all_variables.size(); i++) {
         const rstring_t &r = this->all_variables.at(i);
-        result.push_back(r.std_string<string_t>());
+        result.push_back(r.std_string<stdstring_t>());
     }
     
     // Include variables that are part of options
     for (size_t i=0; i < this->all_options.size(); i++) {
         const rstring_t &r = this->all_options.at(i).value;
         if (! r.empty()) {
-            result.push_back(r.std_string<string_t>());
+            result.push_back(r.std_string<stdstring_t>());
         }
     }
     
@@ -1856,15 +1857,15 @@ std::vector<string_t> get_variables() const {
 // close the class
 CLOSE_DOCOPT_IMPL;
 
-template<typename string_t>
-std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const
+template<typename stdstring_t>
+std::vector<argument_status_t> argument_parser_t<stdstring_t>::validate_arguments(const std::vector<stdstring_t> &argv, parse_flags_t flags) const
 {
     size_t arg_count = argv.size();
     std::vector<argument_status_t> result(arg_count, status_valid);
 
     index_list_t unused_args;
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
-    impl->best_assignment_for_argv(argv_rstrs, flags, NULL /* errors */, &unused_args);
+    impl->best_assignment_for_argv<stdstring_t>(argv_rstrs, flags, NULL /* errors */, &unused_args);
     
     // Unused arguments are all invalid
     for (size_t i=0; i < unused_args.size(); i++) {
@@ -1882,44 +1883,44 @@ std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const s
     return resolve_rstrings<string_t>(suggestions);
 }
 
-template<typename string_t>
-string_t argument_parser_t<string_t>::commands_for_variable(const string_t &var) const
+template<typename stdstring_t>
+stdstring_t argument_parser_t<stdstring_t>::commands_for_variable(const stdstring_t &var) const
 {
-    return impl->commands_for_variable(var);
+    return impl->commands_for_variable(rstring_t(var)).std_string<stdstring_t>();
 }
 
-template<typename string_t>
-string_t argument_parser_t<string_t>::description_for_option(const string_t &option) const
+template<typename stdstring_t>
+stdstring_t argument_parser_t<stdstring_t>::description_for_option(const stdstring_t &option) const
 {
-    return impl->description_for_option(option);
+    return impl->description_for_option(rstring_t(option)).std_string<stdstring_t>();
 }
 
-template<typename string_t>
-std::vector<string_t> argument_parser_t<string_t>::get_command_names() const
+template<typename stdstring_t>
+std::vector<stdstring_t> argument_parser_t<stdstring_t>::get_command_names() const
 {
-    return impl->get_command_names();
+    return impl->get_command_names<stdstring_t>();
 }
 
-template<typename string_t>
-std::vector<string_t> argument_parser_t<string_t>::get_variables() const
+template<typename stdstring_t>
+std::vector<stdstring_t> argument_parser_t<stdstring_t>::get_variables() const
 {
-    return impl->get_variables();
+    return impl->get_variables<stdstring_t>();
 }
 
-template<typename string_t>
-std::map<string_t, base_argument_t<string_t> >
-argument_parser_t<string_t>::parse_arguments(const std::vector<string_t> &argv,
+template<typename stdstring_t>
+typename argument_parser_t<stdstring_t>::argument_map_t
+argument_parser_t<stdstring_t>::parse_arguments(const std::vector<stdstring_t> &argv,
                                             parse_flags_t flags,
                                             error_list_t *out_errors,
                                             std::vector<size_t> *out_unused_arguments) const {
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
-    return impl->best_assignment_for_argv(argv_rstrs, flags, out_errors, out_unused_arguments);
+    return impl->best_assignment_for_argv<stdstring_t>(argv_rstrs, flags, out_errors, out_unused_arguments);
 }
 
 
-template<typename string_t>
-bool argument_parser_t<string_t>::set_doc(const string_t &doc, error_list_t *out_errors) {
-    docopt_impl<string_t> *new_impl = new docopt_impl<string_t>(doc);
+template<typename stdstring_t>
+bool argument_parser_t<stdstring_t>::set_doc(const stdstring_t &doc, error_list_t *out_errors) {
+    docopt_impl *new_impl = new docopt_impl(doc);
     
     bool preflighted = new_impl->preflight(out_errors);
     
@@ -1946,7 +1947,7 @@ argument_parser_t<string_t>::argument_parser_t(const argument_parser_t &rhs) {
     if (rhs.impl == NULL) {
         this->impl = NULL;
     } else {
-        this->impl = new docopt_impl<string_t>(*rhs.impl);
+        this->impl = new docopt_impl(*rhs.impl);
     }
 }
 
@@ -1957,7 +1958,7 @@ argument_parser_t<string_t> &argument_parser_t<string_t>::operator=(const argume
         if (rhs.impl == NULL) {
             this->impl = NULL;
         } else {
-            this->impl = new docopt_impl<string_t>(*rhs.impl);
+            this->impl = new docopt_impl(*rhs.impl);
         }
     }
     return *this;

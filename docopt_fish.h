@@ -51,7 +51,7 @@ namespace docopt_fish
     };
     
     /* A processed docopt file is called an argument parser. */
-    template<typename string_t> class docopt_impl;
+    class docopt_impl;
     
     /* Represents an argument in the result */
     template<typename string_t>
@@ -74,7 +74,7 @@ namespace docopt_fish
     template<typename string_t>
     class argument_parser_t {
         /* Guts */
-        docopt_impl<string_t> *impl;
+        docopt_impl *impl;
         
         public:
         
