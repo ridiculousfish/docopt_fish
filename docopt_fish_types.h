@@ -90,25 +90,30 @@ private:
     template<typename T>
     const T *ptr_begin() const {
         const uint8_t *p = this->base_as<uint8_t>();
-        p += (this->range_.start << this->width());
+        p += (this->range_.start * sizeof(T));
         return reinterpret_cast<const T *>(p);
     }
-    
-    template<typename T>
-    const T *ptr_end() const {
-        const uint8_t *p = this->base_as<uint8_t>();
-        p += (this->range_.end() << this->width());
-        return reinterpret_cast<const T *>(p);
-    }
-
     
     template<typename T, bool case_insensitive>
     size_t find_internal(const char *needle) const {
+        // Empty string always found first
+        if (needle[0] == '\0') {
+            return 0;
+        }
+        const char_t his_first_low = (case_insensitive ? tolower(needle[0]) : needle[0]);
+        const char_t his_first_up = (case_insensitive ? toupper(needle[0]) : needle[0]);
+        
         const T *haystack = this->ptr_begin<T>();
         size_t haystack_count = this->length();
         for (size_t outer=0; outer < haystack_count; outer++) {
+            // Quick check for first character
+            if (haystack[outer] != his_first_low && haystack[outer] != his_first_up) {
+                continue;
+            }
+            
+            // Ok, we know the first character matches
             // See if there's a match at 'outer'
-            for (size_t inner = 0;;inner++) {
+            for (size_t inner = 1;;inner++) {
                 if (needle[inner] == '\0') {
                     // we exhausted the needle, so we have a match at 'outer'
                     return outer;
@@ -134,6 +139,34 @@ private:
         }
         return npos;
     }
+    
+    template<typename T>
+    size_t find_1_internal(char_t needle) const {
+        size_t len = this->length();
+        const T *haystack = this->ptr_begin<T>();
+        for (size_t i=0; i < len; i++) {
+            if (haystack[i] == needle) {
+                return i;
+            }
+        }
+        return npos;
+    }
+    
+    template<typename T, typename F>
+    rstring_t scan_while_internal(F func) {
+        const size_t length = this->length();
+        const T *haystack = this->ptr_begin<T>();
+        size_t amt = 0;
+        while (amt < length && func(haystack[amt])) {
+            amt++;
+        }
+        rstring_t result = this->substr(0, amt);
+        this->range_.start += amt;
+        this->range_.length -= amt;
+        return result;
+    }
+
+
     
     static inline unsigned int unreachable() {
 #if defined(__clang__) || defined(__GNUC__)
@@ -216,12 +249,16 @@ public:
     }
     
     size_t find(char_t needle) const {
-        for (size_t i=0; i < this->length(); i++) {
-            if (this->at(i) == needle) {
-                return i;
-            }
+        switch (this->width()) {
+            case width1:
+                return this->find_1_internal<uint8_t>(needle);
+            case width2:
+                return this->find_1_internal<uint16_t>(needle);
+            case width4:
+                return this->find_1_internal<uint32_t>(needle);
+            default:
+                return unreachable();
         }
-        return npos;
     }
 
     rstring_t substr(size_t offset, size_t length) const {
@@ -339,13 +376,17 @@ public:
     // Adjusts self to be the remainder after the prefix.
     template<typename F>
     rstring_t scan_while(F func) {
-        size_t amt = 0;
-        while (amt < this->length() && func(this->at(amt))) {
-            amt++;
+        switch (this->width()) {
+            case width1:
+                return this->scan_while_internal<uint8_t, F>(func);
+            case width2:
+                return this->scan_while_internal<uint16_t, F>(func);
+            case width4:
+                return this->scan_while_internal<uint32_t, F>(func);
+            default:
+                unreachable();
+                return *this;
         }
-        rstring_t result = this->substr(0, amt);
-        *this = this->substr_from(amt);
-        return result;
     }
 
     // If this begins with c, returns a string containing c
