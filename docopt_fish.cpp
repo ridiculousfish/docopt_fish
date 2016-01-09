@@ -18,6 +18,18 @@ static const size_t npos = (size_t)(-1);
 typedef std::vector<rstring_t> rstring_list_t;
 typedef std::vector<error_t> error_list_t;
 
+/* Turn a list of rstring_t into a list of some std::basic_string */
+template <typename stdstring_t>
+std::vector<stdstring_t> resolve_rstrings(const rstring_list_t &rs) {
+    size_t length = rs.size();
+    std::vector<stdstring_t> result(length);
+    for (size_t i=0; i < length; i++) {
+        rs[i].copy_to(&result[i]);
+    }
+    return result;
+}
+
+
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
     append_error(errors, pos_in_arg, code, txt, arg_idx);
@@ -273,7 +285,6 @@ variable_command_map_t variables_to_commands;
 
 /* Helper typedefs */
 typedef base_argument_t<rstring_t> arg_t;
-typedef std::vector<string_t> string_list_t;
 
 /* A positional argument */
 struct positional_argument_t {
@@ -669,7 +680,7 @@ struct argv_separation_state_t {
 /* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx.
 TODO: merge with parse_unseparated_short, etc
 */
-bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion) const {
+bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion) const {
     const rstring_t &arg = st->arg();
     assert(type == option_t::single_long || type == option_t::double_long);
     assert(arg.has_prefix(type == option_t::single_long ? "-" : "--"));
@@ -754,7 +765,7 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
                     value = rstring_t(st->argv.at(arg_index));
                 } else if ((st->flags & flag_generate_suggestions) && out_suggestion != NULL) {
                     // We are at the last argument, and we expect a value. Return the value as a suggestion.
-                    match.value.copy_to(out_suggestion);
+                    *out_suggestion = match.value;
                     errored = true;
                 } else {
                     append_argv_error(out_errors, st->idx, error_option_has_missing_argument, "Option expects an argument");
@@ -786,7 +797,7 @@ bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolve
 }
 
 // Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator. TODO: Use out_suggestion
-bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion UNUSED) const {
+bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion UNUSED) const {
     const rstring_t arg(st->arg());
     // must not be just a single dash
     assert(arg.length() > 1 && arg.at(0) == '-');
@@ -836,7 +847,7 @@ bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t
 }
 
 // Given a list of short options, parse out an argument
-bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, string_t *out_suggestion) const {
+bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion) const {
     const rstring_t &arg = st->arg();
     assert(arg.has_prefix("-"));
     assert(arg.length() > 1); // must not be just a single dash
@@ -908,7 +919,7 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
         } else if ((st->flags & flag_generate_suggestions) && out_suggestion != NULL) {
             // We are at the last argument, and we expect a value. Return the value as a suggestion.
             const option_t &match = options_for_argument.back();
-            match.value.copy_to(out_suggestion);
+            *out_suggestion = match.value;
             errored = true;
         } else {
             append_argv_error(out_errors, st->idx, error_option_has_missing_argument, "Option expects an argument");
@@ -938,7 +949,7 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
 }
 
 /* The Python implementation calls this "parse_argv" */
-void separate_argv_into_options_and_positionals(const rstring_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, string_t *out_suggestion = NULL) const {
+void separate_argv_into_options_and_positionals(const rstring_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, rstring_t *out_suggestion = NULL) const {
 
     // double_dash means that all remaining values are arguments
     argv_separation_state_t st(argv, options, flags);
@@ -1000,7 +1011,6 @@ typedef std::map<rstring_t, base_argument_t<rstring_t> > option_rmap_t;
 
 struct match_state_t {
     // Map from option names to arguments
-#warning More rstring
     option_rmap_t argument_values;
     
     // Next positional to dequeue
@@ -1009,7 +1019,7 @@ struct match_state_t {
     // Bitset of options we've consumed
     std::vector<bool> consumed_options;
     
-    std::set<string_t> suggested_next_arguments;
+    std::set<rstring_t> suggested_next_arguments;
     
     // Whether this match has fully consumed all positionals and options
     bool fully_consumed;
@@ -1351,7 +1361,7 @@ void match(const expression_t &node, match_state_t *state, match_context_t *ctx,
                 if (ctx->flags & flag_generate_suggestions) {
                     for (size_t i=0; i < this->shortcut_options.size(); i++) {
                         const option_t &opt = this->shortcut_options.at(i);
-                        state->suggested_next_arguments.insert(opt.best_name_as_string<string_t>());
+                        state->suggested_next_arguments.insert(opt.best_name());
                     }
                 }
                 state_destructive_append_to(state, resulting_states);
@@ -1429,7 +1439,7 @@ bool match_options(const option_list_t &options_in_doc, match_state_t *state, ma
             while (type_idx--) {
                 option_t::name_type_t type = static_cast<option_t::name_type_t>(type_idx);
                 if (suggestion.has_type(type)) {
-                    state->suggested_next_arguments.insert(suggestion.name_as_string<string_t>(type));
+                    state->suggested_next_arguments.insert(suggestion.names[type]);
                 }
             }
             made_suggestion = true;
@@ -1483,7 +1493,7 @@ void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ct
     } else {
         // No more positionals. Maybe suggest one.
         if (ctx->flags & flag_generate_suggestions) {
-            state->suggested_next_arguments.insert(node.word.std_string<string_t>());
+            state->suggested_next_arguments.insert(node.word);
         }
         // Append the state if we are allowing incomplete
         if (ctx->flags & flag_match_allow_incomplete) {
@@ -1506,7 +1516,7 @@ void match(const variable_clause_t &node, match_state_t *state, match_context_t 
     } else {
         // No more positionals. Suggest one.
         if (ctx->flags & flag_generate_suggestions) {
-            state->suggested_next_arguments.insert(name.std_string<string_t>());
+            state->suggested_next_arguments.insert(name);
         }
         if (ctx->flags & flag_match_allow_incomplete) {
             state_destructive_append_to(state, resulting_states);
@@ -1706,13 +1716,12 @@ bool preflight(error_list_t *out_errors) {
 }
 
 // TODO: make this const by stop touching error_list
-option_map_t best_assignment_for_argv(const string_list_t &argv_strs, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments)
+option_map_t best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments)
 {
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
     
     // Extract positionals and arguments from argv
-    const rstring_list_t argv(argv_strs.begin(), argv_strs.end());
     this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, out_errors);
     
     // Produce an option map
@@ -1721,20 +1730,19 @@ option_map_t best_assignment_for_argv(const string_list_t &argv_strs, parse_flag
     return result;
 }
 
-string_list_t suggest_next_argument(const string_list_t &argv_strs, parse_flags_t flags) const
+rstring_list_t suggest_next_argument(const rstring_list_t &argv, parse_flags_t flags) const
 {
     /* Set internal flags to generate suggestions */
     flags |= flag_generate_suggestions;
     
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
-    string_t suggestion;
-    const rstring_list_t argv(argv_strs.begin(), argv_strs.end());
+    rstring_t suggestion;
     this->separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, NULL /* errors */, &suggestion);
     
     /* If we got a suggestion, it means that the last argument was of the form --foo, where --foo wants a value. That's all we care about. */
     if (! suggestion.empty()) {
-        return string_list_t(1, suggestion);
+        return rstring_list_t(1, suggestion);
     }
     
     match_context_t ctx(flags, positionals, resolved_options, argv);
@@ -1744,7 +1752,7 @@ string_list_t suggest_next_argument(const string_list_t &argv_strs, parse_flags_
     match(this->usages, &init_state, &ctx, &states);
     
     /* Find the state(s) with the fewest unused arguments, and then insert all of their suggestions into a list */
-    string_list_t all_suggestions;
+    rstring_list_t all_suggestions;
     size_t best_unused_arg_count = (size_t)-1;
     for (size_t i=0; i < states.size(); i++) {
         size_t count = ctx.unused_arguments(&states.at(i)).size();
@@ -1855,7 +1863,8 @@ std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(c
     std::vector<argument_status_t> result(arg_count, status_valid);
 
     index_list_t unused_args;
-    impl->best_assignment_for_argv(argv, flags, NULL /* errors */, &unused_args);
+    const rstring_list_t argv_rstrs(argv.begin(), argv.end());
+    impl->best_assignment_for_argv(argv_rstrs, flags, NULL /* errors */, &unused_args);
     
     // Unused arguments are all invalid
     for (size_t i=0; i < unused_args.size(); i++) {
@@ -1868,7 +1877,9 @@ std::vector<argument_status_t> argument_parser_t<string_t>::validate_arguments(c
 template<typename string_t>
 std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const
 {
-    return impl->suggest_next_argument(argv, flags);
+    const rstring_list_t argv_rstrs(argv.begin(), argv.end());
+    rstring_list_t suggestions = impl->suggest_next_argument(argv_rstrs, flags);
+    return resolve_rstrings<string_t>(suggestions);
 }
 
 template<typename string_t>
@@ -1901,7 +1912,8 @@ argument_parser_t<string_t>::parse_arguments(const std::vector<string_t> &argv,
                                             parse_flags_t flags,
                                             error_list_t *out_errors,
                                             std::vector<size_t> *out_unused_arguments) const {
-    return impl->best_assignment_for_argv(argv, flags, out_errors, out_unused_arguments);
+    const rstring_list_t argv_rstrs(argv.begin(), argv.end());
+    return impl->best_assignment_for_argv(argv_rstrs, flags, out_errors, out_unused_arguments);
 }
 
 
