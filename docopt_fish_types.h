@@ -467,8 +467,6 @@ static inline std::wstring widen(const std::string &t) {
     return result;
 }
 
-typedef std::vector<size_t> index_list_t;
-
 /* An option represents something like '--foo=bar' */
 struct option_t {
     
@@ -621,6 +619,9 @@ struct option_t {
     static bool parse_from_string(rstring_t str, option_t *result, std::vector<error_t> *errors = NULL) {
         return parse_from_string(&str, result, errors);
     }
+    
+    /* Given an argument (i.e. from argv), produce an option. */
+    static option_t parse_from_argument(const rstring_t &str, option_t::name_type_t type);
 
 };
 typedef std::vector<option_t> option_list_t;

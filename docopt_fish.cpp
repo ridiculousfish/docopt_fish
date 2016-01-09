@@ -28,6 +28,7 @@ static const size_t npos = (size_t)(-1);
 
 typedef std::vector<rstring_t> rstring_list_t;
 typedef std::vector<error_t> error_list_t;
+typedef std::vector<size_t> index_list_t;
 
 /* Turn a list of rstring_t into a list of some std::basic_string */
 template <typename stdstring_t>
@@ -168,6 +169,30 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     return ! errored;
 }
 
+option_t option_t::parse_from_argument(const rstring_t &str, option_t::name_type_t type) {
+    assert(! str.empty());
+    assert(str.at(0) == '-');
+    
+    rstring_t remaining(str);
+    
+    // Get the name part
+    const rstring_t dashes = remaining.scan_while<it_equals<'-'> >();
+    const rstring_t name = remaining.scan_while<char_is_valid_in_parameter>();
+    
+    // Check to see if there's an = sign
+    const rstring_t equals = remaining.scan_1_char('=');
+    
+    // If we got an equals sign, the rest is the value
+    // It can have any character at all, since it's coming from the argument, not from the usage spec
+    rstring_t value;
+    if (! equals.empty()) {
+        value = remaining;
+    }
+    
+    // Return the option
+    return option_t(type, dashes.merge(name), value, equals.empty() ? option_t::sep_space : option_t::sep_equals);
+}
+
 /* Helper class for pretty-printing */
 class node_dumper_t : public node_visitor_t<node_dumper_t> {
     unsigned int depth;
@@ -294,6 +319,15 @@ struct resolved_option_t {
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
 
+/* A positional argument */
+struct positional_argument_t {
+    size_t idx_in_argv;
+    
+    explicit positional_argument_t(size_t idx) : idx_in_argv(idx)
+    {}
+};
+typedef std::vector<positional_argument_t> positional_argument_list_t;
+
 /* Wrapper class that takes either a string or wstring as string_t */
 class docopt_impl {
     
@@ -338,18 +372,6 @@ public:
     /* Map from variable names to the commands that populate them */
     variable_command_map_t variables_to_commands;
     
-    /* Helper typedefs */
-    typedef base_argument_t<rstring_t> arg_t;
-    
-    /* A positional argument */
-    struct positional_argument_t {
-        size_t idx_in_argv;
-        
-        explicit positional_argument_t(size_t idx) : idx_in_argv(idx)
-        {}
-    };
-    typedef std::vector<positional_argument_t> positional_argument_list_t;
-    
     /* Collects options, i.e. tokens of the form --foo */
     void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) const {
         clause_collector_t collector;
@@ -361,34 +383,6 @@ public:
         out_options->swap(collector.options);
         out_variables->swap(collector.variables);
         out_static_arguments->swap(collector.fixeds);
-    }
-    
-    /* Like parse_option_from_string, but parses an argument (as in argv) */
-    static option_t parse_option_from_argument(const rstring_t &str, option_t::name_type_t type, error_list_t *errors UNUSED) {
-        assert(! str.empty());
-        assert(str.at(0) == '-');
-        
-        rstring_t remaining(str);
-        
-        // Swallow leading dashes
-        // TODO: the caller should do this for us
-        const rstring_t dashes = remaining.scan_while<it_equals<'-'> >();
-        
-        // Walk over characters valid in a name
-        const rstring_t name = remaining.scan_while<char_is_valid_in_parameter>();
-        
-        // Check to see if there's an = sign
-        const rstring_t equals = remaining.scan_1_char('=');
-        
-        // If we got an equals sign, the rest is the value
-        // It can have any character at all, since it's coming from the argument, not from the usage spec
-        rstring_t value;
-        if (! equals.empty()) {
-            value = remaining;
-        }
-        
-        // Return the option
-        return option_t(type, dashes.merge(name), value, equals.empty() ? option_t::sep_space : option_t::sep_equals);
     }
     
     /* Given an option spec, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
@@ -697,7 +691,7 @@ public:
         
         /* Parse the argument into an 'option'. Note that this option does not appear in the options list because its range reflects the string in the argument. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
         error_list_t local_errors;
-        option_t arg_as_option = parse_option_from_argument(arg, type, &local_errors);
+        option_t arg_as_option = option_t::parse_from_argument(arg, type);
         assert(arg_as_option.separator != option_t::sep_none);
         
         const rstring_t arg_name = arg_as_option.names[type];
@@ -1516,7 +1510,7 @@ public:
         const rstring_t &name = node.word;
         if (ctx->has_more_positionals(state)) {
             // Note we retain the brackets <> in the variable name
-            arg_t *arg = &state->argument_values[name];
+            base_argument_t<rstring_t> *arg = &state->argument_values[name];
             const positional_argument_t &positional = ctx->acquire_next_positional(state);
             const rstring_t &positional_value = ctx->argv.at(positional.idx_in_argv);
             arg->values.push_back(positional_value);
@@ -1534,7 +1528,7 @@ public:
     }
     
     template<typename stdstring_t>
-    base_argument_t<stdstring_t> finalize_argument(const arg_t &arg) {
+    base_argument_t<stdstring_t> finalize_argument(const base_argument_t<rstring_t> &arg) {
         base_argument_t<stdstring_t> result;
         result.count = arg.count;
         result.values.resize(arg.values.size());
@@ -1614,7 +1608,7 @@ public:
                 std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
                 for (typename option_rmap_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
                     const rstring_t &name = iter->first;
-                    const arg_t &arg = iter->second;
+                    const base_argument_t<rstring_t> &arg = iter->second;
                     fprintf(stderr, "\t%ls: ", name.std_string<std::wstring>().c_str());
                     for (size_t j=0; j < arg.values.size(); j++) {
                         if (j > 0) {
