@@ -249,6 +249,50 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
     void accept(const IGNORED_TYPE& t UNUSED) {}
 };
 
+/* Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty. On return, it will contain the line, with its end pointing just after the trailing newline, or possibly at the end. Returns true if a line was returned, false if we reached the end. */
+static bool get_next_line(const rstring_t &base, rstring_t *inout_line) {
+    assert(inout_line != NULL);
+    if (inout_line->range().end() == base.range().end()) {
+        // Line exhausted
+        return false;
+    }
+    
+    // Start at the end of the last line, or zero if this is the first call
+    // Subtract off base.range().start to make the line_start relative to base
+    size_t line_start = (inout_line->empty() ? 0 : inout_line->range().end() - base.range().start);
+    rstring_t remainder = base.substr_from(line_start);
+    size_t newline = remainder.find("\n");
+    if (newline == rstring_t::npos) {
+        // Take everything
+        *inout_line = remainder;
+    } else {
+        // Take through the newline
+        *inout_line = remainder.substr(0, newline+1);
+    }
+    // Empty lines are impossible
+    assert(! inout_line->empty());
+    return true;
+}
+
+/* A resolved option references an option in argv */
+struct resolved_option_t {
+    
+    // The option referenced by this
+    option_t option;
+    
+    // The index of the name portion of the option, in argv
+    size_t name_idx_in_argv;
+    
+    // The index of the argument where the value was found. npos for none.
+    size_t value_idx_in_argv;
+    
+    // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar, -Dfoo)
+    rstring_t value_in_arg;
+    
+    resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const rstring_t &value) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), value_in_arg(value)
+    {}
+};
+typedef std::vector<resolved_option_t> resolved_option_list_t;
 
 /* Wrapper class that takes either a string or wstring as string_t */
 class docopt_impl {
@@ -305,51 +349,6 @@ public:
         {}
     };
     typedef std::vector<positional_argument_t> positional_argument_list_t;
-    
-    /* A resolved option references an option in argv */
-    struct resolved_option_t {
-        
-        // The option referenced by this
-        option_t option;
-        
-        // The index of the name portion of the option, in argv
-        size_t name_idx_in_argv;
-        
-        // The index of the argument where the value was found. npos for none.
-        size_t value_idx_in_argv;
-        
-        // The range within that argument where the value was found. This will be the entire string if the argument is separate (--foo bar) but will be the portion after the equals if not (--foo=bar, -Dfoo)
-        rstring_t value_in_arg;
-        
-        resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const rstring_t &value) : option(opt), name_idx_in_argv(name_idx), value_idx_in_argv(val_idx), value_in_arg(value)
-        {}
-    };
-    typedef std::vector<resolved_option_t> resolved_option_list_t;
-    
-    /* Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty. On return, it will contain the line, with its end pointing just after the trailing newline, or possibly at the end. Returns true if a line was returned, false if we reached the end. */
-    static bool get_next_line(const rstring_t &base, rstring_t *inout_line) {
-        assert(inout_line != NULL);
-        if (inout_line->range().end() == base.range().end()) {
-            // Line exhausted
-            return false;
-        }
-        
-        // Start at the end of the last line, or zero if this is the first call
-        // Subtract off base.range().start to make the line_start relative to base
-        size_t line_start = (inout_line->empty() ? 0 : inout_line->range().end() - base.range().start);
-        rstring_t remainder = base.substr_from(line_start);
-        size_t newline = remainder.find("\n");
-        if (newline == rstring_t::npos) {
-            // Take everything
-            *inout_line = remainder;
-        } else {
-            // Take through the newline
-            *inout_line = remainder.substr(0, newline+1);
-        }
-        // Empty lines are impossible
-        assert(! inout_line->empty());
-        return true;
-    }
     
     /* Collects options, i.e. tokens of the form --foo */
     void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) const {
@@ -1714,7 +1713,7 @@ public:
         
         
         // Example of how to dump
-        if (0)
+        if ((0))
         {
             std::string dumped;
             for (size_t i=0; i < this->usages.size(); i++)
@@ -1866,7 +1865,7 @@ public:
         return result;
     }
     
-}; // close the class
+}; // docopt_impl
 
 template<typename stdstring_t>
 std::vector<argument_status_t> argument_parser_t<stdstring_t>::validate_arguments(const std::vector<stdstring_t> &argv, parse_flags_t flags) const
@@ -1979,7 +1978,6 @@ argument_parser_t<string_t> &argument_parser_t<string_t>::operator=(const argume
 /* Destructor */
 template<typename string_t>
 argument_parser_t<string_t>::~argument_parser_t<string_t>() {
-    /* Clean up guts */
     delete impl; // may be null
 }
 
