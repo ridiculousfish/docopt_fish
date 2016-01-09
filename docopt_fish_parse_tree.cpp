@@ -292,8 +292,7 @@ struct parse_context_t {
            "usage: prog [-m (<msg>)]"
         */
         rstring_t remaining = word;
-        // This second test is to avoid matching '--'
-        if (remaining.length() > 1 && remaining[0] == '-' && ! (remaining.length() == 2 && remaining[1] == '-')) {
+        if (remaining.length() > 1 && remaining[0] == '-' && ! remaining.is_double_dash()) {
             // It's an option
             option_t opt_from_usage_section;
             if (! option_t::parse_from_string(&remaining, &opt_from_usage_section, &this->errors)) {

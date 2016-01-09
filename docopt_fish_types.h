@@ -504,6 +504,12 @@ struct option_t {
     
     option_t(enum name_type_t type, const rstring_t &name, const rstring_t &v, separator_t sep) : value(v), separator(sep) {
         assert(type < NAME_TYPE_COUNT);
+        assert(name.length() >= 2);
+        assert(name[0] == '-');
+        if (type == double_long) {
+            assert(name.length() >= 3);
+            assert(name[1] == '-');
+        }
         this->names[type] = name;
     }
     
@@ -519,7 +525,7 @@ struct option_t {
     }
 
     // Returns the "best" (longest) name
-    rstring_t best_name() const {
+    const rstring_t &best_name() const {
         return this->names[this->best_type()];
     }
     
@@ -583,14 +589,9 @@ struct option_t {
     template<typename string_t>
     string_t name_as_string(name_type_t type) const {
         assert(type < NAME_TYPE_COUNT);
-        const unsigned dash_count = (type == double_long ? 2 : 1);
         const rstring_t name = this->names[type];
         assert(! name.empty());
-        string_t result;
-        result.reserve(dash_count + name.length());
-        name.copy_to(&result);
-        result.insert(0, dash_count, '-');
-        return result;
+        return name.std_string<string_t>();
     }
 
     // Returns the "best" name, plucking it out of the given source. Includes dashes.

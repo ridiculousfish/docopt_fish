@@ -39,15 +39,7 @@ bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
 }
 
 bool char_is_space(rstring_t::char_t c) {
-    switch (c) {
-        case '\t':
-        case '\n':
-        case '\r':
-        case ' ':
-            return true;
-        default:
-            return false;
-    }
+    return c == ' ';
 }
 
 /* Given an inout string, parse out an option and return it. Update the string to reflect the number of characters used. */
@@ -124,7 +116,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         separator = option_t::sep_none;
     }
     
-    // TODO: generate an error on long options with no separators (--foo<bar>). Only short options support these.
+    // Generate an error on long options with no separators (--foo<bar>). Only short options support these.
     if (separator == option_t::sep_none && (dash_count > 1 || name.length() > 1)) {
         append_error(errors, name.range().start, error_bad_option_separator, "Long options must use a space or equals separator");
         errored = true;
@@ -147,7 +139,9 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     }
     
     // Create and return the option
-    *result = option_t(type, name, variable, separator);
+    if (! errored) {
+        *result = option_t(type, leading_dashes.merge(name), variable, separator);
+    }
     return ! errored;
 }
 
@@ -247,11 +241,13 @@ typedef std::map<rstring_t, rstring_t> variable_command_map_t;
 /* List of usages */
 typedef std::vector<usage_t> usage_list_t;
 
-/* Constructor takes the source */
+/* Constructor takes the source in either narrow or wide form. */
 public:
-const string_t storage;
+const std::string storage_narrow;
+const std::wstring storage_wide;
 const rstring_t rsource;
-docopt_impl(const string_t &s) : storage(s), rsource(storage) {}
+docopt_impl(const std::string &s) : storage_narrow(s), rsource(storage_narrow) {}
+docopt_impl(const std::wstring &s) : storage_wide(s), rsource(storage_wide) {}
 
 #pragma mark -
 #pragma mark Instance Variables
@@ -276,7 +272,7 @@ rstring_list_t all_static_arguments;
 variable_command_map_t variables_to_commands;
 
 /* Helper typedefs */
-typedef base_argument_t<string_t> arg_t;
+typedef base_argument_t<rstring_t> arg_t;
 typedef std::vector<string_t> string_list_t;
 
 /* A positional argument */
@@ -351,28 +347,27 @@ static option_t parse_option_from_argument(const rstring_t &str, option_t::name_
     assert(! str.empty());
     assert(str.at(0) == '-');
     
-    rstring_t remaining_storage(str);
-    rstring_t *const remaining = &remaining_storage;
+    rstring_t remaining(str);
     
     // Swallow leading dashes
     // TODO: the caller should do this for us
-    remaining->scan_while<it_equals<'-'> >();
+    const rstring_t dashes = remaining.scan_while<it_equals<'-'> >();
     
     // Walk over characters valid in a name
-    const rstring_t name = remaining->scan_while<char_is_valid_in_parameter>();
+    const rstring_t name = remaining.scan_while<char_is_valid_in_parameter>();
     
     // Check to see if there's an = sign
-    const rstring_t equals = remaining->scan_1_char('=');
+    const rstring_t equals = remaining.scan_1_char('=');
     
     // If we got an equals sign, the rest is the value
     // It can have any character at all, since it's coming from the argument, not from the usage spec
     rstring_t value;
     if (! equals.empty()) {
-        value = *remaining;
+        value = remaining;
     }
     
     // Return the option
-    return option_t(type, name, value, equals.empty() ? option_t::sep_space : option_t::sep_equals);
+    return option_t(type, dashes.merge(name), value, equals.empty() ? option_t::sep_space : option_t::sep_equals);
 }
 
 /* Given an option spec, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
@@ -810,7 +805,7 @@ bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t
             // Candidate short option.
             // This looks something like -DNDEBUG. We want to see if the D matches.
             // Compare the character at offset 1 (to account for the dash) and length 1 (since it's a short option)
-            if (opt.names[option_t::single_short].at(0) == arg.at(1)) {
+            if (opt.names[option_t::single_short].at(1) == arg.at(1)) {
                 // Expect to always want a value here
                 matches.push_back(opt);
             }
@@ -854,10 +849,13 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
     std::vector<option_t> matches;
     for (size_t idx_in_arg=1; idx_in_arg < arg.length() && ! errored; idx_in_arg++) {
         /* Get list of short options matching this resolved option. */
+        const rstring_t::char_t short_char = arg.at(idx_in_arg);
         matches.clear();
         for (size_t i=0; i < st->options.size(); i++) {
             const option_t &opt = st->options.at(i);
-            if (opt.has_type(option_t::single_short) && opt.names[option_t::single_short].at(0) == arg.at(idx_in_arg)) {
+            const rstring_t &name = opt.names[option_t::single_short];
+            // This is a short option (-D) so we check the second character (idx 1)
+            if (name.length() > 1 && name[1] == short_char) {
                 matches.push_back(opt);
             }
         }
@@ -884,7 +882,7 @@ bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result
                     last_option_has_argument = true;
                 } else {
                     // This is not the last option
-                    // This i+1 is the position in the argument and needs some explanation. Since we have a leading dash and then an argument, which is parsed into short options - one per character (except for the dash). Hence we can map from index-in-option to index-in-argument, unless there was an unknown option error above. In that case this will be wrong (but we typically only show the first error anyways).
+                    // This i+1 is the position in the argument and needs some explanation. Since we have a leading dash and then an argument, which is parsed into short options - one per character, including the dash. Hence we can map from index-in-option to index-in-argument, unless there was an unknown option error above. In that case this will be wrong (but we typically only show the first error anyways).
                     append_argv_error(out_errors, st->idx, error_option_unexpected_argument, "Option may not have a value unless it is the last option", i + 1);
                 }
             }
@@ -998,11 +996,12 @@ void separate_argv_into_options_and_positionals(const rstring_list_t &argv, cons
 
 /* The result of parsing argv */
 typedef std::map<string_t, base_argument_t<string_t> > option_map_t;
+typedef std::map<rstring_t, base_argument_t<rstring_t> > option_rmap_t;
 
 struct match_state_t {
     // Map from option names to arguments
 #warning More rstring
-    option_map_t argument_values;
+    option_rmap_t argument_values;
     
     // Next positional to dequeue
     size_t next_positional_index;
@@ -1398,17 +1397,17 @@ bool match_options(const option_list_t &options_in_doc, match_state_t *state, ma
             //  - The option name, like -foo
             //  - The option's argument value (if any)
             const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
-            const string_t name = opt_in_doc.best_name_as_string<string_t>();
+            const rstring_t &name = opt_in_doc.best_name();
             
             // Update the option value, creating it if necessary
             state->argument_values[name].count += 1;
             
             // Update the option argument vlaue
             if (opt_in_doc.has_value() && resolved_opt.value_idx_in_argv != npos) {
-                const string_t variable_name = opt_in_doc.value.std_string<string_t>();
+                const rstring_t &variable_name = opt_in_doc.value;
                 
                 const rstring_t &value = resolved_opt.value_in_arg;
-                state->argument_values[variable_name].values.push_back(value.std_string<string_t>());
+                state->argument_values[variable_name].values.push_back(value);
             }
             
             successful_match = true;
@@ -1476,7 +1475,7 @@ void match(const fixed_clause_t &node, match_state_t *state, match_context_t *ct
         const rstring_t &name = ctx->argv.at(positional.idx_in_argv);
         if (node.word == rstring_t(name)) {
             // The static argument matches
-            state->argument_values[name.std_string<string_t>()].count += 1;
+            state->argument_values[name].count += 1;
             ctx->acquire_next_positional(state);
             ctx->try_mark_fully_consumed(state);
             state_destructive_append_to(state, resulting_states);
@@ -1498,10 +1497,10 @@ void match(const variable_clause_t &node, match_state_t *state, match_context_t 
     const rstring_t &name = node.word;
     if (ctx->has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
-        arg_t *arg = &state->argument_values[name.std_string<string_t>()];
+        arg_t *arg = &state->argument_values[name];
         const positional_argument_t &positional = ctx->acquire_next_positional(state);
         const rstring_t &positional_value = ctx->argv.at(positional.idx_in_argv);
-        arg->values.push_back(positional_value.std_string<string_t>());
+        arg->values.push_back(positional_value);
         ctx->try_mark_fully_consumed(state);
         state_destructive_append_to(state, resulting_states);
     } else {
@@ -1515,46 +1514,61 @@ void match(const variable_clause_t &node, match_state_t *state, match_context_t 
     }
 }
 
-option_map_t finalize_option_map(const option_map_t &map, const option_list_t &all_options, const rstring_list_t &all_variables, parse_flags_t flags) {
-    // If we aren't asked to do empty args, then skip it
-    if (! (flags & flag_generate_empty_args)) {
-        return map;
+base_argument_t<string_t> finalize_argument(const arg_t &arg) {
+    base_argument_t<string_t> result;
+    result.count = arg.count;
+    result.values.resize(arg.values.size());
+    for (size_t i=0; i < arg.values.size(); i++) {
+        arg.values[i].copy_to(&result.values[i]);
+    }
+    return result;
+}
+
+/* Given an option map (using rstring), convert it to an option map using the given std::basic_string type. */
+option_map_t finalize_option_map(const option_rmap_t &map, const option_list_t &all_options, const rstring_list_t &all_variables, parse_flags_t flags) {
+    
+    option_map_t result;
+    // Turn our string_ts into std::strings
+    for (option_rmap_t::const_iterator iter = map.begin(); iter != map.end(); ++iter) {
+        result[iter->first.std_string<string_t>()] = finalize_argument(iter->second);
     }
     
-    // For each option, fill in the value in the map
-    // This could be made more efficient via a single call to insert()
-    option_map_t result = map;
-    for (size_t i=0; i < all_options.size(); i++) {
-        const option_t &opt = all_options.at(i);
-        string_t name = opt.best_name_as_string<string_t>();
-        // We merely invoke operator[]; this will do the insertion with a default value if necessary.
-        // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
-        result[name];
-        
-        if (opt.has_value() && ! opt.default_value.empty()) {
-            // Maybe apply the default value for the variable
-            string_t variable_name = opt.value.std_string<string_t>();
-            arg_t *var_arg = &result[variable_name];
-            if (var_arg->values.empty())
-            {
-                var_arg->values.push_back(opt.default_value.std_string<string_t>());
+    // Handle empty args
+    if (flags & flag_generate_empty_args) {
+        // For each option, fill in the value in the map
+        // This could be made more efficient via a single call to insert()
+        for (size_t i=0; i < all_options.size(); i++) {
+            const option_t &opt = all_options.at(i);
+            string_t name = opt.best_name_as_string<string_t>();
+            // We merely invoke operator[]; this will do the insertion with a default value if necessary.
+            // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
+            result[name];
+            
+            if (opt.has_value() && ! opt.default_value.empty()) {
+                // Maybe apply the default value for the variable
+                string_t variable_name = opt.value.std_string<string_t>();
+                base_argument_t<string_t> *var_arg = &result[variable_name];
+                if (var_arg->values.empty())
+                {
+                    var_arg->values.push_back(opt.default_value.std_string<string_t>());
+                }
             }
         }
-    }
-    
-    // Fill in variables
-    string_t name;
-    for (size_t i=0; i < all_variables.size(); i++) {
-        all_variables.at(i).copy_to(&name);
-        // As above, we merely invoke operator[]
-        result[name];
-    }
-    
-    // Fill in static arguments
-    for (size_t i=0; i < all_static_arguments.size(); i++) {
-        all_static_arguments.at(i).copy_to(&name);
-        // As above, we merely invoke operator[]
-        result[name];
+        
+        // Fill in variables
+        string_t name;
+        for (size_t i=0; i < all_variables.size(); i++) {
+            all_variables.at(i).copy_to(&name);
+            // As above, we merely invoke operator[]
+            result[name];
+        }
+        
+        // Fill in static arguments
+        for (size_t i=0; i < all_static_arguments.size(); i++) {
+            all_static_arguments.at(i).copy_to(&name);
+            // As above, we merely invoke operator[]
+            result[name];
+        }
     }
     
     return result;
@@ -1576,15 +1590,15 @@ option_map_t match_argv(const rstring_list_t &argv, parse_flags_t flags, const p
             const match_state_t &state = result.at(i);
             bool is_incomplete = ! ctx.unused_arguments(&state).empty();
             std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
-            for (typename option_map_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
-                const string_t &name = iter->first;
+            for (typename option_rmap_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
+                const rstring_t &name = iter->first;
                 const arg_t &arg = iter->second;
-                fprintf(stderr, "\t%ls: ", widen(name).c_str());
+                fprintf(stderr, "\t%ls: ", name.std_string<std::wstring>().c_str());
                 for (size_t j=0; j < arg.values.size(); j++) {
                     if (j > 0) {
                         fprintf(stderr, ", ");
                     }
-                    fprintf(stderr, "%ls", widen(arg.values.at(j)).c_str());
+                    fprintf(stderr, "%ls", arg.values.at(j).std_string<std::wstring>().c_str());
                 }
                 std::cerr << '\n';
             }
@@ -1623,7 +1637,7 @@ option_map_t match_argv(const rstring_list_t &argv, parse_flags_t flags, const p
                 out_unused_arguments->push_back(i);
             }
         }
-        return finalize_option_map(option_map_t(), all_options, all_variables, flags);
+        return finalize_option_map(option_rmap_t(), all_options, all_variables, flags);
     }
 }
 
@@ -1772,24 +1786,17 @@ string_t description_for_option(const string_t &given_option_name) const {
     const rstring_t needle(given_option_name);
     for (size_t i=0; i < this->all_options.size(); i++) {
         const option_t &opt = this->all_options.at(i);
-        bool matches = false;
         
         // We can skip options without descriptions
         if (opt.description.empty()) {
             continue;
         }
         
-        // Double-dash
-        if (opt.has_type(option_t::double_long) && has_double_dash) {
-            matches = matches || opt.names[option_t::double_long] == needle.substr_from(2);
-        }
-        // Single dash
-        if (opt.has_type(option_t::single_long) && !has_double_dash) {
-            matches = matches || opt.names[option_t::single_long] == needle.substr_from(1);
-        }
-        // Short
-        if (opt.has_type(option_t::single_short) && !has_double_dash) {
-            matches = matches || opt.names[option_t::single_short] == needle.substr_from(1);
+        bool matches = false;
+        if (has_double_dash) {
+            matches = (needle == opt.names[option_t::double_long]);
+        } else {
+            matches = (needle == opt.names[option_t::single_long] || needle == opt.names[option_t::single_short]);
         }
         
         if (matches) {
