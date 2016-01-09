@@ -152,12 +152,14 @@ private:
         return npos;
     }
     
-    template<typename T, typename F>
-    rstring_t scan_while_internal(F func) {
+    typedef bool (*scan_predicate_t)(char_t);
+    
+    template<typename T, scan_predicate_t F>
+    rstring_t scan_while_internal() {
         const size_t length = this->length();
         const T *haystack = this->ptr_begin<T>();
         size_t amt = 0;
-        while (amt < length && func(haystack[amt])) {
+        while (amt < length && F(haystack[amt])) {
             amt++;
         }
         rstring_t result = this->substr(0, amt);
@@ -374,15 +376,15 @@ public:
     
     // Returns a prefix of self that satisfies the function.
     // Adjusts self to be the remainder after the prefix.
-    template<typename F>
-    rstring_t scan_while(F func) {
+    template<scan_predicate_t F>
+    rstring_t scan_while() {
         switch (this->width()) {
             case width1:
-                return this->scan_while_internal<uint8_t, F>(func);
+                return this->scan_while_internal<uint8_t, F>();
             case width2:
-                return this->scan_while_internal<uint16_t, F>(func);
+                return this->scan_while_internal<uint16_t, F>();
             case width4:
-                return this->scan_while_internal<uint32_t, F>(func);
+                return this->scan_while_internal<uint32_t, F>();
             default:
                 unreachable();
                 return *this;
@@ -406,7 +408,8 @@ public:
             if (i == len) {
                 // Prefix matches prefix
                 result = this->substr(0, len);
-                *this = this->substr_from(len);
+                this->range_.start += len;
+                this->range_.length -= len;
             }
         }
         return result;
@@ -420,7 +423,8 @@ public:
         rstring_t result;
         if (this->length() > 0 && this->at(0) == to_char(c)) {
             result = this->substr(0, 1);
-            *this = this->substr_from(1);
+            this->range_.start += 1;
+            this->range_.length -= 1;
         }
         return result;
     }

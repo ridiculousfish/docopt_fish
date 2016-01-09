@@ -37,9 +37,17 @@ struct parse_context_t {
         const char *end = invalid + strlen(invalid);
         return std::find(invalid, end, c) == end;
     }
-
+    
     static bool char_is_whitespace(rstring_t::char_t c) {
-        return isspace(c);
+        switch (c) {
+            case '\t':
+            case '\n':
+            case '\r':
+            case ' ':
+                return true;
+            default:
+                return false;
+        }
     }
     
     // Note unowned pointer references in rstring_t. A parse context is stack allocated and transient.
@@ -56,7 +64,7 @@ struct parse_context_t {
     
     /* Consume leading whitespace. Newlines are meaningful if their associated lines are indented the same or less than initial_indent. If they are indented more, we swallow those. */
     void consume_leading_whitespace() {
-        this->remaining.scan_while(char_is_whitespace);
+        this->remaining.scan_while<char_is_whitespace>();
     }
     
     /* Returns true if there are no more next tokens */
@@ -91,11 +99,11 @@ struct parse_context_t {
         rstring_t result;
         for (;;) {
             // Scan non-bracketed sequence. This may be empty (in which case the merge does nothing)
-            result = result.merge(this->remaining.scan_while(char_is_valid_in_word));
+            result = result.merge(this->remaining.scan_while<char_is_valid_in_word>());
             // Scan bracketed sequence
             rstring_t bracket_start = this->remaining.scan_1_char('<');
             if (! bracket_start.empty()) {
-                this->remaining.scan_while(char_is_valid_in_bracketed_word);
+                this->remaining.scan_while<char_is_valid_in_bracketed_word>();
                 rstring_t bracket_end = this->remaining.scan_1_char('>');
                 if (bracket_end.empty()) {
                     // TODO: report unclosed bracket

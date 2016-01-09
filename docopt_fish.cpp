@@ -24,18 +24,30 @@ static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, co
 }
 
 template<char T>
-static bool it_equals(rstring_t::char_t c) { return c == T; }
+bool it_equals(rstring_t::char_t c) { return c == T; }
 
-static bool char_is_valid_in_parameter(rstring_t::char_t c) {
+bool char_is_valid_in_parameter(rstring_t::char_t c) {
     const char *invalid = ".|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
-static bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
+bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
     const char *invalid = "|()[]>\t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
+}
+
+bool char_is_space(rstring_t::char_t c) {
+    switch (c) {
+        case '\t':
+        case '\n':
+        case '\r':
+        case ' ':
+            return true;
+        default:
+            return false;
+    }
 }
 
 /* Given an inout string, parse out an option and return it. Update the string to reflect the number of characters used. */
@@ -45,7 +57,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     bool errored = false;
     
     // Count how many leading dashes
-    rstring_t leading_dashes = remaining->scan_while(it_equals<'-'>);
+    rstring_t leading_dashes = remaining->scan_while<it_equals<'-'> >();
     const size_t dash_count = leading_dashes.length();
     assert(dash_count > 0);
     if (dash_count > 2) {
@@ -53,13 +65,13 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     }
 
     // Walk over characters valid in a name
-    rstring_t name = remaining->scan_while(char_is_valid_in_parameter);
+    rstring_t name = remaining->scan_while<char_is_valid_in_parameter>();
     
     // Check to see if there's a space
-    rstring_t space_separator = remaining->scan_while(isspace);
+    rstring_t space_separator = remaining->scan_while<char_is_space>();
 
     // Check to see if there's an = sign
-    const rstring_t equals = remaining->scan_while(it_equals<'='>);
+    const rstring_t equals = remaining->scan_while<it_equals<'='> >();
     if (equals.length() > 1) {
         append_error(errors, equals.range().start, error_excessive_equal_signs, "Too many equal signs");
         errored = true;
@@ -67,12 +79,12 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
 
     // Try to scan a variable
     // TODO: If we have a naked equals sign (foo = ) generate an error
-    remaining->scan_while(isspace);
+    remaining->scan_while<char_is_space>();
     
     rstring_t variable;
     rstring_t open_sign = remaining->scan_1_char('<');
     if (! open_sign.empty()) {
-        rstring_t variable_name = remaining->scan_while(char_is_valid_in_bracketed_word);
+        rstring_t variable_name = remaining->scan_while<char_is_valid_in_bracketed_word>();
         rstring_t close_sign = remaining->scan_1_char('>');
         if (variable_name.empty()) {
             append_error(errors, variable_name.range().start, error_invalid_variable_name, "Missing variable name");
@@ -344,10 +356,10 @@ static option_t parse_option_from_argument(const rstring_t &str, option_t::name_
     
     // Swallow leading dashes
     // TODO: the caller should do this for us
-    remaining->scan_while(it_equals<'-'>);
+    remaining->scan_while<it_equals<'-'> >();
     
     // Walk over characters valid in a name
-    const rstring_t name = remaining->scan_while(char_is_valid_in_parameter);
+    const rstring_t name = remaining->scan_while<char_is_valid_in_parameter>();
     
     // Check to see if there's an = sign
     const rstring_t equals = remaining->scan_1_char('=');
@@ -399,7 +411,7 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
 
     // Parse the options portion
     rstring_t remaining = spec.substr(0, options_end);
-    remaining.scan_while(isspace);
+    remaining.scan_while<char_is_space>();
     while (! remaining.empty()) {
         if (remaining[0] != '-') {
             append_error(errors, remaining.range().start, error_invalid_option_name, "Not an option");
@@ -414,9 +426,9 @@ option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) cons
         result.merge_from(opt);
         
         // Skip over commas, which separate arguments
-        remaining.scan_while(isspace);
-        remaining.scan_while(it_equals<','>);
-        remaining.scan_while(isspace);
+        remaining.scan_while<char_is_space>();
+        remaining.scan_while<it_equals<','> >();
+        remaining.scan_while<char_is_space>();
     }
         
     return result;
