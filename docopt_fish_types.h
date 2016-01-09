@@ -455,18 +455,6 @@ public:
 };
 
 
-UNUSED
-static inline const std::wstring &widen(const std::wstring &t) {
-    return t;
-}
-
-UNUSED
-static inline std::wstring widen(const std::string &t) {
-    std::wstring result;
-    result.insert(result.begin(), t.begin(), t.end());
-    return result;
-}
-
 /* An option represents something like '--foo=bar' */
 struct option_t {
     
@@ -515,16 +503,17 @@ struct option_t {
         assert(type < NAME_TYPE_COUNT);
         return ! this->names[type].empty();
     }
-
-    name_type_t best_type() const {
-        if (this->has_type(double_long)) return double_long;
-        else if (this->has_type(single_long)) return single_long;
-        return single_short;
-    }
-
+    
     // Returns the "best" (longest) name
     const rstring_t &best_name() const {
-        return this->names[this->best_type()];
+        size_t idx = NAME_TYPE_COUNT;
+        while (idx--) {
+            const rstring_t &name = this->names[idx];
+            if (! name.empty()) {
+                return name;
+            }
+        }
+        return this->names[single_short]; // is empty
     }
     
     /* We want a value if we have a non-empty value range */
@@ -582,20 +571,6 @@ struct option_t {
         }
 
         return result;
-    }
-    
-    template<typename string_t>
-    string_t name_as_string(name_type_t type) const {
-        assert(type < NAME_TYPE_COUNT);
-        const rstring_t name = this->names[type];
-        assert(! name.empty());
-        return name.std_string<string_t>();
-    }
-
-    // Returns the "best" name, plucking it out of the given source. Includes dashes.
-    template<typename string_t>
-    string_t best_name_as_string() const {
-        return this->name_as_string<string_t>(this->best_type());
     }
     
     /* Acquire "guts" from another option wherever we have blanks */

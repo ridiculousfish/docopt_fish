@@ -319,6 +319,23 @@ struct resolved_option_t {
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
 
+/* List of usages */
+typedef std::vector<usage_t> usage_list_t;
+
+/* Collects options, i.e. tokens of the form --foo */
+static void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) {
+    clause_collector_t collector;
+    for (size_t i=0; i < usages.size(); i++) {
+        collector.begin(usages.at(i));
+    }
+    
+    // "Return" the values
+    out_options->swap(collector.options);
+    out_variables->swap(collector.variables);
+    out_static_arguments->swap(collector.fixeds);
+}
+
+
 /* A positional argument */
 struct positional_argument_t {
     size_t idx_in_argv;
@@ -337,9 +354,6 @@ class docopt_impl {
     
     /* Class representing a map from variable names to commands */
     typedef std::map<rstring_t, rstring_t> variable_command_map_t;
-    
-    /* List of usages */
-    typedef std::vector<usage_t> usage_list_t;
     
     /* Constructor takes the source in either narrow or wide form. */
 public:
@@ -371,19 +385,6 @@ public:
     
     /* Map from variable names to the commands that populate them */
     variable_command_map_t variables_to_commands;
-    
-    /* Collects options, i.e. tokens of the form --foo */
-    void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) const {
-        clause_collector_t collector;
-        for (size_t i=0; i < usages.size(); i++) {
-            collector.begin(usages.at(i));
-        }
-        
-        // "Return" the values
-        out_options->swap(collector.options);
-        out_variables->swap(collector.variables);
-        out_static_arguments->swap(collector.fixeds);
-    }
     
     /* Given an option spec, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
     option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) const {
@@ -1553,10 +1554,10 @@ public:
             // This could be made more efficient via a single call to insert()
             for (size_t i=0; i < all_options.size(); i++) {
                 const option_t &opt = all_options.at(i);
-                stdstring_t name = opt.best_name_as_string<stdstring_t>();
+                const rstring_t &name = opt.best_name();
                 // We merely invoke operator[]; this will do the insertion with a default value if necessary.
                 // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
-                result[name];
+                result[name.std_string<stdstring_t>()];
                 
                 if (opt.has_value() && ! opt.default_value.empty()) {
                     // Maybe apply the default value for the variable
@@ -1671,7 +1672,7 @@ public:
         
         // Extract options and variables from the usage sections
         option_list_t usage_options;
-        this->collect_options_and_variables(this->usages, &usage_options, &this->all_variables, &this->all_static_arguments);
+        collect_options_and_variables(this->usages, &usage_options, &this->all_variables, &this->all_static_arguments);
         
         // Combine these into a single list
         this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
