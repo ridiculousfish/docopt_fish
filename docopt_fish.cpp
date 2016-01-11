@@ -540,7 +540,6 @@ static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, 
     assert(arg.has_prefix(type == option_t::single_long ? "-" : "--"));
     
     /* Parse the argument into an 'option'. Note that this option does not appear in the options list because its range reflects the string in the argument. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
-    error_list_t local_errors;
     option_t arg_as_option = option_t::parse_from_argument(arg, type);
     assert(arg_as_option.separator != option_t::sep_none);
     
@@ -1585,8 +1584,7 @@ public:
                     // Maybe apply the default value for the variable
                     stdstring_t variable_name = opt.value.std_string<stdstring_t>();
                     base_argument_t<stdstring_t> *var_arg = &result[variable_name];
-                    if (var_arg->values.empty())
-                    {
+                    if (var_arg->values.empty()) {
                         var_arg->values.push_back(opt.default_value.std_string<stdstring_t>());
                     }
                 }
@@ -1612,11 +1610,15 @@ public:
     }
 
     /* Matches argv */
-    template<typename stdstring_t>
-    typename argument_parser_t<stdstring_t>::argument_map_t
-    match_argv(const rstring_list_t &argv, parse_flags_t flags, const option_list_t &shortcut_options, const positional_argument_list_t &positionals, const resolved_option_list_t &resolved_options, index_list_t *out_unused_arguments, bool log_stuff = false) const {
+    void match_argv(const rstring_list_t &argv,
+                    parse_flags_t flags,
+                    const positional_argument_list_t &positionals,
+                    const resolved_option_list_t &resolved_options,
+                    option_rmap_t *out_option_map,
+                    index_list_t *out_unused_arguments,
+                    bool log_stuff = false) const {
         /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
-        match_context_t ctx(flags | flag_stop_after_consuming_everything, shortcut_options, positionals, resolved_options, argv);
+        match_context_t ctx(flags | flag_stop_after_consuming_everything, this->shortcut_options, positionals, resolved_options, argv);
         match_state_t init_state;
         init_state.consumed_options.resize(resolved_options.size(), false);
         
@@ -1667,7 +1669,7 @@ public:
             if (out_unused_arguments != NULL) {
                 out_unused_arguments->swap(best_unused_args);
             }
-            return this->finalize_option_map<stdstring_t>(result.at(best_state_idx).argument_values, flags);
+            out_option_map->swap(result.at(best_state_idx).argument_values);
         } else {
             // No states. Every argument is unused.
             if (out_unused_arguments != NULL) {
@@ -1676,7 +1678,7 @@ public:
                     out_unused_arguments->push_back(i);
                 }
             }
-            return this->finalize_option_map<stdstring_t>(option_rmap_t(), flags);
+            out_option_map->clear();
         }
     }
     
@@ -1753,7 +1755,9 @@ public:
         separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, out_errors);
         
         // Produce an option map
-        return this->match_argv<stdstring_t>(argv, flags, shortcut_options, positionals, resolved_options, out_unused_arguments);
+        option_rmap_t option_map;
+        this->match_argv(argv, flags, positionals, resolved_options, &option_map, out_unused_arguments);
+        return this->finalize_option_map<stdstring_t>(option_map, flags);
     }
     
     rstring_list_t suggest_next_argument(const rstring_list_t &argv, parse_flags_t flags) const
