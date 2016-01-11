@@ -56,11 +56,11 @@ namespace docopt_fish
     /* Represents an argument in the result */
     template<typename string_t>
     struct base_argument_t {
-        /* How many times the argument appeared. This is typically 1 but may be greater than 1 for repeated arguments ("-v -v"), or 0 for missing arguments. */
-        unsigned int count;
-        
         /* The values specified in the argument. If this argument is a flag (like -d), this will be empty. If the argument has a single value, this will have a single value. If the argument has a default value, and no value was found in argv, the default will be contained in here (and count will be 0) */
         std::vector<string_t> values;
+        
+        /* How many times the argument appeared. This is typically 1 but may be greater than 1 for repeated arguments ("-v -v"), or 0 for missing arguments. */
+        unsigned int count;
         
         /* Helper function to return a single value */
         const string_t &value() const {
@@ -117,6 +117,6 @@ namespace docopt_fish
         argument_parser_t(const argument_parser_t &rhs);
         argument_parser_t &operator=(const argument_parser_t &rhs);
     };
-};
+}
 
 #endif

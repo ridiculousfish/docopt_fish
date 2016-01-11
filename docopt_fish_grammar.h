@@ -160,8 +160,8 @@ struct usage_t {
 };
 
 struct opt_ellipsis_t {
-    bool present;
     rstring_t ellipsis;
+    bool present;
 
     opt_ellipsis_t() : present(false) {}
     

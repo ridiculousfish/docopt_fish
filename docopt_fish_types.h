@@ -100,8 +100,8 @@ private:
         if (needle[0] == '\0') {
             return 0;
         }
-        const char_t his_first_low = (case_insensitive ? tolower(needle[0]) : needle[0]);
-        const char_t his_first_up = (case_insensitive ? toupper(needle[0]) : needle[0]);
+        const char_t his_first_low = (case_insensitive ? tolower(needle[0]) : to_char(needle[0]));
+        const char_t his_first_up = (case_insensitive ? toupper(needle[0]) : to_char(needle[0]));
         
         const T *haystack = this->ptr_begin<T>();
         size_t haystack_count = this->length();
@@ -200,8 +200,6 @@ public:
                 return this->base_as<uint16_t>()[offset];
             case width4:
                 return this->base_as<uint32_t>()[offset];
-            default:
-                return unreachable();
         }
     }
     
@@ -219,9 +217,6 @@ public:
                 return this->find_internal<uint16_t, false>(needle);
             case width4:
                 return this->find_internal<uint32_t, false>(needle);
-            default:
-                unreachable();
-                return 0;
         }
     }
     
@@ -233,9 +228,6 @@ public:
                 return this->find_internal<uint16_t, true>(needle);
             case width4:
                 return this->find_internal<uint32_t, true>(needle);
-            default:
-                unreachable();
-                return 0;
         }
     }
     
@@ -258,8 +250,6 @@ public:
                 return this->find_1_internal<uint16_t>(needle);
             case width4:
                 return this->find_1_internal<uint32_t>(needle);
-            default:
-                return unreachable();
         }
     }
 
@@ -385,9 +375,6 @@ public:
                 return this->scan_while_internal<uint16_t, F>();
             case width4:
                 return this->scan_while_internal<uint32_t, F>();
-            default:
-                unreachable();
-                return *this;
         }
     }
 
@@ -429,13 +416,25 @@ public:
         return result;
     }
     
+    static bool char_is_whitespace(rstring_t::char_t c) {
+        switch (c) {
+            case '\t':
+            case '\n':
+            case '\r':
+            case ' ':
+                return true;
+            default:
+                return false;
+        }
+    }
+    
     // Returns a new string with leading and trailing whitespace trimmed
     rstring_t trim_whitespace() const {
         size_t left = 0, right = this->length();
-        while (left < right && isspace(this->at(left))) {
+        while (left < right && char_is_whitespace(this->at(left))) {
             left++;
         }
-        while (right > left && isspace(this->at(right - 1))) {
+        while (right > left && char_is_whitespace(this->at(right - 1))) {
             right--;
         }
         assert(left <= right);

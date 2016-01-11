@@ -38,18 +38,6 @@ struct parse_context_t {
         return std::find(invalid, end, c) == end;
     }
     
-    static bool char_is_whitespace(rstring_t::char_t c) {
-        switch (c) {
-            case '\t':
-            case '\n':
-            case '\r':
-            case ' ':
-                return true;
-            default:
-                return false;
-        }
-    }
-    
     // Note unowned pointer references in rstring_t. A parse context is stack allocated and transient.
     
     // Range of source remains to be parsed
@@ -64,7 +52,7 @@ struct parse_context_t {
     
     /* Consume leading whitespace. Newlines are meaningful if their associated lines are indented the same or less than initial_indent. If they are indented more, we swallow those. */
     void consume_leading_whitespace() {
-        this->remaining.scan_while<char_is_whitespace>();
+        this->remaining.scan_while<rstring_t::char_is_whitespace>();
     }
     
     /* Returns true if there are no more next tokens */

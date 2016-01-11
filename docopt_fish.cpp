@@ -1631,7 +1631,7 @@ public:
                 const match_state_t &state = result.at(i);
                 bool is_incomplete = ! ctx.unused_arguments(&state).empty();
                 std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
-                for (typename option_rmap_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
+                for (option_rmap_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
                     const rstring_t &name = iter->first;
                     const base_argument_t<rstring_t> &arg = iter->second;
                     fprintf(stderr, "\t%ls: ", name.std_string<std::wstring>().c_str());
