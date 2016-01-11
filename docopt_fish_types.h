@@ -115,18 +115,6 @@ private:
     
     template<typename T1, typename T2>
     static int compare_internal2(const rstring_t &lhs, const rstring_t &rhs) {
-        
-        for (size_t i=0; i < lhs.length() && i < rhs.length(); i++) {
-            if (lhs.at(i) != rhs.at(i)) {
-                return lhs.at(i) < rhs.at(i) ? -1 : 1;
-            }
-        }
-//        if (lhs.length() != rhs.length()) {
-//            return lhs.length() < rhs.length() ? -1 : 1;
-//        }
-//        return 0;
-        
-        
         size_t len1 = lhs.length(), len2 = rhs.length();
         size_t amt = std::min(len1, len2);
         const T1 *p1 = lhs.ptr_begin<T1>();
