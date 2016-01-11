@@ -80,7 +80,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     const size_t dash_count = leading_dashes.length();
     assert(dash_count > 0);
     if (dash_count > 2) {
-        append_error(errors, leading_dashes.range().start, error_excessive_dashes, "Too many dashes");
+        append_error(errors, leading_dashes.start(), error_excessive_dashes, "Too many dashes");
     }
     
     // Walk over characters valid in a name
@@ -92,7 +92,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     // Check to see if there's an = sign
     const rstring_t equals = remaining->scan_while<it_equals<'='> >();
     if (equals.length() > 1) {
-        append_error(errors, equals.range().start, error_excessive_equal_signs, "Too many equal signs");
+        append_error(errors, equals.start(), error_excessive_equal_signs, "Too many equal signs");
         errored = true;
     }
     
@@ -106,10 +106,10 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         rstring_t variable_name = remaining->scan_while<char_is_valid_in_bracketed_word>();
         rstring_t close_sign = remaining->scan_1_char('>');
         if (variable_name.empty()) {
-            append_error(errors, variable_name.range().start, error_invalid_variable_name, "Missing variable name");
+            append_error(errors, variable_name.start(), error_invalid_variable_name, "Missing variable name");
             errored = true;
         } else if (close_sign.empty()) {
-            append_error(errors, open_sign.range().start, error_invalid_variable_name, "Missing '>' to match this '<'");
+            append_error(errors, open_sign.start(), error_invalid_variable_name, "Missing '>' to match this '<'");
             errored = true;
         } else {
             variable = open_sign.merge(variable_name).merge(close_sign);
@@ -117,14 +117,14 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         
         // Check to see what the next character is. If it's not whitespace or the end of the string, generate an error.
         if (! close_sign.empty() && ! remaining->empty() && char_is_valid_in_parameter(remaining->at(0))) {
-            append_error(errors, remaining->range().start, error_invalid_variable_name, "Extra stuff after closing '>'");
+            append_error(errors, remaining->start(), error_invalid_variable_name, "Extra stuff after closing '>'");
             errored = true;
         }
     }
     
     // Report an error for cases like --foo=
     if (variable.empty() && ! equals.empty()) {
-        append_error(errors, equals.range().start, error_invalid_variable_name, "Missing variable for this assignment");
+        append_error(errors, equals.start(), error_invalid_variable_name, "Missing variable for this assignment");
         errored = true;
     }
     
@@ -145,13 +145,13 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     
     // Generate an error on long options with no separators (--foo<bar>). Only short options support these.
     if (separator == option_t::sep_none && (dash_count > 1 || name.length() > 1)) {
-        append_error(errors, name.range().start, error_bad_option_separator, "Long options must use a space or equals separator");
+        append_error(errors, name.start(), error_bad_option_separator, "Long options must use a space or equals separator");
         errored = true;
     }
     
     // Generate errors for missing name
     if (name.empty()) {
-        append_error(errors, name.range().start, error_invalid_option_name, "Missing option name");
+        append_error(errors, name.start(), error_invalid_option_name, "Missing option name");
         errored = true;
     }
     
@@ -231,9 +231,9 @@ public:
             
             char buff[32];
             if (t1.length() == 1) {
-                snprintf(buff, sizeof buff, "{%lu}", t1.range().start);
+                snprintf(buff, sizeof buff, "{%lu}", t1.start());
             } else {
-                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.range().start, t1.range().length);
+                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.start(), t1.length());
             }
             result.append(buff);
             lines.push_back(result);
@@ -280,14 +280,14 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
 /* Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty. On return, it will contain the line, with its end pointing just after the trailing newline, or possibly at the end. Returns true if a line was returned, false if we reached the end. */
 static bool get_next_line(const rstring_t &base, rstring_t *inout_line) {
     assert(inout_line != NULL);
-    if (inout_line->range().end() == base.range().end()) {
+    if (inout_line->end() == base.end()) {
         // Line exhausted
         return false;
     }
     
     // Start at the end of the last line, or zero if this is the first call
-    // Subtract off base.range().start to make the line_start relative to base
-    size_t line_start = (inout_line->empty() ? 0 : inout_line->range().end() - base.range().start);
+    // Subtract off base.start() to make the line_start relative to base
+    size_t line_start = (inout_line->empty() ? 0 : inout_line->end() - base.start());
     rstring_t remainder = base.substr_from(line_start);
     size_t newline = remainder.find("\n");
     if (newline == rstring_t::npos) {
@@ -375,9 +375,9 @@ static option_t parse_one_option_spec(const rstring_t &spec, error_list_t *error
             // Find the closing ']'
             size_t default_value_end = default_value.find("]");
             if (default_value_end == rstring_t::npos) {
-                append_error(errors, default_value.range().start, error_missing_close_bracket_in_default, "Missing ']' to match opening '['");
+                append_error(errors, default_value.start(), error_missing_close_bracket_in_default, "Missing ']' to match opening '['");
             } else {
-                result.default_value = default_value.substr(range_t(0, default_value_end));
+                result.default_value = default_value.substr(0, default_value_end);
             }
         }
     }
@@ -387,7 +387,7 @@ static option_t parse_one_option_spec(const rstring_t &spec, error_list_t *error
     remaining.scan_while<char_is_space>();
     while (! remaining.empty()) {
         if (remaining[0] != '-') {
-            append_error(errors, remaining.range().start, error_invalid_option_name, "Not an option");
+            append_error(errors, remaining.start(), error_invalid_option_name, "Not an option");
             break;
         }
         
@@ -431,7 +431,7 @@ static variable_command_map_t parse_one_variable_command_spec(const rstring_t &s
     assert(! spec.empty() && spec[0] == '<');
     const size_t close_bracket = spec.find('>');
     if (close_bracket == rstring_t::npos) {
-        append_error(out_errors, spec.range().start, error_missing_close_variable, "No > to balance this <");
+        append_error(out_errors, spec.start(), error_missing_close_variable, "No > to balance this <");
     } else {
         assert(close_bracket < spec.length());
         rstring_t key = spec.substr(0, close_bracket+1).trim_whitespace();
@@ -478,7 +478,7 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates, 
             if (current_match.has_same_name(maybe_match)) {
                 if (error_on_duplicates) {
                     // Generate an error, and then continue on
-                    append_error(errors, maybe_match.best_name().range().start, error_option_duplicated_in_options_section, "Option specified more than once");
+                    append_error(errors, maybe_match.best_name().start(), error_option_duplicated_in_options_section, "Option specified more than once");
                 }
                 // This index matched
                 matching_indexes.push_back(match_cursor);
@@ -1253,8 +1253,6 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
     // Collect potential suggestions in here. We squelch them if we find that a later matched option has the same corresponding long name; we need to remove those from the suggestions
     option_list_t potential_suggestions;
     
-    range_t matched_ranges;
-    
     for (size_t j=0; j < options_in_doc.size(); j++) {
         const option_t &opt_in_doc = options_in_doc.at(j);
         
@@ -1504,7 +1502,7 @@ public:
              
              Here 'foo' is indented more than 'bar'.
              */
-            const size_t line_indent = compute_indent(this->rsource, line.range().start, trimmed_line.range().start - line.range().start);
+            const size_t line_indent = compute_indent(this->rsource, line.start(), trimmed_line.start() - line.start());
             
             // Determine the "line group." That is, this line plus all subsequent nonempty lines
             // that are indented more than this line.
@@ -1513,7 +1511,7 @@ public:
             rstring_t next_line = line;
             while (get_next_line(this->rsource, &next_line)) {
                 rstring_t trimmed_next_line = next_line.trim_whitespace();
-                size_t next_line_indent = compute_indent(this->rsource, next_line.range().start, trimmed_next_line.range().start - next_line.range().start);
+                size_t next_line_indent = compute_indent(this->rsource, next_line.start(), trimmed_next_line.start() - next_line.start());
                 if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
                     break;
                 }
@@ -1531,7 +1529,7 @@ public:
                 const variable_command_map_t new_var_cmds = parse_one_variable_command_spec(line_group, out_errors);
                 for (variable_command_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
                     if (!this->variables_to_commands.insert(*iter).second) {
-                        append_error(out_errors, line_group.range().start, error_one_variable_multiple_commands, "Duplicate command for variable");
+                        append_error(out_errors, line_group.start(), error_one_variable_multiple_commands, "Duplicate command for variable");
                     }
                 }
                 
@@ -1541,7 +1539,7 @@ public:
                 
             } else {
                 // It's an error
-                append_error(out_errors, trimmed_line.range().start, error_unknown_leader, "Lines must start with a normal character, less-than sign, or dash.");
+                append_error(out_errors, trimmed_line.start(), error_unknown_leader, "Lines must start with a normal character, less-than sign, or dash.");
                 break;
             }
             

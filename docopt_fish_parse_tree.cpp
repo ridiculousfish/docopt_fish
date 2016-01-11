@@ -161,7 +161,7 @@ struct parse_context_t {
             status = try_parse_appending(&result->alternations);
             if (status == parsed_done) {
                 if (! first) {
-                    append_error(&this->errors, bar.range().start, error_trailing_vertical_bar, "Trailing vertical bar");
+                    append_error(&this->errors, bar.start(), error_trailing_vertical_bar, "Trailing vertical bar");
                     status = parsed_error;
                 }
                 break;
@@ -366,15 +366,15 @@ struct parse_context_t {
                 } else {
                     // No closing bracket or paren
                     if (is_paren) {
-                        append_error(&this->errors, token.range().start, error_missing_close_paren, "Missing ')' to match opening '('");
+                        append_error(&this->errors, token.start(), error_missing_close_paren, "Missing ')' to match opening '('");
                     } else {
-                        append_error(&this->errors, token.range().start, error_missing_close_bracket, "Missing ']' to match opening '['");
+                        append_error(&this->errors, token.start(), error_missing_close_bracket, "Missing ']' to match opening '['");
                     }
                     status = parsed_error;
                 }
             }
         } else if (this->scan("...", &token)) {
-            append_error(&this->errors, token.range().start, error_leading_ellipsis, "Ellipsis may only follow an expression");
+            append_error(&this->errors, token.start(), error_leading_ellipsis, "Ellipsis may only follow an expression");
             status = parsed_error;
         } else if (this->peek("|")) {
             // End of an alternation list

@@ -15,52 +15,14 @@
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
-/* Class representing a range of a string */
-struct range_t {
-    size_t start;
-    size_t length;
-    range_t() : start(0), length(0) {}
-    range_t(size_t s, size_t l) : start(s), length(l) {}
-    
-    /* Returns start + length, dying on overflow */
-    size_t end() const {
-        size_t result = start + length;
-        assert(result >= start); //don't overflow
-        return result;
-    }
-    
-    /* Returns whether the range is empty */
-    bool empty() const {
-        return length == 0;
-    }
-    
-    /* Equality and inequality */
-    bool operator==(const range_t &rhs) const {
-        return this->start == rhs.start && this->length == rhs.length;
-    }
-    
-    bool operator!=(const range_t &rhs) const {
-        return !(*this == rhs);
-    }
-    
-    /* Merges a range into this range. After merging, the receiver is the smallest range containing every index that is in either range. Empty ranges are discarded. */
-    void merge(const range_t &rhs) {
-        if (this->empty()) {
-            *this = rhs;
-        } else if (! rhs.empty()) {
-            this->start = std::min(this->start, rhs.start);
-            this->length = std::max(this->end(), rhs.end()) - this->start;
-        }
-    }
-};
-
 /* Our "rstring" string type tracks a range and base pointer. This enables both efficient sharing (fewer copies) and precise error messages, since we know the location of the error. CHAR is suggested to be either char or wchar_t. rstrings are views on top of immutable underlying data. Note that these are not null terminated. */
 class rstring_t {
 public:
     typedef uint32_t char_t;
 
 private:
-    range_t range_;
+    size_t start_;
+    size_t length_;
     const void *base_;
     // note you can use shift to multiply by a width
     enum width_t {
@@ -69,9 +31,9 @@ private:
         width4 = 2
     } width_;
 
-    rstring_t(const void *base, range_t range, width_t width) : range_(range), base_(base), width_(width) {}
+    rstring_t(const void *base, size_t start, size_t length, width_t width) : start_(start), length_(length), base_(base), width_(width) {}
     
-    explicit rstring_t(const char_t *b, const range_t &r) : range_(r), base_(b), width_(resolve_width<char_t>()) {}
+    explicit rstring_t(const char_t *b, size_t start, size_t length) : start_(start), length_(length), base_(b), width_(resolve_width<char_t>()) {}
     
     width_t width() const {
         return this->width_;
@@ -90,7 +52,7 @@ private:
     template<typename T>
     const T *ptr_begin() const {
         const uint8_t *p = this->base_as<uint8_t>();
-        p += (this->range_.start * sizeof(T));
+        p += this->start_ * sizeof(T);
         return reinterpret_cast<const T *>(p);
     }
     
@@ -163,8 +125,8 @@ private:
             amt++;
         }
         rstring_t result = this->substr(0, amt);
-        this->range_.start += amt;
-        this->range_.length -= amt;
+        this->start_ += amt;
+        this->length_ -= amt;
         return result;
     }
 
@@ -181,18 +143,27 @@ private:
 public:
     
     static const size_t npos = size_t(-1);
+
+    size_t start() const {
+        return this->start_;
+    }
+
+    size_t end() const {
+        assert(this->start_ + this->length_ >= this->start_);
+        return this->start_ + this->length_;
+    }
     
     size_t length() const {
-        return this->range_.length;
+        return this->length_;
     }
     
     bool empty() const {
-        return this->range_.empty();
+        return this->length_ == 0;
     }
     
     char_t at(size_t idx) const {
-        assert(idx <= range_.length);
-        size_t offset = idx + this->range_.start;
+        assert(idx <= length_);
+        size_t offset = idx + this->start_;
         switch (this->width()) {
             case width1:
                 return this->base_as<uint8_t>()[offset];
@@ -203,9 +174,9 @@ public:
         }
     }
     
-    rstring_t substr(const range_t &r) const {
-        assert(r.end() <= this->length());
-        return rstring_t(this->base_, range_t(this->range_.start + r.start, r.length), this->width_);
+    rstring_t substr(size_t offset, size_t length) const {
+        assert(offset + length >= offset && offset + length <= this->length());
+        return rstring_t(this->base_, this->start_ + offset, length, this->width_);
     }
     
     // Finds needle in self, and returns the location or npos
@@ -253,17 +224,9 @@ public:
         }
     }
 
-    rstring_t substr(size_t offset, size_t length) const {
-        return this->substr(range_t(offset, length));
-    }
-
     rstring_t substr_from(size_t offset) const {
         assert(offset <= this->length());
         return this->substr(offset, this->length() - offset);
-    }
-    
-    range_t range() const {
-        return this->range_;
     }
     
     const void *base() const {
@@ -278,9 +241,9 @@ public:
             return *this;
         } else {
             assert(this->base_ == rhs.base_ && this->width_ == rhs.width_);
-            range_t merged = this->range_;
-            merged.merge(rhs.range());
-            return rstring_t(this->base_, merged, this->width_);
+            size_t start = std::min(this->start_, rhs.start_);
+            size_t length = std::max(this->end(), rhs.end()) - start;
+            return rstring_t(this->base_, start, length, this->width_);
         }
     }
     
@@ -294,7 +257,7 @@ public:
         if (this == &rhs) {
             return 0;
         }
-        if (this->base_ == rhs.base_ && this->range_ == rhs.range_) {
+        if (this->base_ == rhs.base_ && this->start_ == rhs.start_ && this->length_ == rhs.length_) {
             return 0;
         }
         for (size_t i=0; i < this->length() && i < rhs.length(); i++) {
@@ -395,8 +358,8 @@ public:
             if (i == len) {
                 // Prefix matches prefix
                 result = this->substr(0, len);
-                this->range_.start += len;
-                this->range_.length -= len;
+                this->start_ += len;
+                this->length_ -= len;
             }
         }
         return result;
@@ -410,8 +373,8 @@ public:
         rstring_t result;
         if (this->length() > 0 && this->at(0) == to_char(c)) {
             result = this->substr(0, 1);
-            this->range_.start += 1;
-            this->range_.length -= 1;
+            this->start_ += 1;
+            this->length_ -= 1;
         }
         return result;
     }
@@ -441,16 +404,13 @@ public:
         return this->substr(left, right - left);
     }
 
-    explicit rstring_t() : range_(0, 0), base_(NULL), width_(width1) {}
+    explicit rstring_t() : start_(0), length_(0), base_(NULL), width_(width1) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
     template<typename stdchar_t>
-    explicit rstring_t(const std::basic_string<stdchar_t> &b) : range_(0, b.length()), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
+    explicit rstring_t(const std::basic_string<stdchar_t> &b) : start_(0), length_(b.length()), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
     
-    explicit rstring_t(const char *s, size_t len) : range_(0, len), base_(s), width_(width1) {}
-
-    template<typename stdchar_t>
-    explicit rstring_t(const std::basic_string<stdchar_t> &b, const range_t &r) : range_(r), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
+    explicit rstring_t(const char *s, size_t len) : start_(0), length_(len), base_(s), width_(width1) {}
 };
 
 
@@ -560,7 +520,7 @@ struct option_t {
         result.push_back(' ');
         
         char range[64];
-        snprintf(range, sizeof range, "<%lu, %lu>", name.range().start, name.range().length);
+        snprintf(range, sizeof range, "<%lu, %lu>", name.start(), name.length());
         result.append(range);
         
         if (this->separator == sep_none) {
