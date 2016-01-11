@@ -113,6 +113,48 @@ private:
         return npos;
     }
     
+    template<typename T1, typename T2>
+    static int compare_internal2(const rstring_t &lhs, const rstring_t &rhs) {
+        
+        for (size_t i=0; i < lhs.length() && i < rhs.length(); i++) {
+            if (lhs.at(i) != rhs.at(i)) {
+                return lhs.at(i) < rhs.at(i) ? -1 : 1;
+            }
+        }
+//        if (lhs.length() != rhs.length()) {
+//            return lhs.length() < rhs.length() ? -1 : 1;
+//        }
+//        return 0;
+        
+        
+        size_t len1 = lhs.length(), len2 = rhs.length();
+        size_t amt = std::min(len1, len2);
+        const T1 *p1 = lhs.ptr_begin<T1>();
+        const T2 *p2 = rhs.ptr_begin<T2>();
+        for (size_t i=0; i < amt; i++) {
+            char_t c1 = p1[i], c2 = p2[i];
+            if (c1 != c2) {
+                return c1 < c2 ? -1 : 1;
+            }
+        }
+        if (len1 != len2) {
+            return len1 < len2 ? -1 : 1;
+        }
+        return 0;
+    }
+    
+    template<typename T1>
+    int compare_internal1(const rstring_t &rhs) const {
+        switch (rhs.width()) {
+            case width1:
+                return compare_internal2<T1, uint8_t>(*this, rhs);
+            case width2:
+                return compare_internal2<T1, uint16_t>(*this, rhs);
+            case width4:
+                return compare_internal2<T1, uint32_t>(*this, rhs);
+        }
+    }
+    
     template<typename T>
     size_t find_1_internal(char_t needle) const {
         size_t len = this->length();
@@ -261,16 +303,15 @@ public:
         if (this->base_ == rhs.base_ && this->start_ == rhs.start_ && this->length_ == rhs.length_) {
             return 0;
         }
-        for (size_t i=0; i < this->length() && i < rhs.length(); i++) {
-            if (this->at(i) != rhs.at(i)) {
-                return this->at(i) < rhs.at(i) ? -1 : 1;
-            }
+        
+        switch (this->width()) {
+            case width1:
+                return this->compare_internal1<uint8_t>(rhs);
+            case width2:
+                return this->compare_internal1<uint16_t>(rhs);
+            case width4:
+                return this->compare_internal1<uint32_t>(rhs);
         }
-        // Data is equal, compare ranges
-        if (this->length() != rhs.length()) {
-            return this->length() < rhs.length() ? -1 : 1;
-        }
-        return 0;
     }
     
     bool operator==(const rstring_t &rhs) const {

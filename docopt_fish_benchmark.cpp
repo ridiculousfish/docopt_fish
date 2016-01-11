@@ -57,7 +57,7 @@ int main(int argc, char *argv[])
     
     before = timef();
     argument_parser_t<string> parser;
-    for (size_t i=0; i < amt || true; i++) {
+    for (size_t i=0; i < amt || false; i++) {
         parser.set_doc(g_bind_usage, NULL);
     }
     after = timef();
