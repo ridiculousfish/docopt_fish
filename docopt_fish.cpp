@@ -1669,7 +1669,9 @@ public:
             if (out_unused_arguments != NULL) {
                 out_unused_arguments->swap(best_unused_args);
             }
-            out_option_map->swap(result.at(best_state_idx).argument_values);
+            if (out_option_map != NULL) {
+                out_option_map->swap(result.at(best_state_idx).argument_values);
+            }
         } else {
             // No states. Every argument is unused.
             if (out_unused_arguments != NULL) {
@@ -1678,7 +1680,9 @@ public:
                     out_unused_arguments->push_back(i);
                 }
             }
-            out_option_map->clear();
+            if (out_option_map != NULL) {
+                out_option_map->clear();
+            }
         }
     }
     
@@ -1745,8 +1749,7 @@ public:
     }
     
     // TODO: make this const by stop touching error_list
-    template <typename stdstring_t>
-    typename argument_parser_t<stdstring_t>::argument_map_t best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments)
+    void best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments, option_rmap_t *out_option_map)
     {
         positional_argument_list_t positionals;
         resolved_option_list_t resolved_options;
@@ -1755,9 +1758,7 @@ public:
         separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, out_errors);
         
         // Produce an option map
-        option_rmap_t option_map;
-        this->match_argv(argv, flags, positionals, resolved_options, &option_map, out_unused_arguments);
-        return this->finalize_option_map<stdstring_t>(option_map, flags);
+        this->match_argv(argv, flags, positionals, resolved_options, out_option_map, out_unused_arguments);
     }
     
     rstring_list_t suggest_next_argument(const rstring_list_t &argv, parse_flags_t flags) const
@@ -1894,7 +1895,7 @@ std::vector<argument_status_t> argument_parser_t<stdstring_t>::validate_argument
     
     index_list_t unused_args;
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
-    impl->best_assignment_for_argv<stdstring_t>(argv_rstrs, flags, NULL /* errors */, &unused_args);
+    impl->best_assignment_for_argv(argv_rstrs, flags, NULL /* errors */, &unused_args, NULL);
     
     // Unused arguments are all invalid
     for (size_t i=0; i < unused_args.size(); i++) {
@@ -1943,7 +1944,9 @@ argument_parser_t<stdstring_t>::parse_arguments(const std::vector<stdstring_t> &
                                                 error_list_t *out_errors,
                                                 std::vector<size_t> *out_unused_arguments) const {
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
-    return impl->best_assignment_for_argv<stdstring_t>(argv_rstrs, flags, out_errors, out_unused_arguments);
+    option_rmap_t option_rmap;
+    impl->best_assignment_for_argv(argv_rstrs, flags, out_errors, out_unused_arguments, &option_rmap);
+    return impl->finalize_option_map<stdstring_t>(option_rmap, flags);
 }
 
 
