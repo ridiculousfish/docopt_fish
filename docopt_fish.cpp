@@ -456,50 +456,42 @@ static size_t compute_indent(const rstring_t &src, const rstring_t &trimmed_src)
     return result;
 }
 
-/* Given a list of options, verify that any duplicate options are in agreement, and remove all but one. TODO: make this not N^2. */
+/* Given a list of options, verify that any duplicate options are in agreement, and remove all but one. TODO: Can we make this not N^2 without heap allocation? */
 static void uniqueize_options(option_list_t *options, bool error_on_duplicates, error_list_t *errors) {
-    std::vector<size_t> matching_indexes;
-    for (size_t cursor=0; cursor < options->size(); cursor++) {
-        // Determine the set of matches
-        // Two options are called a match if they have the same name
-        matching_indexes.push_back(cursor);
-        // We have a "best option cursor". If we find two matching options, pick the one with the better (longer) description.
-        size_t best_match_idx = cursor;
-        for (size_t match_cursor = cursor + 1; match_cursor < options->size(); match_cursor++) {
-            const option_t &current_match = options->at(best_match_idx);
-            const option_t &maybe_match = options->at(match_cursor);
-            if (current_match.has_same_name(maybe_match)) {
-                if (error_on_duplicates) {
-                    // Generate an error, and then continue on
-                    append_docopt_error(errors, maybe_match.best_name(), error_option_duplicated_in_options_section, "Option specified more than once");
-                }
-                // This index matched
-                matching_indexes.push_back(match_cursor);
-                
-                // This argument matches.
-                // TODO: verify agreement in the parameters, etc.
-                if (maybe_match.description.length() > current_match.description.length()) {
-                    // The second one has a better description. Keep it.
-                    best_match_idx = match_cursor;
-                }
+    // Maintain an outer cursor. For each option, loop over the remainder, deleting those that share a name
+    // Grab the best description as we go
+    // We "delete" from the middle of the vector by moving the last element into the slot, and then decrementing the length
+    size_t options_count = options->size(); // note this changes as we go
+    for (size_t outer = 0; outer < options_count; outer++) {
+        option_t *representative = &options->at(outer);
+
+        // Find all options that share a name with this representative
+        // Determine which one is best
+        // Overwrite them with an empty option, so we skip them next
+        for (size_t match_cursor = outer + 1; match_cursor < options_count; match_cursor++) {
+            option_t *candidate = &options->at(match_cursor);
+            if (! representative->has_same_name(*candidate)) {
+                continue;
             }
-        }
-        
-        // Now we have the set of matching indexes
-        // Erase all, except for the best match
-        // These are in ascending order, so we can just work backwards
-        while (! matching_indexes.empty()) {
-            size_t idx_to_remove = matching_indexes.back();
-            assert(idx_to_remove >= cursor); //should only remove at or after cursor
-            matching_indexes.pop_back();
-            if (idx_to_remove != best_match_idx) {
-                options->erase(options->begin() + idx_to_remove);
-                
-                // If we removed the cursor, step back one so we go to the next element next time
-                if (idx_to_remove == cursor) {
-                    cursor -= 1;
-                }
+            
+            // Ok, we know that candidate has the same name as the best match
+            // Generate an error if we're supposed to
+            // TODO: verify agreement in the parameters, etc.
+            // Then we copy the description over if it's better, then "erase" the candidate
+            // That will cause us to skip over it later
+            if (error_on_duplicates) {
+                // Generate an error, and then continue on
+                append_docopt_error(errors, candidate->best_name(), error_option_duplicated_in_options_section, "Option specified more than once");
             }
+            if (candidate->description.length() > representative->description.length()) {
+                representative->description = candidate->description;
+            }
+            
+            // "Delete" candidate by overwriting it with the last value, and decrementing the count
+            *candidate = options->back();
+            options->pop_back();
+            options_count -= 1;
+            match_cursor -= 1; // have to re-evaluate this value
         }
     }
 }
