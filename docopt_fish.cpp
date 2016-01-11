@@ -437,16 +437,14 @@ static variable_command_map_t parse_one_variable_command_spec(const rstring_t &s
 }
 
 
-// Computes the indent for a line starting at start and extending len. Tabs are treated as 4 spaces. newlines are unexpected, and treated as one space.
-static size_t compute_indent(const rstring_t &src, size_t start, size_t len) {
+// Given a string 'src' and a whitespace-trimmed substring trimmed_src, compute how much trimmed_src is indented. Tabs are treated as 4 spaces. newlines are unexpected, and treated as one space.
+static size_t compute_indent(const rstring_t &src, const rstring_t &trimmed_src) {
+    assert(trimmed_src.start() >= src.start() && trimmed_src.end() <= src.end());
     const size_t tabstop = 4;
-    assert(src.length() >= len);
-    assert(start + len >= start); // no overflow
-    size_t result = 0;
-    for (size_t i=start; i < start + len; i++)
-    {
-        rstring_t::char_t c = src.at(i);
-        if (c != L'\t') {
+    // Walk over the prefix of src, up to trimmed_src
+    size_t result = 0, length = trimmed_src.start() - src.start();
+    for (size_t i=0; i < length; i++) {
+        if (src.at(i) != '\t') {
             // not a tab
             result += 1;
         } else {
@@ -1497,7 +1495,7 @@ public:
              
              Here 'foo' is indented more than 'bar'.
              */
-            const size_t line_indent = compute_indent(this->rsource, line.start(), trimmed_line.start() - line.start());
+            const size_t line_indent = compute_indent(line, trimmed_line);
             
             // Determine the "line group." That is, this line plus all subsequent nonempty lines
             // that are indented more than this line.
@@ -1506,7 +1504,7 @@ public:
             rstring_t next_line = line;
             while (get_next_line(this->rsource, &next_line)) {
                 rstring_t trimmed_next_line = next_line.trim_whitespace();
-                size_t next_line_indent = compute_indent(this->rsource, next_line.start(), trimmed_next_line.start() - next_line.start());
+                size_t next_line_indent = compute_indent(next_line, trimmed_next_line);
                 if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
                     break;
                 }
