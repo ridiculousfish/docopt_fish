@@ -33,18 +33,6 @@ typedef std::vector<size_t> index_list_t;
 /* Class representing a map from variable names to commands */
 typedef std::map<rstring_t, rstring_t> variable_command_map_t;
 
-/* Turn a list of rstring_t into a list of some std::basic_string */
-template <typename stdstring_t>
-std::vector<stdstring_t> resolve_rstrings(const rstring_list_t &rs) {
-    size_t length = rs.size();
-    std::vector<stdstring_t> result(length);
-    for (size_t i=0; i < length; i++) {
-        rs[i].copy_to(&result[i]);
-    }
-    return result;
-}
-
-
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
     append_error(errors, pos_in_arg, code, txt, arg_idx);
@@ -56,7 +44,7 @@ static void append_docopt_error(error_list_t *errors, const rstring_t &token, in
     append_error(errors, token.start(), code, txt, -1);
 }
 
-
+/* Parsing helpers */
 template<char T>
 bool it_equals(rstring_t::char_t c) { return c == T; }
 
@@ -1915,7 +1903,13 @@ std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const s
 {
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
     rstring_list_t suggestions = impl->suggest_next_argument(argv_rstrs, flags);
-    return resolve_rstrings<string_t>(suggestions);
+    
+    size_t length = suggestions.size();
+    std::vector<string_t> result(length);
+    for (size_t i=0; i < length; i++) {
+        suggestions[i].copy_to(&result[i]);
+    }
+    return result;
 }
 
 template<typename stdstring_t>

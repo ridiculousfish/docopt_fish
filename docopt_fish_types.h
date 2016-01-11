@@ -15,7 +15,18 @@
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
-/* Our "rstring" string type tracks a range and base pointer. This enables both efficient sharing (fewer copies) and precise error messages, since we know the location of the error. CHAR is suggested to be either char or wchar_t. rstrings are views on top of immutable underlying data. Note that these are not null terminated. */
+/* Oh god, we have our own string type? Why?
+ 
+ This grew out of a desire to support both char and wchar_t strings. Originally this was done with pervasive use of templates, but it became insane. So the first thing that rstring_t does is abstract away character widths, without using templates.
+ 
+ A second requirement is to track offsets, so that (e.g.) when we find a parse error, we know the location in the docopt spec and can return that information. Originally this was done by passing around ranges everywhere, and being careful to keep track of the original string from which the ranges came, and this was factored out of that: we have a base pointer and a range.
+ 
+ A third requirement is to have excellent performance with low memory usage. rstring_t is a small value type which does not allocate memory.
+ 
+ The biggest risk of rstring_t is lifetime control. The base pointer is not managed, so nothing prevents you from creating an rstring_t pointing at a std::string and then deallocating that string. docopt does not have long-running processes so it is generally pretty easy to reason about lifetimes, but be careful to ensure that rstring_ts do not outlive their source.
+ 
+ Note that rstring_ts are not null terminated.
+*/
 class rstring_t {
 public:
     typedef uint32_t char_t;
@@ -128,16 +139,6 @@ private:
         this->start_ += amt;
         this->length_ -= amt;
         return result;
-    }
-
-
-    
-    static inline unsigned int unreachable() {
-#if defined(__clang__) || defined(__GNUC__)
-        __builtin_unreachable();
-#endif
-        assert(false && "Unreachable code reached");
-        return 0;
     }
     
 public:
