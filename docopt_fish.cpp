@@ -418,7 +418,7 @@ static rstring_t find_header(const rstring_t &src) {
     return result;
 }
 
-/* Given a variable spec, parse out a condition map */
+/* Given a variable spec, parse out a command map */
 static variable_command_map_t parse_one_variable_command_spec(const rstring_t &spec, error_list_t *out_errors) {
     // A specification look like this:
     // <pid> stuff
