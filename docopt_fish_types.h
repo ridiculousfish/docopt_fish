@@ -28,7 +28,18 @@ OPEN_DOCOPT_IMPL
  
  Note that rstring_ts are not null terminated.
 */
+
 class rstring_t {
+    
+    typedef uint8_t narrow_char_t;
+/* Check size of wchar_t */
+#if WCHAR_MAX > 0x10000
+    /* 32 bit we guess */
+    typedef uint32_t wide_char_t;
+#else
+    typedef uint16_t wide_char_t;
+#endif
+    
 public:
     typedef uint32_t char_t;
 
@@ -36,11 +47,9 @@ private:
     size_t start_;
     size_t length_;
     const void *base_;
-    // note you can use shift to multiply by a width
     enum width_t {
-        width1 = 0,
-        width2 = 1,
-        width4 = 2
+        width_narrow = 0,
+        width_wide = 1
     } width_;
 
     rstring_t(const void *base, size_t start, size_t length, width_t width) : start_(start), length_(length), base_(base), width_(width) {}
@@ -135,12 +144,10 @@ private:
     template<typename T1>
     int compare_internal1(const rstring_t &rhs) const {
         switch (rhs.width()) {
-            case width1:
-                return compare_internal2<T1, uint8_t>(*this, rhs);
-            case width2:
-                return compare_internal2<T1, uint16_t>(*this, rhs);
-            case width4:
-                return compare_internal2<T1, uint32_t>(*this, rhs);
+            case width_narrow:
+                return compare_internal2<T1, narrow_char_t>(*this, rhs);
+            case width_wide:
+                return compare_internal2<T1, wide_char_t>(*this, rhs);
         }
     }
     
@@ -197,12 +204,10 @@ public:
         assert(idx <= length_);
         size_t offset = idx + this->start_;
         switch (this->width()) {
-            case width1:
-                return this->base_as<uint8_t>()[offset];
-            case width2:
-                return this->base_as<uint16_t>()[offset];
-            case width4:
-                return this->base_as<uint32_t>()[offset];
+            case width_narrow:
+                return this->base_as<narrow_char_t>()[offset];
+            case width_wide:
+                return this->base_as<wide_char_t>()[offset];
         }
     }
     
@@ -214,32 +219,27 @@ public:
     // Finds needle in self, and returns the location or npos
     size_t find(const char *needle) const {
         switch (this->width()) {
-            case width1:
-                return this->find_internal<uint8_t, false>(needle);
-            case width2:
-                return this->find_internal<uint16_t, false>(needle);
-            case width4:
-                return this->find_internal<uint32_t, false>(needle);
+            case width_narrow:
+                return this->find_internal<narrow_char_t, false>(needle);
+            case width_wide:
+                return this->find_internal<wide_char_t, false>(needle);
         }
     }
     
     size_t find_case_insensitive(const char *needle) const {
         switch (this->width()) {
-            case width1:
-                return this->find_internal<uint8_t, true>(needle);
-            case width2:
-                return this->find_internal<uint16_t, true>(needle);
-            case width4:
-                return this->find_internal<uint32_t, true>(needle);
+            case width_narrow:
+                return this->find_internal<narrow_char_t, true>(needle);
+            case width_wide:
+                return this->find_internal<wide_char_t, true>(needle);
         }
     }
     
     template<typename T>
     static width_t resolve_width() {
         switch (sizeof(T)) {
-            case 1: return width1;
-            case 2: return width2;
-            case 4: return width4;
+            case sizeof(narrow_char_t): return width_narrow;
+            case sizeof(wide_char_t): return width_wide;
             default:
                 assert(false && "Invalid width");
         }
@@ -247,12 +247,10 @@ public:
     
     size_t find(char_t needle) const {
         switch (this->width()) {
-            case width1:
-                return this->find_1_internal<uint8_t>(needle);
-            case width2:
-                return this->find_1_internal<uint16_t>(needle);
-            case width4:
-                return this->find_1_internal<uint32_t>(needle);
+            case width_narrow:
+                return this->find_1_internal<narrow_char_t>(needle);
+            case width_wide:
+                return this->find_1_internal<wide_char_t>(needle);
         }
     }
 
@@ -294,12 +292,10 @@ public:
         }
         
         switch (this->width()) {
-            case width1:
-                return this->compare_internal1<uint8_t>(rhs);
-            case width2:
-                return this->compare_internal1<uint16_t>(rhs);
-            case width4:
-                return this->compare_internal1<uint32_t>(rhs);
+            case width_narrow:
+                return this->compare_internal1<narrow_char_t>(rhs);
+            case width_wide:
+                return this->compare_internal1<wide_char_t>(rhs);
         }
     }
     
@@ -363,12 +359,10 @@ public:
     template<scan_predicate_t F>
     rstring_t scan_while() {
         switch (this->width()) {
-            case width1:
-                return this->scan_while_internal<uint8_t, F>();
-            case width2:
-                return this->scan_while_internal<uint16_t, F>();
-            case width4:
-                return this->scan_while_internal<uint32_t, F>();
+            case width_narrow:
+                return this->scan_while_internal<narrow_char_t, F>();
+            case width_wide:
+                return this->scan_while_internal<wide_char_t, F>();
         }
     }
 
@@ -435,13 +429,13 @@ public:
         return this->substr(left, right - left);
     }
 
-    explicit rstring_t() : start_(0), length_(0), base_(NULL), width_(width1) {}
+    explicit rstring_t() : start_(0), length_(0), base_(NULL), width_(width_narrow) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
     template<typename stdchar_t>
     explicit rstring_t(const std::basic_string<stdchar_t> &b) : start_(0), length_(b.length()), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
     
-    explicit rstring_t(const char *s, size_t len) : start_(0), length_(len), base_(s), width_(width1) {}
+    explicit rstring_t(const char *s, size_t len) : start_(0), length_(len), base_(s), width_(width_narrow) {}
 };
 
 
