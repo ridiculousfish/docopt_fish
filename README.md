@@ -67,7 +67,7 @@ fish_docopt usage specification syntax has the following differences from docopt
           	   Usage: prog [--option1 --option2]			   
 
 	docopt interprets this as making --option1 and --option2 both independently optional. fish_docopt interprets this as requiring --option1 to be followed by --option2. Rationale: this is more consistent, and it is hard to find commands that depend on the docopt behavior. Independently optional commands should be specified with independent brackets.
-10. 'Variable Commands' section. Lines beginning with a variable name like "<foo>" can be used to describe what values are allowed for variables. Example:
+10. 'Variable Commands' section. Lines beginning with a variable name like `<foo>` can be used to describe what values are allowed for variables. Example:
     
           	   cd <dir>
                <dir> echo */
