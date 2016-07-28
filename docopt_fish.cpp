@@ -30,7 +30,8 @@ typedef std::vector<error_t> error_list_t;
 typedef std::vector<size_t> index_list_t;
 
 /* Class representing a metadata map. Keys are options and variables. */
-typedef std::map<rstring_t, base_metadata_t<rstring_t> > metadata_map_t;
+typedef base_metadata_t<rstring_t> rmetadata_t;
+typedef std::map<rstring_t, rmetadata_t> metadata_map_t;
 
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
@@ -426,20 +427,21 @@ static rstring_t find_header(const rstring_t &src) {
     return result;
 }
 
-/* Given a variable spec, parse out a command map */
-static metadata_map_t parse_one_variable_command_spec(const rstring_t &spec, error_list_t *out_errors) {
-    // A specification look like this:
-    // <pid> stuff
-    metadata_map_t result;
+// Given a variable spec, parse out a command
+// A specification look like this:
+// <pid> stuff
+// Return the variable name <pid> and the command stuff by reference
+static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *out_variable_name, rstring_t *out_command, error_list_t *out_errors) {
+    bool result = false;
     assert(! spec.empty() && spec[0] == '<');
     const size_t close_bracket = spec.find('>');
     if (close_bracket == rstring_t::npos) {
         append_docopt_error(out_errors, spec, error_missing_close_variable, "No > to balance this <");
     } else {
         assert(close_bracket < spec.length());
-        rstring_t key = spec.substr(0, close_bracket+1).trim_whitespace();
-        rstring_t value = spec.substr_from(close_bracket+1).trim_whitespace();
-        result[key].command = value;
+        *out_variable_name = spec.substr(0, close_bracket+1).trim_whitespace();
+        *out_command = spec.substr_from(close_bracket+1).trim_whitespace();
+        result = true;
     }
     return result;
 }
@@ -855,7 +857,7 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
 
 
 /* The result of parsing argv */
-typedef std::map<rstring_t, base_argument_t<rstring_t> > option_rmap_t;
+typedef std::map<rstring_t, argument_t> option_rmap_t;
 
 struct match_state_t {
     // Map from option names to arguments
@@ -1275,7 +1277,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
                 const rstring_t &variable_name = opt_in_doc.value;
                 
                 const rstring_t &value = resolved_opt.value_in_arg;
-                state->argument_values[variable_name].values.push_back(value);
+                state->argument_values[variable_name].values.push_back(value.std_string());
             }
             
             successful_match = true;
@@ -1365,10 +1367,10 @@ static void match(const variable_clause_t &node, match_state_t *state, match_con
     const rstring_t &name = node.word;
     if (ctx->has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
-        base_argument_t<rstring_t> *arg = &state->argument_values[name];
+        argument_t *arg = &state->argument_values[name];
         const positional_argument_t &positional = ctx->acquire_next_positional(state);
         const rstring_t &positional_value = ctx->argv.at(positional.idx_in_argv);
-        arg->values.push_back(positional_value);
+        arg->values.push_back(positional_value.std_string());
         ctx->try_mark_fully_consumed(state);
         state_destructive_append_to(state, resulting_states);
     } else {
@@ -1380,18 +1382,6 @@ static void match(const variable_clause_t &node, match_state_t *state, match_con
             state_destructive_append_to(state, resulting_states);
         }
     }
-}
-
-
-template<typename stdstring_t>
-base_argument_t<stdstring_t> finalize_argument(const base_argument_t<rstring_t> &arg) {
-    base_argument_t<stdstring_t> result;
-    result.count = arg.count;
-    result.values.resize(arg.values.size());
-    for (size_t i=0; i < arg.values.size(); i++) {
-        arg.values[i].copy_to(&result.values[i]);
-    }
-    return result;
 }
 
 
@@ -1518,15 +1508,14 @@ public:
                 
             } else if (first_char == '<') {
                 // It's a variable command spec
-                const metadata_map_t new_var_cmds = parse_one_variable_command_spec(line_group, out_errors);
-                for (metadata_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
-                    base_metadata_t<rstring_t> *md = &this->names_to_metadata[iter->first];
+                rstring_t variable_name, variable_command;
+                if (parse_one_variable_command_spec(line_group, &variable_name, &variable_command, out_errors)) {
+                    base_metadata_t<rstring_t> *md = &this->names_to_metadata[variable_name];
                     if (! md->command.empty()) {
                         append_docopt_error(out_errors, line_group, error_one_variable_multiple_commands, "Duplicate command for variable");
                     }
-                    md->command = iter->second.command;
+                    md->command = variable_command;
                 }
-                
             } else if (isalnum(first_char) || first_char == '_') {
                 // It's a usage spec. We will come back to this.
                 usage_specs.push_back(line_group);
@@ -1552,16 +1541,14 @@ public:
         }
     }
     
-    template<typename stdstring_t>
-    static void maybe_append(stdstring_t *storage, const stdstring_t &str) {
+    static void maybe_append(string_t *storage, const string_t &str) {
         if (! str.empty()) {
             storage->append(str);
             storage->push_back('\n');
         }
     }
     
-    template<typename stdstring_t>
-    rstring_t slice_string(size_t *cursor, const stdstring_t &str) {
+    rstring_t slice_string(size_t *cursor, const string_t &str) {
         size_t start = *cursor, extent = str.size();
         assert(start + extent <= this->rsource.length());
         if (extent > 0)
@@ -1573,12 +1560,11 @@ public:
     }
     
     /* Given a list of direct options, create a docopt_impl (allocated with new), populating its instance variables from the direct options. */
-    template<typename stdstring_t>
-    static docopt_impl *build_from_annotated_options(const std::vector<base_annotated_option_t<stdstring_t> > &dopts) {
-        typedef base_annotated_option_t<stdstring_t> doption_t;
+    static docopt_impl *build_from_annotated_options(const std::vector<annotated_option_t > &dopts) {
+        typedef annotated_option_t doption_t;
         const size_t count = dopts.size();
         /* We need to build our storage first. */
-        stdstring_t storage;
+        string_t storage;
         for (size_t i=0; i < count; i++) {
             const doption_t &dopt = dopts.at(i);
             maybe_append(&storage, dopt.option);
@@ -1638,12 +1624,11 @@ public:
     }
     
     /* Given an option map (using rstring), convert it to an option map using the given std::basic_string type. */
-    template<typename stdstring_t>
-    typename argument_parser_t<stdstring_t>::argument_map_t finalize_option_map(const option_rmap_t &map, parse_flags_t flags) const {
-        typename argument_parser_t<stdstring_t>::argument_map_t result;
+    argument_parser_t::argument_map_t finalize_option_map(const option_rmap_t &map, parse_flags_t flags) const {
+        argument_parser_t::argument_map_t result;
         // Turn our string_ts into std::strings
         for (option_rmap_t::const_iterator iter = map.begin(); iter != map.end(); ++iter) {
-            result[iter->first.std_string<stdstring_t>()] = finalize_argument<stdstring_t>(iter->second);
+            result[iter->first.std_string()] = iter->second;
         }
         
         // Handle empty args
@@ -1655,20 +1640,20 @@ public:
                 const rstring_t &name = opt.best_name();
                 // We merely invoke operator[]; this will do the insertion with a default value if necessary.
                 // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
-                result[name.std_string<stdstring_t>()];
+                result[name.std_string()];
                 
                 if (opt.has_value() && ! opt.default_value.empty()) {
                     // Maybe apply the default value for the variable
-                    stdstring_t variable_name = opt.value.std_string<stdstring_t>();
-                    base_argument_t<stdstring_t> *var_arg = &result[variable_name];
+                    string_t variable_name = opt.value.std_string();
+                    argument_t *var_arg = &result[variable_name];
                     if (var_arg->values.empty()) {
-                        var_arg->values.push_back(opt.default_value.std_string<stdstring_t>());
+                        var_arg->values.push_back(opt.default_value.std_string());
                     }
                 }
             }
             
             // Fill in variables
-            stdstring_t name;
+            string_t name;
             for (size_t i=0; i < all_variables.size(); i++) {
                 all_variables.at(i).copy_to(&name);
                 // As above, we merely invoke operator[]
@@ -1710,13 +1695,13 @@ public:
                 std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
                 for (option_rmap_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
                     const rstring_t &name = iter->first;
-                    const base_argument_t<rstring_t> &arg = iter->second;
-                    fprintf(stderr, "\t%ls: ", name.std_string<std::wstring>().c_str());
+                    const argument_t &arg = iter->second;
+                    fprintf(stderr, "\t%ls: ", name.std_string().c_str());
                     for (size_t j=0; j < arg.values.size(); j++) {
                         if (j > 0) {
                             fprintf(stderr, ", ");
                         }
-                        fprintf(stderr, "%ls", arg.values.at(j).std_string<std::wstring>().c_str());
+                        fprintf(stderr, "%ls", arg.values.at(j).c_str());
                     }
                     std::cerr << '\n';
                 }
@@ -1823,7 +1808,7 @@ public:
     }
     
     // TODO: make this const by stop touching error_list
-    void best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments, option_rmap_t *out_option_map)
+    void best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments, option_rmap_t *out_option_map) const
     {
         positional_argument_list_t positionals;
         resolved_option_list_t resolved_options;
@@ -1887,37 +1872,35 @@ public:
         return result;
     }
     
-    template<typename stdstring_t>
-    std::vector<stdstring_t> get_command_names() const {
+    std::vector<string_t> get_command_names() const {
         /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
-        std::vector<stdstring_t> result;
+        std::vector<string_t> result;
         std::set<rstring_t> seen;
         for (size_t i=0; i < this->usages.size(); i++) {
             const usage_t &usage = this->usages.at(i);
             const rstring_t name = usage.prog_name;
             if (! name.empty() && seen.insert(name).second) {
-                result.push_back(name.std_string<stdstring_t>());
+                result.push_back(name.std_string());
             }
         }
         return result;
         
     }
     
-    template<typename stdstring_t>
-    std::vector<stdstring_t> get_variables() const {
-        std::vector<stdstring_t> result;
+    std::vector<string_t> get_variables() const {
+        std::vector<string_t> result;
         
         // Include explicit variables
         for (size_t i=0; i < this->all_variables.size(); i++) {
             const rstring_t &r = this->all_variables.at(i);
-            result.push_back(r.std_string<stdstring_t>());
+            result.push_back(r.std_string());
         }
         
         // Include variables that are part of options
         for (size_t i=0; i < this->all_options.size(); i++) {
             const rstring_t &r = this->all_options.at(i).value;
             if (! r.empty()) {
-                result.push_back(r.std_string<stdstring_t>());
+                result.push_back(r.std_string());
             }
         }
         
@@ -1929,8 +1912,7 @@ public:
     
 }; // docopt_impl
 
-template<typename stdstring_t>
-std::vector<argument_status_t> argument_parser_t<stdstring_t>::validate_arguments(const std::vector<stdstring_t> &argv, parse_flags_t flags) const
+std::vector<argument_status_t> argument_parser_t::validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const
 {
     size_t arg_count = argv.size();
     std::vector<argument_status_t> result(arg_count, status_valid);
@@ -1947,59 +1929,54 @@ std::vector<argument_status_t> argument_parser_t<stdstring_t>::validate_argument
     return result;
 }
 
-template<typename string_t>
-std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const
+
+string_list_t argument_parser_t::suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const
 {
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
     rstring_list_t suggestions = impl->suggest_next_argument(argv_rstrs, flags);
     
     size_t length = suggestions.size();
-    std::vector<string_t> result(length);
+    string_list_t result(length);
     for (size_t i=0; i < length; i++) {
         suggestions[i].copy_to(&result[i]);
     }
     return result;
 }
 
-template<typename stdstring_t>
-base_metadata_t<stdstring_t> argument_parser_t<stdstring_t>::metadata_for_name(const stdstring_t &var) const
+metadata_t argument_parser_t::metadata_for_name(const string_t &var) const
 {
     const base_metadata_t<rstring_t> md = impl->metadata_for_name(rstring_t(var));
-    base_metadata_t<stdstring_t> result;
-    result.command = md.command.std_string<stdstring_t>();
-    result.condition = md.condition.std_string<stdstring_t>();
-    result.description = md.description.std_string<stdstring_t>();
+    metadata_t result;
+    result.command = md.command.std_string();
+    result.condition = md.condition.std_string();
+    result.description = md.description.std_string();
     result.tag = md.tag;
     return result;
 }
 
-template<typename stdstring_t>
-std::vector<stdstring_t> argument_parser_t<stdstring_t>::get_command_names() const
+string_list_t argument_parser_t::get_command_names() const
 {
-    return impl->get_command_names<stdstring_t>();
+    return impl->get_command_names();
 }
 
-template<typename stdstring_t>
-std::vector<stdstring_t> argument_parser_t<stdstring_t>::get_variables() const
+std::vector<string_t> argument_parser_t::get_variables() const
 {
-    return impl->get_variables<stdstring_t>();
+    return impl->get_variables();
 }
 
-template<typename stdstring_t>
-typename argument_parser_t<stdstring_t>::argument_map_t
-argument_parser_t<stdstring_t>::parse_arguments(const std::vector<stdstring_t> &argv,
+argument_parser_t::argument_map_t
+argument_parser_t::parse_arguments(const std::vector<string_t> &argv,
                                                 parse_flags_t flags,
                                                 error_list_t *out_errors,
                                                 std::vector<size_t> *out_unused_arguments) const {
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
     option_rmap_t option_rmap;
     impl->best_assignment_for_argv(argv_rstrs, flags, out_errors, out_unused_arguments, &option_rmap);
-    return impl->finalize_option_map<stdstring_t>(option_rmap, flags);
+    return impl->finalize_option_map(option_rmap, flags);
 }
 
 
-template<typename stdstring_t>
-bool argument_parser_t<stdstring_t>::set_doc(const stdstring_t &doc, error_list_t *out_errors) {
+bool argument_parser_t::set_doc(const string_t &doc, error_list_t *out_errors) {
     docopt_impl *new_impl = new docopt_impl(doc);
     
     new_impl->populate_by_walking_lines(out_errors);
@@ -2014,8 +1991,7 @@ bool argument_parser_t<stdstring_t>::set_doc(const stdstring_t &doc, error_list_
     return preflighted;
 }
 
-template<typename stdstring_t>
-void argument_parser_t<stdstring_t>::set_options(const std::vector<base_annotated_option_t<stdstring_t> > &opts)
+void argument_parser_t::set_options(const std::vector<annotated_option_t > &opts)
 {
     delete this->impl; // may be null
     this->impl = docopt_impl::build_from_annotated_options(opts);
@@ -2023,16 +1999,16 @@ void argument_parser_t<stdstring_t>::set_options(const std::vector<base_annotate
 }
 
 /* Constructors */
-template<typename string_t>
-argument_parser_t<string_t>::argument_parser_t() : impl(NULL) {}
 
-template<typename string_t>
-argument_parser_t<string_t>::argument_parser_t(const string_t &doc, error_list_t *out_errors) : impl(NULL) {
+argument_parser_t::argument_parser_t() : impl(NULL) {}
+
+
+argument_parser_t::argument_parser_t(const string_t &doc, error_list_t *out_errors) : impl(NULL) {
     this->set_doc(doc, out_errors);
 }
 
-template<typename string_t>
-argument_parser_t<string_t>::argument_parser_t(const argument_parser_t &rhs) {
+
+argument_parser_t::argument_parser_t(const argument_parser_t &rhs) {
     if (rhs.impl == NULL) {
         this->impl = NULL;
     } else {
@@ -2040,8 +2016,8 @@ argument_parser_t<string_t>::argument_parser_t(const argument_parser_t &rhs) {
     }
 }
 
-template<typename string_t>
-argument_parser_t<string_t> &argument_parser_t<string_t>::operator=(const argument_parser_t &rhs) {
+
+argument_parser_t &argument_parser_t::operator=(const argument_parser_t &rhs) {
     if (this != &rhs) {
         delete this->impl;
         if (rhs.impl == NULL) {
@@ -2055,16 +2031,10 @@ argument_parser_t<string_t> &argument_parser_t<string_t>::operator=(const argume
 
 
 /* Destructor */
-template<typename string_t>
-argument_parser_t<string_t>::~argument_parser_t<string_t>() {
+
+argument_parser_t::~argument_parser_t() {
     delete impl; // may be null
 }
 
 // close the namespace
 CLOSE_DOCOPT_IMPL
-
-// Force template instantiation
-template class docopt_fish::argument_parser_t<std::string>;
-template class docopt_fish::argument_parser_t<std::wstring>;
-
-

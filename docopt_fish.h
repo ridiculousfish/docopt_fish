@@ -7,7 +7,9 @@
 
 namespace docopt_fish
 {
-    /* Our docopt classes are parameterized by a string, expected to be either std::wstring or std::string */
+    typedef std::wstring string_t;
+    typedef std::vector<string_t> string_list_t;
+    
     enum {
         flags_default = 0U,
         
@@ -51,10 +53,9 @@ namespace docopt_fish
     };
     
     /* Represents an argument in the result */
-    template<typename string_t>
-    struct base_argument_t {
+    struct argument_t {
         /* The values specified in the argument. If this argument is a flag (like -d), this will be empty. If the argument has a single value, this will have a single value. If the argument has a default value, and no value was found in argv, the default will be contained in here (and count will be 0) */
-        std::vector<string_t> values;
+        string_list_t values;
         
         /* How many times the argument appeared. This is typically 1 but may be greater than 1 for repeated arguments ("-v -v"), or 0 for missing arguments. */
         unsigned int count;
@@ -65,22 +66,23 @@ namespace docopt_fish
         }
         
         /* Constructor */
-        base_argument_t() : count(0) {}
+        argument_t() : count(0) {}
     };
-
-    template<typename string_t>
+    
+    template<typename STR>
     struct base_metadata_t {
-        string_t command;
-        string_t condition;
-        string_t description;
+        STR command;
+        STR condition;
+        STR description;
         long tag; // arbitrary application use
         
         base_metadata_t() : tag(0) {}
     };
     
+    typedef base_metadata_t<string_t> metadata_t;
+    
     /* A "direct" option for constructing arguments parsers programatically. */
-    template<typename string_t>
-    struct base_annotated_option_t
+    struct annotated_option_t
     {
         enum
         {
@@ -99,22 +101,18 @@ namespace docopt_fish
         
         // Metadata associated with the option
         // Note for historic reasons, this applies equally to both the option and variable
-        base_metadata_t<string_t> metadata;
+        metadata_t metadata;
     };
     
     class docopt_impl;
     
     /* A processed docopt file is called an argument parser. */
-    template<typename string_t>
     class argument_parser_t {
         /* Guts */
         docopt_impl *impl;
         
         public:
         
-        typedef base_metadata_t<string_t> metadata_t;
-        typedef base_annotated_option_t<string_t> annotated_option_t;
-        typedef base_argument_t<string_t> argument_t;
         typedef std::map<string_t, argument_t> argument_map_t;
         typedef std::vector<error_t> error_list_t;
         
@@ -125,22 +123,22 @@ namespace docopt_fish
         void set_options(const std::vector<annotated_option_t> &opts);
         
         /* Given a list of arguments, this returns a corresponding parallel array validating the arguments */
-        std::vector<argument_status_t> validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const;
+        std::vector<argument_status_t> validate_arguments(const string_list_t &argv, parse_flags_t flags) const;
         
         /* Given a list of arguments, returns an array of potential next values. A value may be either a literal flag -foo, or a variable; these may be distinguished by the <> surrounding the variable. */
-        std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const;
+        string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const;
         
         /** Given a name (either an option or a variable), returns any metadata for that name */
         metadata_t metadata_for_name(const string_t &name) const;
                 
         /* Returns the list of command names (i.e. prog in `Usage: prog [options]`. Duplicate names are only returned once. */
-        std::vector<string_t> get_command_names() const;
+        string_list_t get_command_names() const;
 
         /* Returns the list of variables like '<foo>'. Duplicate names are only returned once. */
-        std::vector<string_t> get_variables() const;
+        string_list_t get_variables() const;
         
         /* Given a list of arguments (argv), parse them, producing a map from option names to values */
-        argument_map_t parse_arguments(const std::vector<string_t> &argv,
+        argument_map_t parse_arguments(const string_list_t &argv,
                         parse_flags_t flags,
                         error_list_t *out_errors = NULL,
                         std::vector<size_t> *out_unused_arguments = NULL) const;

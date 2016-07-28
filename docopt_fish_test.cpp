@@ -57,7 +57,6 @@ static const wchar_t *wide(const string &t) {
     return result[idx].c_str();
 }
 
-template<typename string_t>
 string_t to_string(const char *x) {
     return string_t(x, x + strlen(x));
 }
@@ -66,10 +65,10 @@ string_t to_string(const char *x) {
 #define do_arg_test(e) do { if (! (e)) err("Test %lu.%lu failed on line %ld: %s", test_idx, arg_idx, (long)__LINE__, #e); } while (0)
 
 /* Splits up a string via a delimiter string, returning a list of some string type */
-template<typename string_t>
-static vector<string_t> split(const string_t &str, const char *delim) {
-    vector<string_t> result;
-    const string_t delim_string = to_string<string_t>(delim);
+
+static string_list_t split(const string_t &str, const char *delim) {
+    string_list_t result;
+    const string_t delim_string = to_string(delim);
     size_t cursor = 0;
     while (cursor < str.size()) {
         size_t delim_pos = str.find(delim_string, cursor);
@@ -83,10 +82,10 @@ static vector<string_t> split(const string_t &str, const char *delim) {
 }
 
 /* Joins a vector of strings via a delimiter */
-template<typename string_t>
-string_t join(const vector<string_t> &vec, const char *delim) {
+
+string_t join(const string_list_t &vec, const char *delim) {
     string_t result;
-    const string_t delim_string = to_string<string_t>(delim);
+    const string_t delim_string = to_string(delim);
     for (size_t i=0; i < vec.size(); i++) {
         if (i > 0) {
             result.append(delim_string);
@@ -96,14 +95,14 @@ string_t join(const vector<string_t> &vec, const char *delim) {
     return result;
 }
 
-template<typename string_t>
+
 static bool is_percent_digit(const string_t &val) {
     return val.size() == 2 && val.at(0) == '%' && val.at(1) >= '0' && val.at(1) <= '9';
 }
 
-template<typename string_t>
-static vector<string_t> split_nonempty(const char *str, char delimiter) {
-    vector<string_t> result;
+
+static string_list_t split_nonempty(const char *str, char delimiter) {
+    string_list_t result;
     const char *cursor = str;
     for (;;) {
         const char *next = strchr(cursor, delimiter);
@@ -130,10 +129,10 @@ static vector<string_t> split_nonempty(const char *str, char delimiter) {
 }
 
 /* joined_expected_results is a newline-delimited "map" of the form key:value. Make a real map out of it. */
-template<typename string_t>
+
 static map<string_t, string_t> parse_expected_results(const char *joined_expected_results) {
     map<string_t, string_t> expected;
-    vector<string_t> expected_lines = split_nonempty<string_t>(joined_expected_results, '\n');
+    string_list_t expected_lines = split_nonempty(joined_expected_results, '\n');
     for (size_t i=0; i < expected_lines.size(); i++) {
         const string_t &str = expected_lines.at(i);
         size_t colon = str.find(':');
@@ -147,21 +146,21 @@ static map<string_t, string_t> parse_expected_results(const char *joined_expecte
 }
 
 
-template<typename string_t>
+
 static void run_1_suggestion_test(const char *usage, const char *joined_argv, const char *joined_expected_suggestions, size_t test_idx, size_t arg_idx) {
     using namespace docopt_fish;
     
     /* Separate argv by spaces */
-    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    string_list_t argv = split_nonempty(joined_argv, ' ');
     
     /* Prepend the program name for every argument */
-    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    argv.insert(argv.begin(), to_string("prog"));
     
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
     std::vector<error_t> errors;
-    argument_parser_t<string_t> parser(usage_str, &errors);
+    argument_parser_t parser(usage_str, &errors);
     
     if (! errors.empty()) {
         err("Suggestion test %lu.%lu was expected to succeed, but instead errored:", test_idx, arg_idx);
@@ -170,12 +169,12 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
         }
     } else {
         /* Get the suggested arguments, then sort and join them */
-        std::vector<string_t> suggestions = parser.suggest_next_argument(argv, flag_match_allow_incomplete);
+        string_list_t suggestions = parser.suggest_next_argument(argv, flag_match_allow_incomplete);
         sort(suggestions.begin(), suggestions.end());
         const string_t sugg_string = join(suggestions, ", ");
         
         /* Split, sort, and join expected suggestions */
-        std::vector<string_t> expected_vector = split(to_string<string_t>(joined_expected_suggestions), ", ");
+        string_list_t expected_vector = split(to_string(joined_expected_suggestions), ", ");
         sort(expected_vector.begin(), expected_vector.end());
         const string_t expected_string = join(expected_vector, ", ");
         
@@ -185,16 +184,16 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     }
 }
 
-template<typename string_t>
+
 static void run_1_correctness_test(const char *usage, const char *joined_argv, const char *joined_expected_results, size_t test_idx, size_t arg_idx) {
-    typedef map<string_t, base_argument_t<string_t> > arg_map_t;
+    typedef map<string_t, argument_t > arg_map_t;
     typedef map<string_t, string_t> string_map_t;
     
     /* Separate argv by spaces */
-    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    string_list_t argv = split_nonempty(joined_argv, ' ');
     
     /* Prepend the program name for every argument */
-    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    argv.insert(argv.begin(), to_string("prog"));
     
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
@@ -203,7 +202,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     arg_map_t results;
     std::vector<error_t> error_list;
     vector<size_t> unused_args;
-    argument_parser_t<string_t> parser;
+    argument_parser_t parser;
     bool parse_success = parser.set_doc(usage_str, &error_list);
     if (parse_success) {
         results = parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &error_list, &unused_args);
@@ -221,23 +220,23 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
         }
     } else if (! did_error && ! expects_error) {
         /* joined_expected_results is a newline-delimited "map" of the form key:value */
-        const string_map_t expected = parse_expected_results<string_t>(joined_expected_results);
+        const string_map_t expected = parse_expected_results(joined_expected_results);
         
         // Verify everything we expected appears in our map
-        for (typename string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
+        for (string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
             const string_t &key = iter->first;
             const string_t &val = iter->second;
-            typename arg_map_t::const_iterator arg_iter = results.find(key);
+            arg_map_t::const_iterator arg_iter = results.find(key);
             if (arg_iter == results.end()) {
                 err("Correctness test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, wide(key), wide(val));
             } else {
-                const base_argument_t<string_t> &arg = arg_iter->second;
+                const argument_t &arg = arg_iter->second;
                 /* The value here can be interpreted a few ways. If it is "True" or "False", it means we expect the argument to have no values, and to have a count of 1 or 0, respectively. If it is % followed by a one-digit number, it represents the count of the argument; values is expected to be empty. Otherwise, split the value about ', '; those are the values we expect. */
-                if (val == to_string<string_t>("True")) {
+                if (val == to_string("True")) {
                     /* A "true" means we expect the argument ot have no values, and to have appeared once */
                     do_arg_test(arg.count == 1);
                     do_arg_test(arg.values.empty());
-                } else if (val == to_string<string_t>("False") || val == to_string<string_t>("None")) {
+                } else if (val == to_string("False") || val == to_string("None")) {
                     do_arg_test(arg.count == 0);
                     do_arg_test(arg.values.empty());
                 } else if (is_percent_digit(val)) {
@@ -246,7 +245,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
                     do_arg_test(arg.count == expected_count);
                     do_arg_test(arg.values.empty());
                 } else {
-                    const vector<string_t> values = split(val, ", ");
+                    const string_list_t values = split(val, ", ");
                     do_arg_test(arg.values == values);
                     if (arg.values != values) {
                         err("Key '%ls' expected '%ls', found '%ls'", wide(key), wide(join(arg.values, ", ")), wide(val));
@@ -257,9 +256,9 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
         }
         
         // Verify nothing we didn't expect appears in our map
-        for (typename arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
+        for (arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
             const string_t &key = iter->first;
-            typename string_map_t::const_iterator result = expected.find(key);
+            string_map_t::const_iterator result = expected.find(key);
             if (result == expected.end()) {
                 err("Test %lu.%lu: Unexpected key %ls with count %u", test_idx, arg_idx, wide(key), iter->second.count);
             }
@@ -268,10 +267,10 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
 }
 
 
-template<typename string_t>
-static void run_1_annotated_option_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *joined_expected_results, const base_annotated_option_t<string_t> *dopt1, ...) {
+
+static void run_1_annotated_option_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *joined_expected_results, const annotated_option_t *dopt1, ...) {
     
-    typedef base_annotated_option_t<string_t> doption_t;
+    typedef annotated_option_t doption_t;
     
     std::vector<doption_t> dopts;
     dopts.push_back(*dopt1);
@@ -287,20 +286,20 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
     }
     va_end(va);
     
-    typedef map<string_t, base_argument_t<string_t> > arg_map_t;
+    typedef map<string_t, argument_t > arg_map_t;
     typedef map<string_t, string_t> string_map_t;
     
     /* Separate argv by spaces */
-    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    string_list_t argv = split_nonempty(joined_argv, ' ');
     
     /* Prepend the program name for every argument */
-    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    argv.insert(argv.begin(), to_string("prog"));
     
     /* Perform the parsing */
     arg_map_t results;
     std::vector<error_t> error_list;
     vector<size_t> unused_args;
-    argument_parser_t<string_t> parser;
+    argument_parser_t parser;
     parser.set_options(dopts);
     bool parse_success = true;
     if (parse_success) {
@@ -319,23 +318,23 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
         }
     } else if (! did_error && ! expects_error) {
         /* joined_expected_results is a newline-delimited "map" of the form key:value */
-        const string_map_t expected = parse_expected_results<string_t>(joined_expected_results);
+        const string_map_t expected = parse_expected_results(joined_expected_results);
         
         // Verify everything we expected appears in our map
-        for (typename string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
+        for (string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
             const string_t &key = iter->first;
             const string_t &val = iter->second;
-            typename arg_map_t::const_iterator arg_iter = results.find(key);
+            arg_map_t::const_iterator arg_iter = results.find(key);
             if (arg_iter == results.end()) {
                 err("Direct option test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, wide(key), wide(val));
             } else {
-                const base_argument_t<string_t> &arg = arg_iter->second;
+                const argument_t &arg = arg_iter->second;
                 /* The value here can be interpreted a few ways. If it is "True" or "False", it means we expect the argument to have no values, and to have a count of 1 or 0, respectively. If it is % followed by a one-digit number, it represents the count of the argument; values is expected to be empty. Otherwise, split the value about ', '; those are the values we expect. */
-                if (val == to_string<string_t>("True")) {
+                if (val == to_string("True")) {
                     /* A "true" means we expect the argument ot have no values, and to have appeared once */
                     do_arg_test(arg.count == 1);
                     do_arg_test(arg.values.empty());
-                } else if (val == to_string<string_t>("False") || val == to_string<string_t>("None")) {
+                } else if (val == to_string("False") || val == to_string("None")) {
                     do_arg_test(arg.count == 0);
                     do_arg_test(arg.values.empty());
                 } else if (is_percent_digit(val)) {
@@ -344,7 +343,7 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
                     do_arg_test(arg.count == expected_count);
                     do_arg_test(arg.values.empty());
                 } else {
-                    const vector<string_t> values = split(val, ", ");
+                    const string_list_t values = split(val, ", ");
                     do_arg_test(arg.values == values);
                     if (arg.values != values) {
                         err("Key '%ls' expected '%ls', found '%ls'", wide(key), wide(join(arg.values, ", ")), wide(val));
@@ -355,9 +354,9 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
         }
         
         // Verify nothing we didn't expect appears in our map
-        for (typename arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
+        for (arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
             const string_t &key = iter->first;
-            typename string_map_t::const_iterator result = expected.find(key);
+            string_map_t::const_iterator result = expected.find(key);
             if (result == expected.end()) {
                 err("Test %lu.%lu: Unexpected key %ls with count %u", test_idx, arg_idx, wide(key), iter->second.count);
             }
@@ -365,25 +364,25 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
     }
 }
 
-template<typename string_t>
+
 static void run_1_unused_argument_test(const char *usage, const char *joined_argv, const char *joined_expected_unused, size_t test_idx, size_t arg_idx) {
     
     /* Separate argv by spaces */
-    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    string_list_t argv = split_nonempty(joined_argv, ' ');
     
     /* Prepend the program name for every argument */
-    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    argv.insert(argv.begin(), to_string("prog"));
     
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
     vector<size_t> unused_arg_idxs;
-    argument_parser_t<string_t> parser(usage_str, NULL);
+    argument_parser_t parser(usage_str, NULL);
     parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, NULL, &unused_arg_idxs);
     
     /* Construct unused argument string */
-    vector<string_t> unused_args_vec;
+    string_list_t unused_args_vec;
     for (size_t i=0; i < unused_arg_idxs.size(); i++) {
         size_t idx = unused_arg_idxs.at(i);
         unused_args_vec.push_back(argv.at(idx));
@@ -392,7 +391,7 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
     const string_t actual_unused = join(unused_args_vec, ", ");
     
     /* Compare unused arguments */
-    std::vector<string_t> expected_unused_vec = split(to_string<string_t>(joined_expected_unused), ", ");
+    string_list_t expected_unused_vec = split(to_string(joined_expected_unused), ", ");
     sort(expected_unused_vec.begin(), expected_unused_vec.end());
     const string_t expected_unused = join(expected_unused_vec, ", ");
     
@@ -402,13 +401,13 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
 
 }
 
-template<typename string_t>
+
 static void run_1_command_test(const char *usage, const char *variable, const char *expected_command, size_t test_idx, size_t arg_idx) {
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t<string_t> parser(usage_str, NULL);
+    argument_parser_t parser(usage_str, NULL);
     
     const string_t var_string(variable, variable + strlen(variable));
     const string_t command_string = parser.metadata_for_name(var_string).command;
@@ -419,13 +418,13 @@ static void run_1_command_test(const char *usage, const char *variable, const ch
     }
 }
 
-template<typename string_t>
+
 static void run_1_usage_err_test(const char *usage, int expected_error_code, size_t test_idx, size_t arg_idx) {
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
     std::vector<error_t> error_list;
-    argument_parser_t<string_t> parser(usage_str, &error_list);
+    argument_parser_t parser(usage_str, &error_list);
     
     /* Check errors */
     if (error_list.empty()) {
@@ -437,20 +436,20 @@ static void run_1_usage_err_test(const char *usage, int expected_error_code, siz
     }
 }
 
-template<typename string_t>
+
 static void run_1_argv_err_test(const char *usage, const char *joined_argv, int expected_error_code, size_t test_idx, size_t arg_idx) {
     /* Separate argv by spaces */
-    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    string_list_t argv = split_nonempty(joined_argv, ' ');
     
     /* Prepend the program name for every argument */
-    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    argv.insert(argv.begin(), to_string("prog"));
     
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
     std::vector<error_t> error_list;
-    argument_parser_t<string_t> parser(usage_str, &error_list);
+    argument_parser_t parser(usage_str, &error_list);
     
     /* Check arguments */
     parser.parse_arguments(argv, flag_resolve_unambiguous_prefixes | flag_short_options_strict_separators, &error_list);
@@ -465,15 +464,15 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
 
 
 // Here expected_valids is a string containing 0s or 1s to determine which arguments are expected to be valid, i.e. "00101"
-template<typename string_t>
+
 static void run_1_validation_test(const char *usage, const char *joined_argv, const char *expected_valids_str, size_t test_idx, size_t arg_idx) {
     /* Separate argv by spaces */
-    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    string_list_t argv = split_nonempty(joined_argv, ' ');
     
     std::string expected_valids = expected_valids_str;
     
     /* Prepend the program name for every argument */
-    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    argv.insert(argv.begin(), to_string("prog"));
     
     assert(expected_valids.size() + 1 == argv.size());
     
@@ -481,7 +480,7 @@ static void run_1_validation_test(const char *usage, const char *joined_argv, co
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t<string_t> parser(usage_str, NULL);
+    argument_parser_t parser(usage_str, NULL);
     
     /* Validate arguments */
     std::vector<argument_status_t> statuses = parser.validate_arguments(argv, flag_resolve_unambiguous_prefixes | flag_match_allow_incomplete);
@@ -505,13 +504,13 @@ static void run_1_validation_test(const char *usage, const char *joined_argv, co
 }
 
 
-template<typename string_t>
+
 static void run_1_description_test(const char *usage, const char *option, const char *expected_description, size_t test_idx, size_t arg_idx) {
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t<string_t> parser(usage_str, NULL);
+    argument_parser_t parser(usage_str, NULL);
     
     const string_t option_string(option, option + strlen(option));
     const string_t description_string = parser.metadata_for_name(option_string).description;
@@ -532,7 +531,7 @@ struct testcase_t {
     args_t args[8];
 };
 
-template<typename string_t>
+
 static void test_correctness()
 {
     const testcase_t testcases[] =
@@ -1939,35 +1938,35 @@ static void test_correctness()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_correctness_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            run_1_correctness_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
 
-template<typename string_t>
-static base_metadata_t<string_t> build_metadata(const char *command, const char *description, const char *condition, long tag) {
-    base_metadata_t<string_t> result;
+
+static metadata_t build_metadata(const char *command, const char *description, const char *condition, long tag) {
+    metadata_t result;
     const string_t empty;
-    result.command = command ? to_string<string_t>(command) : empty;
-    result.description = description ? to_string<string_t>(description) : empty;
-    result.condition = condition ? to_string<string_t>(condition) : empty;
+    result.command = command ? to_string(command) : empty;
+    result.description = description ? to_string(description) : empty;
+    result.condition = condition ? to_string(condition) : empty;
     result.tag = tag;
     return result;
 }
 
-template<typename string_t>
+
 static void test_annotated_options()
 {
-    typedef base_annotated_option_t<string_t> doption_t;
+    typedef annotated_option_t doption_t;
     
     const string_t empty;
     
     /* Case 0 */
     doption_t d11 = {
         doption_t::single_short,
-        to_string<string_t>("-a"),
+        to_string("-a"),
         empty,
-        build_metadata<string_t>(
+        build_metadata(
             "",
             "",
             "All",
@@ -1977,9 +1976,9 @@ static void test_annotated_options()
     
     doption_t d12 = {
         doption_t::single_long,
-        to_string<string_t>("-color"),
-        to_string<string_t>("<rgb>"),
-        build_metadata<string_t>(
+        to_string("-color"),
+        to_string("<rgb>"),
+        build_metadata(
             "",
             "",
             "Foreground color",
@@ -1989,9 +1988,9 @@ static void test_annotated_options()
     
     doption_t d13 = {
         doption_t::double_long,
-        to_string<string_t>("--radius"),
-        to_string<string_t>("<m>"),
-        build_metadata<string_t>(
+        to_string("--radius"),
+        to_string("<m>"),
+        build_metadata(
             "slow fast sideways",
             "",
             "Radial acceleration",
@@ -2001,9 +2000,9 @@ static void test_annotated_options()
     
     doption_t d14 = {
         doption_t::single_short,
-        to_string<string_t>(""),
-        to_string<string_t>("<command>"),
-        base_metadata_t<string_t>()
+        to_string(""),
+        to_string("<command>"),
+        metadata_t()
     };
 
     
@@ -2048,7 +2047,7 @@ static void test_annotated_options()
     // todo: need to test description, etc.
 }
 
-template<typename string_t>
+
 static void test_suggestions()
 {
     const testcase_t testcases[] =
@@ -2148,12 +2147,12 @@ static void test_suggestions()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_suggestion_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            run_1_suggestion_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
 
-template<typename string_t>
+
 static void test_unused_args()
 {
     const testcase_t testcases[] =
@@ -2199,12 +2198,12 @@ static void test_unused_args()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_unused_argument_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            run_1_unused_argument_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
 
-template<typename string_t>
+
 static void test_descriptions()
 {
     const testcase_t testcases[] =
@@ -2237,13 +2236,13 @@ static void test_descriptions()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_description_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            run_1_description_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
 
 
-template<typename string_t>
+
 static void test_commands()
 {
     const testcase_t testcases[] =
@@ -2290,12 +2289,12 @@ static void test_commands()
         const testcase_t *testcase = &testcases[testcase_idx];
         for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
-            run_1_command_test<string_t>(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
+            run_1_command_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
     }
 }
 
-template<typename string_t>
+
 static void test_get_variables()
 {
     const struct var_testcase_t {
@@ -2318,9 +2317,9 @@ static void test_get_variables()
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const var_testcase_t *testcase = &testcases[testcase_idx];
-        string_t doc(to_string<string_t>(testcase->usage));
-        string_t actual_vars = join(argument_parser_t<string_t>(doc, NULL).get_variables(), ",");
-        string_t expected_vars = to_string<string_t>(testcase->expected_vars);
+        string_t doc(to_string(testcase->usage));
+        string_t actual_vars = join(argument_parser_t(doc, NULL).get_variables(), ",");
+        string_t expected_vars = to_string(testcase->expected_vars);
         if (actual_vars != expected_vars) {
             err("Variable test %lu.%lu expected '%ls', but instead got '%ls'", testcase_idx, 0LU, wide(expected_vars), wide(actual_vars));
         }
@@ -2328,7 +2327,7 @@ static void test_get_variables()
 }
 
 
-template<typename string_t>
+
 static void test_errors_in_usage()
 {
     const struct usage_err_testcase_t {
@@ -2410,11 +2409,11 @@ static void test_errors_in_usage()
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const usage_err_testcase_t *testcase = &testcases[testcase_idx];
-        run_1_usage_err_test<string_t>(testcase->usage, testcase->expected_error, testcase_idx, 0);
+        run_1_usage_err_test(testcase->usage, testcase->expected_error, testcase_idx, 0);
     }
 }
 
-template<typename string_t>
+
 static void test_errors_in_argv()
 {
     const struct argv_err_testcase_t {
@@ -2465,11 +2464,11 @@ static void test_errors_in_argv()
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const argv_err_testcase_t *testcase = &testcases[testcase_idx];
-        run_1_argv_err_test<string_t>(testcase->usage, testcase->argv, testcase->expected_error, testcase_idx, 0);
+        run_1_argv_err_test(testcase->usage, testcase->argv, testcase->expected_error, testcase_idx, 0);
     }
 }
 
-template<typename string_t>
+
 static void test_validation()
 {
     const struct validation_testcase_t {
@@ -2496,11 +2495,11 @@ static void test_validation()
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const validation_testcase_t *testcase = &testcases[testcase_idx];
-        run_1_validation_test<string_t>(testcase->usage, testcase->argv, testcase->valids, testcase_idx, 0);
+        run_1_validation_test(testcase->usage, testcase->argv, testcase->valids, testcase_idx, 0);
     }
 }
 
-template<typename string_t>
+
 static void test_command_names()
 {
     const struct cmd_testcase_t {
@@ -2527,9 +2526,9 @@ static void test_command_names()
     };
     for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
         const cmd_testcase_t *testcase = &testcases[testcase_idx];
-        string_t doc(to_string<string_t>(testcase->usage));
-        string_t actual_cmds = join(argument_parser_t<string_t>(doc, NULL).get_command_names(), ",");
-        string_t expected_cmds = to_string<string_t>(testcase->expected_names);
+        string_t doc(to_string(testcase->usage));
+        string_t actual_cmds = join(argument_parser_t(doc, NULL).get_command_names(), ",");
+        string_t expected_cmds = to_string(testcase->expected_names);
         if (actual_cmds != expected_cmds) {
             err("Command test %lu.%lu expected '%ls', but instead got '%ls'", testcase_idx, 0LU, wide(expected_cmds), wide(actual_cmds));
         }
@@ -2537,7 +2536,7 @@ static void test_command_names()
 }
 
 
-template<typename string_t>
+
 void test_fuzzing() {
     const char *tokens[] =
     {
@@ -2578,7 +2577,7 @@ void test_fuzzing() {
             
             // Try to parse it
             // We should not crash or loop forever, and either parser should be non-null or we should have an error
-            argument_parser_t<string_t> parser;
+            argument_parser_t parser;
             bool parsed = parser.set_doc(storage, &errors);
             if (! parsed && errors.empty()) {
                 err("No error generated for fuzz string '%ls'\n", wide(storage));
@@ -2590,26 +2589,25 @@ void test_fuzzing() {
     }
 }
 
-template<typename string_t>
+
 void do_all_tests() {
-    test_correctness<string_t>();
-    test_annotated_options<string_t>();
-    test_unused_args<string_t>();
-    test_suggestions<string_t>();
-    test_descriptions<string_t>();
-    test_commands<string_t>();
-    test_validation<string_t>();
-    test_errors_in_usage<string_t>();
-    test_errors_in_argv<string_t>();
-    test_command_names<string_t>();
-    test_get_variables<string_t>();
-    test_fuzzing<string_t>();
+    test_correctness();
+    test_annotated_options();
+    test_unused_args();
+    test_suggestions();
+    test_descriptions();
+    test_commands();
+    test_validation();
+    test_errors_in_usage();
+    test_errors_in_argv();
+    test_command_names();
+    test_get_variables();
+    test_fuzzing();
 }
 
 int main(void)
 {
-    do_all_tests<string>();
-    do_all_tests<wstring>();
+    do_all_tests();
     printf("Encountered %lu errors in docopt tests\n", err_count);
     return err_count ? 1 : 0;
 }

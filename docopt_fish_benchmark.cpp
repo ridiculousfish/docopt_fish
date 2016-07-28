@@ -55,21 +55,24 @@ int main(int argc, char *argv[])
         amt = strtoul(argv[1], NULL, 0);
     }
     
+    const std::wstring bind_usage(g_bind_usage, g_bind_usage + strlen(g_bind_usage));
     before = timef();
-    argument_parser_t<string> parser;
+    argument_parser_t parser;
     for (size_t i=0; i < amt || false; i++) {
-        parser.set_doc(g_bind_usage, NULL);
+        parser.set_doc(bind_usage.c_str(), NULL);
     }
     after = timef();
     fprintf(stderr, "construct msec per: %f\n", (after - before) * (1000.0) / amt);
 
-    bool parsed = parser.set_doc(g_bind_usage, NULL);
+    bool parsed = parser.set_doc(bind_usage.c_str(), NULL);
     assert(parsed);
 
-    vector<string> doc_argv;
-    doc_argv.push_back("bind");
-    doc_argv.push_back("abc");
-    doc_argv.push_back("forward-word");
+    vector<wstring> doc_argv;
+    doc_argv.push_back(L"bind");
+    doc_argv.push_back(L"abc");
+    doc_argv.push_back(L"forward-word");
+    doc_argv.push_back(L"--mode");
+    doc_argv.push_back(L"derp");
     
     before = timef();
     for (size_t i=0; i < amt; i++) {

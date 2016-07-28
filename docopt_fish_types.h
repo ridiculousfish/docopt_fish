@@ -345,9 +345,8 @@ public:
         }
     }
     
-    template<typename stdstring_t>
-    const stdstring_t std_string() const {
-        stdstring_t result;
+    const string_t std_string() const {
+        string_t result;
         this->copy_to(&result);
         return result;
     }
@@ -529,26 +528,22 @@ struct option_t {
     }
 
     /* Helper function for dumping */
-    std::string describe() const {
-        std::string result;
+    string_t describe() const {
+        string_t result;
         rstring_t name = this->best_name();
-        result.append(name.std_string<std::string>());
+        result.append(name.std_string());
         
         if (! value.empty()) {
             result.push_back(':');
             result.push_back(' ');
-            result.append(value.std_string<std::string>());
+            result.append(value.std_string());
         }
         result.push_back(' ');
         
-        char range[64];
-        snprintf(range, sizeof range, "<%lu, %lu>", name.start(), name.length());
-        result.append(range);
-        
         if (this->separator == sep_none) {
-            result += " (no sep)";
+            result += L" (no sep)";
         } else if (this->separator == sep_equals) {
-            result += " (= sep)";
+            result += L" (= sep)";
         }
 
         return result;
