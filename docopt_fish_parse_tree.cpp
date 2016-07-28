@@ -441,6 +441,51 @@ void usage_t::make_default() {
     parse_one_usage(src, option_list_t(), this, NULL /* errors */);
 }
 
+void usage_t::set_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut) {
+    // Hackish?
+    // Note this is safe because string literals are immortal
+    const char *command_cstr = "command";
+    this->prog_name = rstring_t(command_cstr, strlen(command_cstr));
+    
+    const size_t variable_count = variables.size();
+    const size_t total_count = variable_count + (include_options_shortcut ? 1 : 0);
+    
+    this->alternation_list.alternations.resize(total_count);
+    
+    // Construct an "options" expression
+    // We'll only use this if include_options_shortcut is set
+    expression_t options_expr;
+    options_expr.production = 3;
+    options_expr.options_shortcut.present = true;
+    
+    // Set variable clauses
+    // This is so ugly
+    size_t idx = 0;
+    for (; idx < variable_count; idx++) {
+        const variable_clause_t clause = {variables.at(idx)};
+        expression_list_t *exprs = &this->alternation_list.alternations.at(idx);
+        exprs->expressions.resize(include_options_shortcut ? 2 : 1);
+        
+        expression_t *expr = &exprs->expressions.at(0);
+        expr->production = 0;
+        expr->simple_clause.reset(new simple_clause_t());
+        simple_clause_t *sclause = expr->simple_clause.get();
+        sclause->variable.reset(new variable_clause_t(clause));
+        
+        if (include_options_shortcut) {
+            exprs->expressions.at(1) = options_expr;
+        }
+    }
+    
+    // Also include just an options clause
+    if (include_options_shortcut) {
+        expression_list_t *exprs = &this->alternation_list.alternations.at(idx);
+        exprs->expressions.push_back(options_expr);
+        idx++;
+    }
+    assert(idx == total_count);
+}
+
 bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {
     parse_context_t ctx(source, shortcut_options);
     parse_result_t status = ctx.parse(out_usage);

@@ -157,6 +157,11 @@ struct usage_t {
     
     /* Turn the receiver into a "default" usage that has an empty program name and just the [options] portion. */
     void make_default();
+    
+    /* Hackish function to build a parse tree from a (possibly empty) list of variable names, optionally including an options shortcut.
+       Each variable becomes an element in an alternation list.
+     */
+    void set_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut);
 };
 
 struct opt_ellipsis_t {
@@ -254,7 +259,6 @@ struct fixed_clause_t {
 // Variable like '<branch>'
 struct variable_clause_t {
     rstring_t word;
-    variable_clause_t() {}
     std::string name() const { return "variable"; }
     template<typename T>
     void visit_children(T *v) const {

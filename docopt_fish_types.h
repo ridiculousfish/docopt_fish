@@ -433,11 +433,11 @@ public:
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
     template<typename stdchar_t>
-    explicit rstring_t(const std::basic_string<stdchar_t> &b) : start_(0), length_(b.length()), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
+    explicit rstring_t(const std::basic_string<stdchar_t> &b, size_t start = 0, size_t length = npos) :
+    start_(start), length_(std::min(length, b.length())), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
     
     explicit rstring_t(const char *s, size_t len) : start_(0), length_(len), base_(s), width_(width_narrow) {}
 };
-
 
 /* An option represents something like '--foo=bar' */
 struct option_t {
@@ -456,9 +456,6 @@ struct option_t {
 
     // value of the option, i.e. variable name. Empty for no value.
     rstring_t value;
-    
-    // Description. Empty for none.
-    rstring_t description;
     
     // Default value. Empty for none.
     rstring_t default_value;
@@ -567,7 +564,6 @@ struct option_t {
             this->separator = rhs.separator;
         }
         this->value.replace_if_empty(rhs.value);
-        this->description.replace_if_empty(rhs.description);
         this->default_value.replace_if_empty(rhs.default_value);
     }
     

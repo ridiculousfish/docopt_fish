@@ -20,7 +20,6 @@ using std::shared_ptr;
 using std::tr1::shared_ptr;
 #endif
 
-
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
@@ -30,8 +29,8 @@ typedef std::vector<rstring_t> rstring_list_t;
 typedef std::vector<error_t> error_list_t;
 typedef std::vector<size_t> index_list_t;
 
-/* Class representing a map from variable names to commands */
-typedef std::map<rstring_t, rstring_t> variable_command_map_t;
+/* Class representing a metadata map. Keys are options and variables. */
+typedef std::map<rstring_t, base_metadata_t<rstring_t> > metadata_map_t;
 
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
@@ -343,8 +342,8 @@ struct positional_argument_t {
 };
 typedef std::vector<positional_argument_t> positional_argument_list_t;
 
-/* Given an option spec, that extends from the initial - to the end of the description, parse out an option. It may have multiple names. */
-static option_t parse_one_option_spec(const rstring_t &spec, error_list_t *errors) {
+/* Given an option spec, that extends from the initial - to the end of the description, parse out an option. Store descriptions in the given metadata. It may have multiple names. */
+static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *metadata, error_list_t *errors) {
     assert(! spec.empty() && spec[0] == '-');
     const size_t end = spec.length();
     option_t result;
@@ -357,7 +356,6 @@ static option_t parse_one_option_spec(const rstring_t &spec, error_list_t *error
     
     // Determine the description range (possibly empty). Trim leading and trailing whitespace
     rstring_t description = spec.substr_from(options_end).trim_whitespace();
-    result.description = description;
     
     // Parse out a "default:" value.
     if (! description.empty()) {
@@ -399,6 +397,16 @@ static option_t parse_one_option_spec(const rstring_t &spec, error_list_t *error
         remaining.scan_while<char_is_space>();
     }
     
+    // Store any description in the metadata
+    if (! description.empty()) {
+        for (size_t i=0; i < option_t::NAME_TYPE_COUNT; i++) {
+            rstring_t name = result.names[i];
+            if (! name.empty()) {
+                (*metadata)[name].description = description;
+            }
+        }
+    }
+    
     return result;
 }
 
@@ -419,10 +427,10 @@ static rstring_t find_header(const rstring_t &src) {
 }
 
 /* Given a variable spec, parse out a command map */
-static variable_command_map_t parse_one_variable_command_spec(const rstring_t &spec, error_list_t *out_errors) {
+static metadata_map_t parse_one_variable_command_spec(const rstring_t &spec, error_list_t *out_errors) {
     // A specification look like this:
     // <pid> stuff
-    variable_command_map_t result;
+    metadata_map_t result;
     assert(! spec.empty() && spec[0] == '<');
     const size_t close_bracket = spec.find('>');
     if (close_bracket == rstring_t::npos) {
@@ -431,7 +439,7 @@ static variable_command_map_t parse_one_variable_command_spec(const rstring_t &s
         assert(close_bracket < spec.length());
         rstring_t key = spec.substr(0, close_bracket+1).trim_whitespace();
         rstring_t value = spec.substr_from(close_bracket+1).trim_whitespace();
-        result[key] = value;
+        result[key].command = value;
     }
     return result;
 }
@@ -482,9 +490,6 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates, 
             if (error_on_duplicates) {
                 // Generate an error, and then continue on
                 append_docopt_error(errors, candidate->best_name(), error_option_duplicated_in_options_section, "Option specified more than once");
-            }
-            if (candidate->description.length() > representative->description.length()) {
-                representative->description = candidate->description;
             }
             
             // "Delete" candidate by overwriting it with the last value, and decrementing the count
@@ -1406,6 +1411,8 @@ public:
     docopt_impl(const std::string &s) : storage_narrow(new std::string(s)), rsource(*storage_narrow) {}
     docopt_impl(const std::wstring &s) : storage_wide(new std::wstring(s)), rsource(*storage_wide) {}
     
+    docopt_impl() {}
+    
 #pragma mark -
 #pragma mark Instance Variables
 #pragma mark -
@@ -1425,8 +1432,8 @@ public:
     /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
     rstring_list_t all_static_arguments;
     
-    /* Map from variable names to the commands that populate them */
-    variable_command_map_t variables_to_commands;
+    /* Map from variable/option names to their metadata */
+    metadata_map_t names_to_metadata;
     
     /* Walk over the lines of our source, starting from the beginning. */
     void populate_by_walking_lines(error_list_t *out_errors) {
@@ -1507,15 +1514,17 @@ public:
             rstring_t::char_t first_char = line_group[0];
             if (first_char == '-') {
                 // It's an option spec
-                this->shortcut_options.push_back(parse_one_option_spec(line_group, out_errors));
+                this->shortcut_options.push_back(parse_one_option_spec(line_group, &this->names_to_metadata, out_errors));
                 
             } else if (first_char == '<') {
                 // It's a variable command spec
-                const variable_command_map_t new_var_cmds = parse_one_variable_command_spec(line_group, out_errors);
-                for (variable_command_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
-                    if (!this->variables_to_commands.insert(*iter).second) {
+                const metadata_map_t new_var_cmds = parse_one_variable_command_spec(line_group, out_errors);
+                for (metadata_map_t::const_iterator iter = new_var_cmds.begin(); iter != new_var_cmds.end(); ++iter) {
+                    base_metadata_t<rstring_t> *md = &this->names_to_metadata[iter->first];
+                    if (! md->command.empty()) {
                         append_docopt_error(out_errors, line_group, error_one_variable_multiple_commands, "Duplicate command for variable");
                     }
+                    md->command = iter->second.command;
                 }
                 
             } else if (isalnum(first_char) || first_char == '_') {
@@ -1541,6 +1550,91 @@ public:
         for (size_t i=0; i < usages_count; i++) {
             parse_one_usage(usage_specs.at(i), this->shortcut_options, &this->usages.at(i), out_errors);
         }
+    }
+    
+    template<typename stdstring_t>
+    static void maybe_append(stdstring_t *storage, const stdstring_t &str) {
+        if (! str.empty()) {
+            storage->append(str);
+            storage->push_back('\n');
+        }
+    }
+    
+    template<typename stdstring_t>
+    rstring_t slice_string(size_t *cursor, const stdstring_t &str) {
+        size_t start = *cursor, extent = str.size();
+        assert(start + extent <= this->rsource.length());
+        if (extent > 0)
+        {
+            // +1 for newline
+            *cursor += extent + 1;
+        }
+        return this->rsource.substr(start, extent);
+    }
+    
+    /* Given a list of direct options, create a docopt_impl (allocated with new), populating its instance variables from the direct options. */
+    template<typename stdstring_t>
+    static docopt_impl *build_from_annotated_options(const std::vector<base_annotated_option_t<stdstring_t> > &dopts) {
+        typedef base_annotated_option_t<stdstring_t> doption_t;
+        const size_t count = dopts.size();
+        /* We need to build our storage first. */
+        stdstring_t storage;
+        for (size_t i=0; i < count; i++) {
+            const doption_t &dopt = dopts.at(i);
+            maybe_append(&storage, dopt.option);
+            maybe_append(&storage, dopt.value_name);
+            maybe_append(&storage, dopt.metadata.command);
+            maybe_append(&storage, dopt.metadata.condition);
+            maybe_append(&storage, dopt.metadata.description);
+        }
+        
+        /* Create the impl */
+        docopt_impl *impl = new docopt_impl(storage);
+        
+        /* We're going to construct a list of variable arguments, that are not associated with an option Now populate impl->shortcut_options and free_variables. cursor tracks our location through our storage. */
+        rstring_list_t free_variables;
+        size_t cursor = 0;
+        for (size_t i=0; i < count; i++) {
+            const doption_t &dopt = dopts.at(i);
+            base_metadata_t<rstring_t> md;
+            
+            // Note the order here must match that of the loop above
+            const rstring_t option_name = impl->slice_string(&cursor, dopt.option);
+            const rstring_t value_name = impl->slice_string(&cursor, dopt.value_name);
+            md.command = impl->slice_string(&cursor, dopt.metadata.command);
+            md.condition = impl->slice_string(&cursor, dopt.metadata.condition);
+            md.description = impl->slice_string(&cursor, dopt.metadata.description);
+            md.tag = dopt.metadata.tag;
+            
+            if (! option_name.empty()) {
+                // Create an option
+                impl->shortcut_options.push_back(option_t());
+                option_t *option = &impl->shortcut_options.back();
+                size_t name_idx = static_cast<size_t>(dopt.type);
+                assert(name_idx < option_t::NAME_TYPE_COUNT);
+                option->names[name_idx] = option_name;
+                option->value = value_name; // maybe empty
+            } else if (! value_name.empty()) {
+                // option_name is empty, create a static
+                free_variables.push_back(value_name);
+            }
+            
+            // Save metadata
+            if (! option_name.empty()) {
+                impl->names_to_metadata[option_name] = md;
+            }
+            if (! value_name.empty()) {
+                impl->names_to_metadata[value_name] = md;
+            }
+        }
+        
+        bool has_option = ! impl->shortcut_options.empty();
+        
+        // Build usages
+        impl->usages.resize(1);
+        impl->usages.back().set_from_variables(free_variables, has_option);
+        
+        return impl;
     }
     
     /* Given an option map (using rstring), convert it to an option map using the given std::basic_string type. */
@@ -1671,9 +1765,6 @@ public:
     
     /* Parses the docopt, etc. Returns true on success, false on error */
     bool preflight(error_list_t *out_errors) {
-        // Populate our instance variables
-        this->populate_by_walking_lines(out_errors);
-        
         /* If we have no usage, apply the default one */
         if (this->usages.empty()) {
             this->usages.resize(1);
@@ -1786,44 +1877,12 @@ public:
         return all_suggestions;
     }
     
-    rstring_t commands_for_variable(const rstring_t &var_name) const {
-        rstring_t result;
-        variable_command_map_t::const_iterator where = this->variables_to_commands.find(var_name);
-        if (where != this->variables_to_commands.end()) {
-            result = where->second;
-        }
-        return result;
-    }
     
-    rstring_t description_for_option(const rstring_t &given_option_name) const {
-        if (given_option_name.length() < 2 || given_option_name.at(0) != '-')
-        {
-            return rstring_t();
-        }
-        
-        rstring_t result;
-        const bool has_double_dash = (given_option_name.at(1) == '-');
-        // We have to go through our options and compare their names to the given string
-        const rstring_t needle(given_option_name);
-        for (size_t i=0; i < this->all_options.size(); i++) {
-            const option_t &opt = this->all_options.at(i);
-            
-            // We can skip options without descriptions
-            if (opt.description.empty()) {
-                continue;
-            }
-            
-            bool matches = false;
-            if (has_double_dash) {
-                matches = (needle == opt.names[option_t::double_long]);
-            } else {
-                matches = (needle == opt.names[option_t::single_long] || needle == opt.names[option_t::single_short]);
-            }
-            
-            if (matches) {
-                result = opt.description;
-                break;
-            }
+    base_metadata_t<rstring_t> metadata_for_name(const rstring_t &name) const {
+        base_metadata_t<rstring_t> result;
+        metadata_map_t::const_iterator where = this->names_to_metadata.find(name);
+        if (where != this->names_to_metadata.end()) {
+            result = where->second;
         }
         return result;
     }
@@ -1903,15 +1962,15 @@ std::vector<string_t> argument_parser_t<string_t>::suggest_next_argument(const s
 }
 
 template<typename stdstring_t>
-stdstring_t argument_parser_t<stdstring_t>::commands_for_variable(const stdstring_t &var) const
+base_metadata_t<stdstring_t> argument_parser_t<stdstring_t>::metadata_for_name(const stdstring_t &var) const
 {
-    return impl->commands_for_variable(rstring_t(var)).std_string<stdstring_t>();
-}
-
-template<typename stdstring_t>
-stdstring_t argument_parser_t<stdstring_t>::description_for_option(const stdstring_t &option) const
-{
-    return impl->description_for_option(rstring_t(option)).std_string<stdstring_t>();
+    const base_metadata_t<rstring_t> md = impl->metadata_for_name(rstring_t(var));
+    base_metadata_t<stdstring_t> result;
+    result.command = md.command.std_string<stdstring_t>();
+    result.condition = md.condition.std_string<stdstring_t>();
+    result.description = md.description.std_string<stdstring_t>();
+    result.tag = md.tag;
+    return result;
 }
 
 template<typename stdstring_t>
@@ -1943,6 +2002,7 @@ template<typename stdstring_t>
 bool argument_parser_t<stdstring_t>::set_doc(const stdstring_t &doc, error_list_t *out_errors) {
     docopt_impl *new_impl = new docopt_impl(doc);
     
+    new_impl->populate_by_walking_lines(out_errors);
     bool preflighted = new_impl->preflight(out_errors);
     
     if (! preflighted) {
@@ -1952,6 +2012,14 @@ bool argument_parser_t<stdstring_t>::set_doc(const stdstring_t &doc, error_list_
         this->impl = new_impl;
     }
     return preflighted;
+}
+
+template<typename stdstring_t>
+void argument_parser_t<stdstring_t>::set_options(const std::vector<base_annotated_option_t<stdstring_t> > &opts)
+{
+    delete this->impl; // may be null
+    this->impl = docopt_impl::build_from_annotated_options(opts);
+    this->impl->preflight(NULL);
 }
 
 /* Constructors */

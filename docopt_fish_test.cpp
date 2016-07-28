@@ -59,8 +59,7 @@ static const wchar_t *wide(const string &t) {
 
 template<typename string_t>
 string_t to_string(const char *x) {
-    string_t result(x, x + strlen(x));
-    return result;
+    return string_t(x, x + strlen(x));
 }
 
 
@@ -268,6 +267,104 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     }
 }
 
+
+template<typename string_t>
+static void run_1_annotated_option_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *joined_expected_results, const base_annotated_option_t<string_t> *dopt1, ...) {
+    
+    typedef base_annotated_option_t<string_t> doption_t;
+    
+    std::vector<doption_t> dopts;
+    dopts.push_back(*dopt1);
+    
+    va_list va;
+    va_start(va, dopt1);
+    for (;;) {
+        const doption_t *dopt = va_arg(va, const doption_t *);
+        if (dopt == NULL) {
+            break;
+        }
+        dopts.push_back(*dopt);
+    }
+    va_end(va);
+    
+    typedef map<string_t, base_argument_t<string_t> > arg_map_t;
+    typedef map<string_t, string_t> string_map_t;
+    
+    /* Separate argv by spaces */
+    vector<string_t> argv = split_nonempty<string_t>(joined_argv, ' ');
+    
+    /* Prepend the program name for every argument */
+    argv.insert(argv.begin(), to_string<string_t>("prog"));
+    
+    /* Perform the parsing */
+    arg_map_t results;
+    std::vector<error_t> error_list;
+    vector<size_t> unused_args;
+    argument_parser_t<string_t> parser;
+    parser.set_options(dopts);
+    bool parse_success = true;
+    if (parse_success) {
+        results = parser.parse_arguments(argv, 0, &error_list, &unused_args);
+    }
+    
+    bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
+    bool did_error = ! parse_success || ! unused_args.empty() || ! error_list.empty();
+    
+    if (expects_error && ! did_error) {
+        err("Direct option test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
+    } else if (did_error && ! expects_error) {
+        err("Direct option test %lu.%lu was expected to succeed, but instead errored", test_idx, arg_idx);
+        for (size_t i=0; i < error_list.size(); i++) {
+            fprintf(stderr, "\t%ls\n", wide(error_list.at(i).text));
+        }
+    } else if (! did_error && ! expects_error) {
+        /* joined_expected_results is a newline-delimited "map" of the form key:value */
+        const string_map_t expected = parse_expected_results<string_t>(joined_expected_results);
+        
+        // Verify everything we expected appears in our map
+        for (typename string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
+            const string_t &key = iter->first;
+            const string_t &val = iter->second;
+            typename arg_map_t::const_iterator arg_iter = results.find(key);
+            if (arg_iter == results.end()) {
+                err("Direct option test %lu.%lu: Expected to find %ls = %ls, but it was missing", test_idx, arg_idx, wide(key), wide(val));
+            } else {
+                const base_argument_t<string_t> &arg = arg_iter->second;
+                /* The value here can be interpreted a few ways. If it is "True" or "False", it means we expect the argument to have no values, and to have a count of 1 or 0, respectively. If it is % followed by a one-digit number, it represents the count of the argument; values is expected to be empty. Otherwise, split the value about ', '; those are the values we expect. */
+                if (val == to_string<string_t>("True")) {
+                    /* A "true" means we expect the argument ot have no values, and to have appeared once */
+                    do_arg_test(arg.count == 1);
+                    do_arg_test(arg.values.empty());
+                } else if (val == to_string<string_t>("False") || val == to_string<string_t>("None")) {
+                    do_arg_test(arg.count == 0);
+                    do_arg_test(arg.values.empty());
+                } else if (is_percent_digit(val)) {
+                    size_t expected_count = val.at(1) - '0';
+                    assert(expected_count <= 9);
+                    do_arg_test(arg.count == expected_count);
+                    do_arg_test(arg.values.empty());
+                } else {
+                    const vector<string_t> values = split(val, ", ");
+                    do_arg_test(arg.values == values);
+                    if (arg.values != values) {
+                        err("Key '%ls' expected '%ls', found '%ls'", wide(key), wide(join(arg.values, ", ")), wide(val));
+                    }
+                    /* Note that we don't test count here, since count will be 0 if it came from a default: clause, and nonzero if it did not */
+                }
+            }
+        }
+        
+        // Verify nothing we didn't expect appears in our map
+        for (typename arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
+            const string_t &key = iter->first;
+            typename string_map_t::const_iterator result = expected.find(key);
+            if (result == expected.end()) {
+                err("Test %lu.%lu: Unexpected key %ls with count %u", test_idx, arg_idx, wide(key), iter->second.count);
+            }
+        }
+    }
+}
+
 template<typename string_t>
 static void run_1_unused_argument_test(const char *usage, const char *joined_argv, const char *joined_expected_unused, size_t test_idx, size_t arg_idx) {
     
@@ -314,7 +411,7 @@ static void run_1_command_test(const char *usage, const char *variable, const ch
     argument_parser_t<string_t> parser(usage_str, NULL);
     
     const string_t var_string(variable, variable + strlen(variable));
-    const string_t command_string = parser.commands_for_variable(var_string);
+    const string_t command_string = parser.metadata_for_name(var_string).command;
     const string_t expected_command_string(expected_command, expected_command + strlen(expected_command));
     
     if (expected_command_string != command_string) {
@@ -417,7 +514,7 @@ static void run_1_description_test(const char *usage, const char *option, const 
     argument_parser_t<string_t> parser(usage_str, NULL);
     
     const string_t option_string(option, option + strlen(option));
-    const string_t description_string = parser.description_for_option(option_string);
+    const string_t description_string = parser.metadata_for_name(option_string).description;
     const string_t expected_description_string(expected_description, expected_description + strlen(expected_description));
     
     if (expected_description_string != description_string) {
@@ -1848,6 +1945,110 @@ static void test_correctness()
 }
 
 template<typename string_t>
+static base_metadata_t<string_t> build_metadata(const char *command, const char *description, const char *condition, long tag) {
+    base_metadata_t<string_t> result;
+    const string_t empty;
+    result.command = command ? to_string<string_t>(command) : empty;
+    result.description = description ? to_string<string_t>(description) : empty;
+    result.condition = condition ? to_string<string_t>(condition) : empty;
+    result.tag = tag;
+    return result;
+}
+
+template<typename string_t>
+static void test_annotated_options()
+{
+    typedef base_annotated_option_t<string_t> doption_t;
+    
+    const string_t empty;
+    
+    /* Case 0 */
+    doption_t d11 = {
+        doption_t::single_short,
+        to_string<string_t>("-a"),
+        empty,
+        build_metadata<string_t>(
+            "",
+            "",
+            "All",
+            11
+        )
+    };
+    
+    doption_t d12 = {
+        doption_t::single_long,
+        to_string<string_t>("-color"),
+        to_string<string_t>("<rgb>"),
+        build_metadata<string_t>(
+            "",
+            "",
+            "Foreground color",
+            12
+        )
+    };
+    
+    doption_t d13 = {
+        doption_t::double_long,
+        to_string<string_t>("--radius"),
+        to_string<string_t>("<m>"),
+        build_metadata<string_t>(
+            "slow fast sideways",
+            "",
+            "Radial acceleration",
+            13
+        )
+    };
+    
+    doption_t d14 = {
+        doption_t::single_short,
+        to_string<string_t>(""),
+        to_string<string_t>("<command>"),
+        base_metadata_t<string_t>()
+    };
+
+    
+    std::vector<doption_t> dopts;
+    dopts.push_back(d11);
+    dopts.push_back(d12);
+    dopts.push_back(d13);
+    
+    /* Case 0 */
+    run_1_annotated_option_test(0, 0,
+                             "", // argv
+                             "",
+                             &d11, &d12, &d13, NULL);
+    
+    run_1_annotated_option_test(0, 1,
+                             "-a", // argv
+                             "-a:True",
+                             &d11, &d12, &d13, NULL);
+    
+    run_1_annotated_option_test(0, 2,
+                             "--radius foo", // argv
+                             "--radius:True\n"
+                             "<m>:foo\n",
+                             &d11, &d12, &d13, NULL);
+
+    run_1_annotated_option_test(0, 3,
+                             "--radius foo -color red", // argv
+                             "--radius:True\n"
+                             "<m>:foo\n"
+                             "-color:True\n"
+                             "<rgb>:red\n",
+                             &d11, &d12, &d13, NULL);
+    
+    run_1_annotated_option_test(0, 4,
+                                "checkout --radius foo -color red", // argv
+                                "<command>:checkout\n"
+                                "--radius:True\n"
+                                "<m>:foo\n"
+                                "-color:True\n"
+                                "<rgb>:red\n",
+                                &d11, &d12, &d13, &d14, NULL);
+    // todo: need to test description, etc.
+}
+
+template<typename string_t>
 static void test_suggestions()
 {
     const testcase_t testcases[] =
@@ -2392,6 +2593,7 @@ void test_fuzzing() {
 template<typename string_t>
 void do_all_tests() {
     test_correctness<string_t>();
+    test_annotated_options<string_t>();
     test_unused_args<string_t>();
     test_suggestions<string_t>();
     test_descriptions<string_t>();

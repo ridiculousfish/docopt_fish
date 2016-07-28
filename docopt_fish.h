@@ -50,9 +50,6 @@ namespace docopt_fish
         {}
     };
     
-    /* A processed docopt file is called an argument parser. */
-    class docopt_impl;
-    
     /* Represents an argument in the result */
     template<typename string_t>
     struct base_argument_t {
@@ -70,7 +67,44 @@ namespace docopt_fish
         /* Constructor */
         base_argument_t() : count(0) {}
     };
+
+    template<typename string_t>
+    struct base_metadata_t {
+        string_t command;
+        string_t condition;
+        string_t description;
+        long tag; // arbitrary application use
+        
+        base_metadata_t() : tag(0) {}
+    };
     
+    /* A "direct" option for constructing arguments parsers programatically. */
+    template<typename string_t>
+    struct base_annotated_option_t
+    {
+        enum
+        {
+            single_short, // like -f
+            single_long, // like -foo
+            double_long, // like --foo
+        } type;
+        
+        // The name of the option, including any dashes.
+        // If empty, the type is ignored.
+        string_t option;
+        
+        // Name of a variable representing the value, or empty
+        // Separators are assumed to be flexible
+        string_t value_name;
+        
+        // Metadata associated with the option
+        // Note for historic reasons, this applies equally to both the option and variable
+        base_metadata_t<string_t> metadata;
+    };
+    
+    class docopt_impl;
+    
+    /* A processed docopt file is called an argument parser. */
     template<typename string_t>
     class argument_parser_t {
         /* Guts */
@@ -78,6 +112,8 @@ namespace docopt_fish
         
         public:
         
+        typedef base_metadata_t<string_t> metadata_t;
+        typedef base_annotated_option_t<string_t> annotated_option_t;
         typedef base_argument_t<string_t> argument_t;
         typedef std::map<string_t, argument_t> argument_map_t;
         typedef std::vector<error_t> error_list_t;
@@ -85,18 +121,18 @@ namespace docopt_fish
         /* Sets the docopt doc for this parser. Returns any parse errors by reference. Returns true if successful. */
         bool set_doc(const string_t &doc, error_list_t *out_errors);
         
+        /* Sets the doc via a list of programmatically-specified options. The usage spec is assumed to be `prog [options]` */
+        void set_options(const std::vector<annotated_option_t> &opts);
+        
         /* Given a list of arguments, this returns a corresponding parallel array validating the arguments */
         std::vector<argument_status_t> validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const;
         
         /* Given a list of arguments, returns an array of potential next values. A value may be either a literal flag -foo, or a variable; these may be distinguished by the <> surrounding the variable. */
         std::vector<string_t> suggest_next_argument(const std::vector<string_t> &argv, parse_flags_t flags) const;
         
-        /* Given a variable name, returns the commands for that variable, or the empty string if none. */
-        string_t commands_for_variable(const string_t &var) const;
-        
-        /* Given an option name like --foo, returns the description of that option name, or the empty string if none. */
-        string_t description_for_option(const string_t &option) const;
-        
+        /** Given a name (either an option or a variable), returns any metadata for that name */
+        metadata_t metadata_for_name(const string_t &name) const;
+                
         /* Returns the list of command names (i.e. prog in `Usage: prog [options]`. Duplicate names are only returned once. */
         std::vector<string_t> get_command_names() const;
 
