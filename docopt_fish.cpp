@@ -860,25 +860,59 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
 typedef std::map<rstring_t, argument_t> option_rmap_t;
 
 struct match_state_t {
+    friend struct match_context_t;
+private:
     // Map from option names to arguments
-    option_rmap_t argument_values;
+    shared_ptr<option_rmap_t> argument_values_ref;
+
+    // Bitset of options we've consumed
+    shared_ptr<std::vector<bool> > consumed_options_ref;
+public:
     
     // Next positional to dequeue
     size_t next_positional_index;
-    
-    // Bitset of options we've consumed
-    std::vector<bool> consumed_options;
     
     std::set<rstring_t> suggested_next_arguments;
     
     // Whether this match has fully consumed all positionals and options
     bool fully_consumed;
     
-    match_state_t() : next_positional_index(0), fully_consumed(false) {}
+    const option_rmap_t &argument_values() const {
+        return *argument_values_ref;
+    }
+    
+    template<typename T>
+    static T& ensure_unique(shared_ptr<T> *ptr) {
+        if (! ptr->unique()) {
+            shared_ptr<T> tmp = std::make_shared<T>(**ptr);
+            ptr->swap(tmp);
+        }
+        return **ptr;
+    }
+    
+    option_rmap_t &mut_argument_values() {
+        return ensure_unique(&argument_values_ref);
+    }
+    
+    const std::vector<bool> &consumed_options() const {
+        return *consumed_options_ref;
+    }
+    
+    std::vector<bool> &mut_consumed_options() {
+        return ensure_unique(&consumed_options_ref);
+    }
+
+    
+    match_state_t() :
+        argument_values_ref(std::make_shared<option_rmap_t>()),
+        consumed_options_ref(std::make_shared<std::vector<bool> >()),
+        next_positional_index(0),
+        fully_consumed(false)
+    {}
     
     void swap(match_state_t &rhs) {
-        this->argument_values.swap(rhs.argument_values);
-        this->consumed_options.swap(rhs.consumed_options);
+        this->argument_values_ref.swap(rhs.argument_values_ref);
+        this->consumed_options_ref.swap(rhs.consumed_options_ref);
         this->suggested_next_arguments.swap(rhs.suggested_next_arguments);
         std::swap(this->next_positional_index, rhs.next_positional_index);
         std::swap(this->fully_consumed, rhs.fully_consumed);
@@ -891,7 +925,7 @@ struct match_state_t {
         size_t result = this->next_positional_index;
         
         // Add in arguments by counting set bits in the bitmap
-        result += std::accumulate(this->consumed_options.begin(), this->consumed_options.end(), 0);
+        result += std::accumulate(this->consumed_options().begin(), this->consumed_options().end(), 0);
         
         // Add in number of suggestions
         result += suggested_next_arguments.size();
@@ -910,7 +944,7 @@ private:
             /* Unconsumed positional */
             return false;
         }
-        for (std::vector<bool>::const_iterator iter = state->consumed_options.begin(); iter != state->consumed_options.end(); ++iter) {
+        for (std::vector<bool>::const_iterator iter = state->consumed_options().begin(); iter != state->consumed_options().end(); ++iter) {
             if (! *iter) {
                 /* Unconsumed option */
                 return false;
@@ -951,9 +985,9 @@ public:
         }
         
         /* Walk over options matched during tree descent. We should have one bit per option */
-        assert(state->consumed_options.size() == this->resolved_options.size());
-        for (size_t i=0; i < state->consumed_options.size(); i++) {
-            if (state->consumed_options.at(i)) {
+        assert(state->consumed_options().size() == this->resolved_options.size());
+        for (size_t i=0; i < state->consumed_options().size(); i++) {
+            if (state->consumed_options().at(i)) {
                 // This option was used. The name index is definitely used. The value index is also used, if it's not npos (note that it may be the same as the name index)
                 const resolved_option_t &opt = this->resolved_options.at(i);
                 used_indexes.at(opt.name_idx_in_argv) = true;
@@ -964,8 +998,8 @@ public:
         }
         
         /* Walk over options NOT matched during tree descent and clear their bits. An argument may be both matched and unmatched, i.e. if "-vv" is parsed into two short options. In that case, we want to mark it as unmatched. */
-        for (size_t i=0; i < state->consumed_options.size(); i++) {
-            if (! state->consumed_options.at(i)) {
+        for (size_t i=0; i < state->consumed_options().size(); i++) {
+            if (! state->consumed_options().at(i)) {
                 const resolved_option_t &opt = this->resolved_options.at(i);
                 used_indexes.at(opt.name_idx_in_argv) = false;
             }
@@ -1252,7 +1286,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
         size_t resolved_opt_idx = npos;
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
             // Skip ones that have already been consumed
-            if (! state->consumed_options.at(i)) {
+            if (! state->consumed_options().at(i)) {
                 // See if the option from argv has the same key range as the option in the document
                 if (ctx->resolved_options.at(i).option.has_same_name(opt_in_doc)) {
                     resolved_opt_idx = i;
@@ -1270,18 +1304,18 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
             const rstring_t &name = opt_in_doc.best_name();
             
             // Update the option value, creating it if necessary
-            state->argument_values[name].count += 1;
+            state->mut_argument_values()[name].count += 1;
             
             // Update the option argument vlaue
             if (opt_in_doc.has_value() && resolved_opt.value_idx_in_argv != npos) {
                 const rstring_t &variable_name = opt_in_doc.value;
                 
                 const rstring_t &value = resolved_opt.value_in_arg;
-                state->argument_values[variable_name].values.push_back(value.std_string());
+                state->mut_argument_values()[variable_name].values.push_back(value.std_string());
             }
             
             successful_match = true;
-            state->consumed_options.at(resolved_opt_idx) = true;
+            state->mut_consumed_options().at(resolved_opt_idx) = true;
         } else {
             // This was an option that was not specified in argv
             // It can be a suggestion
@@ -1345,7 +1379,7 @@ static void match(const fixed_clause_t &node, match_state_t *state, match_contex
         const rstring_t &name = ctx->argv.at(positional.idx_in_argv);
         if (node.word == rstring_t(name)) {
             // The static argument matches
-            state->argument_values[name].count += 1;
+            state->mut_argument_values()[name].count += 1;
             ctx->acquire_next_positional(state);
             ctx->try_mark_fully_consumed(state);
             state_destructive_append_to(state, resulting_states);
@@ -1367,7 +1401,7 @@ static void match(const variable_clause_t &node, match_state_t *state, match_con
     const rstring_t &name = node.word;
     if (ctx->has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
-        argument_t *arg = &state->argument_values[name];
+        argument_t *arg = &state->mut_argument_values()[name];
         const positional_argument_t &positional = ctx->acquire_next_positional(state);
         const rstring_t &positional_value = ctx->argv.at(positional.idx_in_argv);
         arg->values.push_back(positional_value.std_string());
@@ -1682,7 +1716,7 @@ public:
         /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
         match_context_t ctx(flags | flag_stop_after_consuming_everything, this->shortcut_options, positionals, resolved_options, argv);
         match_state_t init_state;
-        init_state.consumed_options.resize(resolved_options.size(), false);
+        init_state.mut_consumed_options().resize(resolved_options.size(), false);
         
         match_state_list_t result;
         match(this->usages, &init_state, &ctx, &result);
@@ -1693,7 +1727,7 @@ public:
                 const match_state_t &state = result.at(i);
                 bool is_incomplete = ! ctx.unused_arguments(&state).empty();
                 std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
-                for (option_rmap_t::const_iterator iter = state.argument_values.begin(); iter != state.argument_values.end(); ++iter) {
+                for (option_rmap_t::const_iterator iter = state.argument_values().begin(); iter != state.argument_values().end(); ++iter) {
                     const rstring_t &name = iter->first;
                     const argument_t &arg = iter->second;
                     fprintf(stderr, "\t%ls: ", name.std_string().c_str());
@@ -1732,7 +1766,7 @@ public:
                 out_unused_arguments->swap(best_unused_args);
             }
             if (out_option_map != NULL) {
-                out_option_map->swap(result.at(best_state_idx).argument_values);
+                out_option_map->swap(result.at(best_state_idx).mut_argument_values());
             }
         } else {
             // No states. Every argument is unused.
@@ -1837,7 +1871,7 @@ public:
         
         match_context_t ctx(flags, shortcut_options, positionals, resolved_options, argv);
         match_state_t init_state;
-        init_state.consumed_options.resize(resolved_options.size(), false);
+        init_state.mut_consumed_options().resize(resolved_options.size(), false);
         match_state_list_t states;
         match(this->usages, &init_state, &ctx, &states);
         
