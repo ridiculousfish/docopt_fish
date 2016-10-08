@@ -1381,11 +1381,11 @@ class docopt_impl {
     /* Constructor takes the source in either narrow or wide form. */
 public:
     /* Storage for our rstrings. Note that this must be shared_ptr so that we can have a sane copy constructor. Otherwise the copy constructor would copy our rstring_ts and have them pointing at the old docopt_impl! Plus this makes copying cheaper. */
-    const shared_ptr<const std::string> storage_narrow;
-    const shared_ptr<const std::wstring> storage_wide;
+    const std::string storage_narrow;
+    const std::wstring storage_wide;
     const rstring_t rsource;
-    docopt_impl(const std::string &s) : storage_narrow(new std::string(s)), rsource(*storage_narrow) {}
-    docopt_impl(const std::wstring &s) : storage_wide(new std::wstring(s)), rsource(*storage_wide) {}
+    docopt_impl(std::string s) : storage_narrow(std::move(s)), rsource(storage_narrow) {}
+    docopt_impl(std::wstring s) : storage_wide(std::move(s)), rsource(storage_wide) {}
     
     docopt_impl() {}
     
