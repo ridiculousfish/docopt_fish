@@ -345,7 +345,7 @@ public:
         }
     }
     
-    const string_t std_string() const {
+    string_t std_string() const {
         string_t result;
         this->copy_to(&result);
         return result;

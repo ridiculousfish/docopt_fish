@@ -466,7 +466,8 @@ static size_t compute_indent(const rstring_t &src, const rstring_t &trimmed_src)
     return result;
 }
 
-/* Given a list of options, verify that any duplicate options are in agreement, and remove all but one. TODO: Can we make this not N^2 without heap allocation? */
+// Given a list of options, verify that any duplicate options are in agreement, and remove all but one.
+// TODO: Can we make this not N^2 without heap allocation?
 static void uniqueize_options(option_list_t *options, bool error_on_duplicates, error_list_t *errors) {
     // Maintain an outer cursor. For each option, loop over the remainder, deleting those that share a name
     // Grab the best description as we go
@@ -508,10 +509,10 @@ struct argv_separation_state_t {
     const rstring_list_t &argv;
     const option_list_t &options;
     parse_flags_t flags;
-    size_t idx;
-    bool saw_double_dash;
+    size_t idx = 0;
+    bool saw_double_dash = false;
     
-    argv_separation_state_t(const rstring_list_t &argv_, const option_list_t &options_, parse_flags_t flags_) : argv(argv_), options(options_), flags(flags_), idx(0), saw_double_dash(false)
+    argv_separation_state_t(const rstring_list_t &argv_, const option_list_t &options_, parse_flags_t flags_) : argv(argv_), options(options_), flags(flags_)
     {}
     
     const rstring_t &arg() const {
@@ -701,7 +702,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
     
     std::vector<option_t> matches;
     for (size_t idx_in_arg=1; idx_in_arg < arg.length() && ! errored; idx_in_arg++) {
-        /* Get list of short options matching this resolved option. */
+        // Get list of short options matching this resolved option.
         const rstring_t::char_t short_char = arg.at(idx_in_arg);
         matches.clear();
         for (const option_t &opt : st->options) {
@@ -1809,18 +1810,19 @@ public:
          TODO: this currently only removes the matched variant. For example, prog -a --alpha would still be allowed.
          */
         
-        for (size_t i=0; i < this->shortcut_options.size(); i++) {
-            const option_t &shortcut_opt = this->shortcut_options.at(i);
+        auto opt_is_in_usage = [&](const option_t &shortcut_opt){
             for (const option_t &usage_opt : usage_options) {
                 if (shortcut_opt.has_same_name(usage_opt)) {
-                    // Remove this shortcut, and decrement the index to reflect the position shift of the remaining items
-                    this->shortcut_options.erase(this->shortcut_options.begin() + i);
-                    i-=1;
-                    break;
+                    return true;
                 }
             }
-        }
+            return false;
+        };
         
+        this->shortcut_options.erase(std::remove_if(this->shortcut_options.begin(),
+                                                    this->shortcut_options.end(),
+                                                    opt_is_in_usage),
+                                     this->shortcut_options.end());
         
         // Example of how to dump
         if ((0)) {
@@ -1873,16 +1875,17 @@ public:
         /* Find the state(s) with the fewest unused arguments, and then insert all of their suggestions into a list */
         rstring_list_t all_suggestions;
         size_t best_unused_arg_count = (size_t)-1;
-        for (size_t i=0; i < states.size(); i++) {
-            size_t count = ctx.unused_arguments(&states.at(i)).size();
+        for (const match_state_t &state : states) {
+            size_t count = ctx.unused_arguments(&state).size();
             if (count < best_unused_arg_count) {
                 best_unused_arg_count = count;
             }
         }
-        for (size_t i=0; i < states.size(); i++) {
-            const match_state_t &state = states.at(i);
+        for (const match_state_t &state : states) {
             if (ctx.unused_arguments(&state).size() == best_unused_arg_count) {
-                all_suggestions.insert(all_suggestions.end(), state.suggested_next_arguments.begin(), state.suggested_next_arguments.end());
+                all_suggestions.insert(all_suggestions.end(),
+                                       state.suggested_next_arguments.begin(),
+                                       state.suggested_next_arguments.end());
             }
         }
         // Eliminate duplicates
@@ -1905,8 +1908,7 @@ public:
         /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
         std::vector<string_t> result;
         std::set<rstring_t> seen;
-        for (size_t i=0; i < this->usages.size(); i++) {
-            const usage_t &usage = this->usages.at(i);
+        for (const usage_t &usage : this->usages) {
             const rstring_t name = usage.prog_name;
             if (! name.empty() && seen.insert(name).second) {
                 result.push_back(name.std_string());
@@ -1920,16 +1922,14 @@ public:
         std::vector<string_t> result;
         
         // Include explicit variables
-        for (size_t i=0; i < this->all_variables.size(); i++) {
-            const rstring_t &r = this->all_variables.at(i);
+        for (const rstring_t &r : this->all_variables) {
             result.push_back(r.std_string());
         }
         
         // Include variables that are part of options
-        for (size_t i=0; i < this->all_options.size(); i++) {
-            const rstring_t &r = this->all_options.at(i).value;
-            if (! r.empty()) {
-                result.push_back(r.std_string());
+        for (const option_t &opt : this->all_options) {
+            if (! opt.value.empty()) {
+                result.push_back(opt.value.std_string());
             }
         }
         
@@ -1951,8 +1951,7 @@ std::vector<argument_status_t> argument_parser_t::validate_arguments(const std::
     impl->best_assignment_for_argv(argv_rstrs, flags, NULL /* errors */, &unused_args, NULL);
     
     // Unused arguments are all invalid
-    for (size_t i=0; i < unused_args.size(); i++) {
-        size_t unused_arg_idx = unused_args.at(i);
+    for (size_t unused_arg_idx : unused_args) {
         result.at(unused_arg_idx) = status_invalid;
     }
     return result;
@@ -1964,10 +1963,10 @@ string_list_t argument_parser_t::suggest_next_argument(const string_list_t &argv
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
     rstring_list_t suggestions = impl->suggest_next_argument(argv_rstrs, flags);
     
-    size_t length = suggestions.size();
-    string_list_t result(length);
-    for (size_t i=0; i < length; i++) {
-        suggestions[i].copy_to(&result[i]);
+    string_list_t result;
+    result.reserve(suggestions.size());
+    for (const rstring_t &suggestion : suggestions) {
+        result.push_back(suggestion.std_string());
     }
     return result;
 }

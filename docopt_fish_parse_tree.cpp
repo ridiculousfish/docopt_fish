@@ -295,8 +295,7 @@ struct parse_context_t {
             
             // See if we have a corresponding option in the options section
             const option_t *opt_from_options_section = NULL;
-            for (size_t i=0; i < this->shortcut_options->size(); i++) {
-                const option_t &test_op = this->shortcut_options->at(i);
+            for (const option_t &test_op : *this->shortcut_options) {
                 if (opt_from_usage_section.has_same_name(test_op)) {
                     opt_from_options_section = &test_op;
                     break;

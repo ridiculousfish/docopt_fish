@@ -62,8 +62,8 @@ struct expression_list_t {
     
     template<typename T>
     void visit_children(T *v) const {
-        for (size_t i=0; i < expressions.size(); i++) {
-            v->visit(expressions.at(i));
+        for (const auto &expr : expressions) {
+            v->visit(expr);
         }
     }
     
@@ -78,8 +78,8 @@ struct alternation_list_t {
     
     template<typename T>
     void visit_children(T *v) const {
-        for (size_t i=0; i < alternations.size(); i++) {
-            v->visit(alternations.at(i));
+        for (const auto &altern : alternations) {
+            v->visit(altern);
         }
     }
     
@@ -110,10 +110,8 @@ struct usage_t {
 
 struct opt_ellipsis_t {
     rstring_t ellipsis;
-    bool present;
+    bool present = false;
 
-    opt_ellipsis_t() : present(false) {}
-    
     std::string name() const { return "opt_ellipsis"; }
     template<typename T>
     void visit_children(T *v) const {
@@ -124,8 +122,7 @@ struct opt_ellipsis_t {
 struct options_shortcut_t {
     // The options shortcut does not need to remember its token, since we never use it
     // It's always assuemd to be present
-    bool present;
-    options_shortcut_t() : present(false) {}
+    bool present = false;
     
     std::string name() const { return "options_shortcut"; }
     template<typename T>
@@ -162,9 +159,7 @@ struct expression_t {
     options_shortcut_t options_shortcut;
     
     // Invariant: at most one of (simple_clause, alternation_list) may be set
-    uint8_t production;
-    
-    expression_t() : production(-1) {}
+    uint8_t production = uint8_t(-1);
     
     std::string name() const { return "expression"; }
     template<typename T>
@@ -216,7 +211,6 @@ bool parse_one_usage(const rstring_t &src, const option_list_t &shortcut_options
 // Node visitor class, using CRTP. Child classes should override accept().
 template<typename T>
 struct node_visitor_t {
-    /* Additional overrides */
     template<typename NODE_TYPE>
     void visit_internal(const NODE_TYPE &node)
     {
