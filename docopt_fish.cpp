@@ -538,7 +538,6 @@ static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, 
     
     const rstring_t arg_name = arg_as_option.names[type];
     assert(! arg_name.empty());
-    const size_t arg_length = arg_name.length();
     
     /* Get list of matching long options. */
     option_list_t matches;
@@ -549,29 +548,7 @@ static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, 
             matches.push_back(opt);
         }
     }
-    
-    if (matches.empty() && (st->flags & flag_resolve_unambiguous_prefixes)) {
-        /* We didn't get any direct matches; look for an unambiguous prefix match */
-        option_list_t prefix_matches;
-        for (const option_t &opt : st->options) {
-            // Here we confirm that the option's name is longer than the name portion of the argument.
-            // If they are equal; we would have had an exact match above; if the option is shorter, then the argument is not a prefix of it.
-            // If the option is longer, we then do a substring comparison, up to the number of characters determined by the argument
-            if (opt.has_type(type) && opt.names[type].length() > arg_length && arg_name == opt.names[type].substr(0, arg_length)) {
-                prefix_matches.push_back(opt);
-            }
-        }
-        if (prefix_matches.size() > 1) {
-            // Todo: list exactly the different options that this prefix can correspond to
-            append_argv_error(out_errors, st->idx, error_ambiguous_prefix_match, "Ambiguous prefix match");
-        } else if (prefix_matches.size() == 1) {
-            // We have one unambiguous prefix match. Swap it into the true matches array, which is currently empty.
-            matches.swap(prefix_matches);
-        } else {
-            // Empty, no prefix match at all. Continue on.
-        }
-    }
-    
+        
     /* TODO: Better error reporting */
     /* TODO: can eliminate matches array entirely, just use a single index */
     

@@ -205,7 +205,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     argument_parser_t parser;
     bool parse_success = parser.set_doc(usage_str, &error_list);
     if (parse_success) {
-        results = parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, &error_list, &unused_args);
+        results = parser.parse_arguments(argv, flag_generate_empty_args, &error_list, &unused_args);
     }
     
     bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
@@ -379,7 +379,7 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
     /* Perform the parsing */
     vector<size_t> unused_arg_idxs;
     argument_parser_t parser(usage_str, NULL);
-    parser.parse_arguments(argv, flag_generate_empty_args | flag_resolve_unambiguous_prefixes, NULL, &unused_arg_idxs);
+    parser.parse_arguments(argv, flag_generate_empty_args, NULL, &unused_arg_idxs);
     
     /* Construct unused argument string */
     string_list_t unused_args_vec;
@@ -452,7 +452,7 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
     argument_parser_t parser(usage_str, &error_list);
     
     /* Check arguments */
-    parser.parse_arguments(argv, flag_resolve_unambiguous_prefixes | flag_short_options_strict_separators, &error_list);
+    parser.parse_arguments(argv, flag_short_options_strict_separators, &error_list);
     
     /* Check errors */
     if (error_list.empty()) {
@@ -483,7 +483,7 @@ static void run_1_validation_test(const char *usage, const char *joined_argv, co
     argument_parser_t parser(usage_str, NULL);
     
     /* Validate arguments */
-    std::vector<argument_status_t> statuses = parser.validate_arguments(argv, flag_resolve_unambiguous_prefixes | flag_match_allow_incomplete);
+    std::vector<argument_status_t> statuses = parser.validate_arguments(argv, flag_match_allow_incomplete);
     
     /* Construct a string out of statuses */
     assert(statuses.size() == argv.size());
@@ -628,14 +628,6 @@ static void test_correctness()
                     "--path:%1\n"
                     "<path>:home/"
                 },
-                {   "--pa home/", // argv
-                    "--path:%1\n"
-                    "<path>:home/"
-                },
-                {   "--pa=home/", // argv
-                    "--path:%1\n"
-                    "<path>:home/"
-                },
                 {   "--path", // argv
                     ERROR_EXPECTED
                 },
@@ -742,10 +734,6 @@ static void test_correctness()
                 },
                 {   "--ver", // argv
                     ERROR_EXPECTED
-                },
-                {   "--verb", // argv
-                    "--verbose:True\n"
-                    "--version:False"
                 },
             },
         },
@@ -2425,7 +2413,7 @@ static void test_errors_in_argv()
         {   "Usage: prog --foo\n"
             "       prog --fort",
             "--fo", // argv
-            error_ambiguous_prefix_match
+            error_unknown_option
         },
         /* Case 1 */
         {   "Usage: prog --foo\n",
