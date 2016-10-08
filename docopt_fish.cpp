@@ -1437,6 +1437,10 @@ public:
     
     docopt_impl() {}
     
+    // No copying
+    docopt_impl(const docopt_impl &) = delete;
+    docopt_impl &operator=(const docopt_impl &) = delete;
+
 #pragma mark -
 #pragma mark Instance Variables
 #pragma mark -
@@ -1569,9 +1573,11 @@ public:
         
         // Now parse our usage_spec_ranges
         size_t usages_count = usage_specs.size();
-        this->usages.resize(usages_count);
+        this->usages.reserve(usages_count);
         for (size_t i=0; i < usages_count; i++) {
-            parse_one_usage(usage_specs.at(i), this->shortcut_options, &this->usages.at(i), out_errors);
+            usage_t usage;
+            parse_one_usage(usage_specs.at(i), this->shortcut_options, &usage, out_errors);
+            this->usages.push_back(std::move(usage));
         }
     }
     
@@ -2042,23 +2048,17 @@ argument_parser_t::argument_parser_t(const string_t &doc, error_list_t *out_erro
 }
 
 
-argument_parser_t::argument_parser_t(const argument_parser_t &rhs) {
-    if (rhs.impl == NULL) {
-        this->impl = NULL;
-    } else {
-        this->impl = new docopt_impl(*rhs.impl);
-    }
+argument_parser_t::argument_parser_t(argument_parser_t &&rhs) {
+    this->impl = rhs.impl;
+    rhs.impl = nullptr;
 }
 
 
-argument_parser_t &argument_parser_t::operator=(const argument_parser_t &rhs) {
+argument_parser_t &argument_parser_t::operator=(argument_parser_t &&rhs) {
     if (this != &rhs) {
         delete this->impl;
-        if (rhs.impl == NULL) {
-            this->impl = NULL;
-        } else {
-            this->impl = new docopt_impl(*rhs.impl);
-        }
+        this->impl = rhs.impl;
+        rhs.impl = nullptr;
     }
     return *this;
 }

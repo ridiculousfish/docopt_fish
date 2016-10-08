@@ -111,6 +111,10 @@ namespace docopt_fish
         /* Guts */
         docopt_impl *impl;
         
+        /* No copying, move-semantics only */
+        argument_parser_t(const argument_parser_t &) = delete;
+        argument_parser_t& operator=(const argument_parser_t &) = delete;
+
         public:
         
         typedef std::map<string_t, argument_t> argument_map_t;
@@ -148,8 +152,8 @@ namespace docopt_fish
 
         argument_parser_t();
         ~argument_parser_t();
-        argument_parser_t(const argument_parser_t &rhs);
-        argument_parser_t &operator=(const argument_parser_t &rhs);
+        argument_parser_t(argument_parser_t &&rhs);
+        argument_parser_t &operator=(argument_parser_t &&rhs);
     };
 }
 

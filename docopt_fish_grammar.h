@@ -11,6 +11,7 @@ namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
 using std::vector;
+using std::unique_ptr;
 
 /* Usage grammar:
   
@@ -51,63 +52,6 @@ struct opt_ellipsis_t;
 struct option_clause_t;
 struct fixed_clause_t;
 struct variable_clause_t;
-
-/* Our sort of auto_ptr ripoff. It has the property that copying the pointer copies the underlying object. */
-template<typename T>
-class deep_ptr {
-    T* val_;
-public:
-    
-    // We own our pointer
-    ~deep_ptr() { delete val_; }
-    
-    // Getters
-    T* get() { return val_; }
-    const T* get() const { return val_; }
-    
-    T& operator*() { return *val_; }
-    const T& operator*() const { return *val_; }
-    
-    // Constructors
-    deep_ptr() : val_(NULL) {}
-    explicit deep_ptr(T* v) : val_(v) {}
-    deep_ptr(const deep_ptr &rhs) :val_(rhs.val_ ? new T(*rhs.val_) : NULL) {}
-
-    // We support assignment
-    void operator=(const deep_ptr<T> &rhs) {
-        if (this != &rhs) {
-            if (val_ && rhs.val_) {
-                // Use operator= to avoid new allocations
-                *val_ = *rhs.val_;
-            } else {
-                delete val_;
-                val_ = rhs.val_ ? new T(*rhs.val_) : NULL;
-            }
-        }
-    }
-    
-    void reset(T* v) {
-        if (val_ != v) {
-            delete val_;
-            val_ = v;
-        }
-    }
-    
-#if __cplusplus > 199711L
-    // Move semantics
-    deep_ptr(deep_ptr<T> &&rhs) : val_(rhs.val_) {
-        rhs.val_ = NULL;
-    }
-    
-    void operator=(deep_ptr<T> &&rhs) {
-        if (this != &rhs) {
-            delete val_;
-            val_ = rhs.val_;
-            rhs.val_ = NULL;
-        }
-    }
-#endif
-};
 
 struct expression_list_t {
     vector<expression_t> expressions;
@@ -189,9 +133,9 @@ struct options_shortcut_t {
 };
 
 struct simple_clause_t {
-    deep_ptr<option_clause_t> option;
-    deep_ptr<fixed_clause_t> fixed;
-    deep_ptr<variable_clause_t> variable;
+    unique_ptr<option_clause_t> option;
+    unique_ptr<fixed_clause_t> fixed;
+    unique_ptr<variable_clause_t> variable;
     
     std::string name() const { return "simple_clause"; }
     template<typename T>
@@ -204,11 +148,11 @@ struct simple_clause_t {
 
 struct expression_t {
     // production 0
-    deep_ptr<simple_clause_t> simple_clause;
+    unique_ptr<simple_clause_t> simple_clause;
     
     // Collapsed for productions 1 and 2
     rstring_t open_token;
-    deep_ptr<alternation_list_t> alternation_list;
+    unique_ptr<alternation_list_t> alternation_list;
     rstring_t close_token;
     
     // Collapsed for all
@@ -282,7 +226,7 @@ struct node_visitor_t {
     }
     
     template<typename NODE_TYPE>
-    void visit_internal(const deep_ptr<NODE_TYPE> &node)
+    void visit_internal(const unique_ptr<NODE_TYPE> &node)
     {
         if (node.get()) {
             this->visit_internal(*node);

@@ -129,19 +129,24 @@ struct parse_context_t {
     // Given a vector of T, try parsing and then appending a T
     template<typename T>
     inline parse_result_t try_parse_appending(vector<T> *vec) {
-        vec->resize(vec->size() + 1);
-        parse_result_t status = this->parse(&vec->back());
-        if (status != parsed_ok) {
-            vec->pop_back();
+        T val;
+        parse_result_t status = this->parse(&val);
+        if (status == parsed_ok) {
+            vec->push_back(std::move(val));
         }
         return status;
     }
     
-    // Given a deep_ptr, try parsing it
+    // Given a pointer to a unique_ptr, try populating it
+    // Parse a local and then, if successfull, move it into a p
     template<typename T>
-    inline parse_result_t try_parse_auto(deep_ptr<T> *p) {
-        p->reset(new T());
-        return this->parse(p->get());
+    inline parse_result_t try_parse_auto(unique_ptr<T> *p) {
+        T val;
+        parse_result_t ret = this->parse(&val);
+        if (ret == parsed_ok) {
+            p->reset(new T(std::move(val)));
+        }
+        return ret;
     }
     
     #pragma mark Parse functions
@@ -149,8 +154,8 @@ struct parse_context_t {
     parse_result_t parse(alternation_list_t *result) {
         parse_result_t status = parsed_ok;
         bool first = true;
-        // We expect only one alternation, but need to reserve one more for try_parse_appending
-        result->alternations.reserve(2);
+        // We expect only one alternation
+        result->alternations.reserve(1);
         while (status == parsed_ok) {
             // Scan a vert bar if we're not first
             rstring_t bar;
@@ -452,14 +457,9 @@ void usage_t::set_from_variables(const std::vector<rstring_t> &variables, bool i
     
     this->alternation_list.alternations.resize(total_count);
     
-    // Construct an "options" expression
-    // We'll only use this if include_options_shortcut is set
-    expression_t options_expr;
-    options_expr.production = 3;
-    options_expr.options_shortcut.present = true;
-    
     // Set variable clauses
     // This is so ugly
+    // TODO: clean this up
     size_t idx = 0;
     for (; idx < variable_count; idx++) {
         const variable_clause_t clause = {variables.at(idx)};
@@ -473,14 +473,21 @@ void usage_t::set_from_variables(const std::vector<rstring_t> &variables, bool i
         sclause->variable.reset(new variable_clause_t(clause));
         
         if (include_options_shortcut) {
-            exprs->expressions.at(1) = options_expr;
+            expression_t options_expr;
+            options_expr.production = 3;
+            options_expr.options_shortcut.present = true;
+            exprs->expressions.at(1) = std::move(options_expr);
         }
     }
     
     // Also include just an options clause
     if (include_options_shortcut) {
         expression_list_t *exprs = &this->alternation_list.alternations.at(idx);
-        exprs->expressions.push_back(options_expr);
+        expression_t options_expr;
+        options_expr.production = 3;
+        options_expr.options_shortcut.present = true;
+
+        exprs->expressions.push_back(std::move(options_expr));
         idx++;
     }
     assert(idx == total_count);
