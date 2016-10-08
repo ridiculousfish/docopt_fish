@@ -632,7 +632,7 @@ static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, 
         }
         
         if (! errored) {
-            out_result->push_back(resolved_option_t(match, name_idx, arg_index, value));
+            out_result->emplace_back(match, name_idx, arg_index, value);
             st->idx += 1;
             success = true;
         }
@@ -678,7 +678,7 @@ static bool parse_unseparated_short(argv_separation_state_t *st, resolved_option
             size_t name_idx = st->idx;
             size_t value_idx = st->idx;
             rstring_t value = arg.substr_from(2);
-            out_result->push_back(resolved_option_t(match, name_idx, value_idx, value));
+            out_result->emplace_back(match, name_idx, value_idx, value);
             st->idx += 1;
             success = true;
         }
@@ -689,7 +689,9 @@ static bool parse_unseparated_short(argv_separation_state_t *st, resolved_option
     return success;
 }
 
-// Given a list of short options, parse out an argument
+// Given a list of short options, parse out arguments
+// There may be multiple arguments, e.g. 'tar -xc'
+// Only the last option may have an argument, e.g. 'tar -xcf somefile'
 static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion) {
     const rstring_t &arg = st->arg();
     assert(arg.has_prefix("-"));
@@ -701,6 +703,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
     std::vector<option_t> options_for_argument;
     
     std::vector<option_t> matches;
+    // walk over the characters in the argument, skipping the leading dash
     for (size_t idx_in_arg=1; idx_in_arg < arg.length() && ! errored; idx_in_arg++) {
         // Get list of short options matching this resolved option.
         const rstring_t::char_t short_char = arg.at(idx_in_arg);
@@ -781,7 +784,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
                 val_idx = val_idx_for_last_option;
             }
             const option_t &opt = options_for_argument.at(i);
-            out_result->push_back(resolved_option_t(opt, name_idx, val_idx, value));
+            out_result->emplace_back(opt, name_idx, val_idx, value);
         }
         
         // Update the index
@@ -799,7 +802,7 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
     while (st.idx < argv.size()) {
         if (st.saw_double_dash) {
             // double-dash means everything remaining is positional
-            out_positionals->push_back(positional_argument_t(st.idx));
+            out_positionals->emplace_back(st.idx);
             st.idx += 1;
         } else if (st.has_double_dash_at(st.idx)) {
             // Literal --. The remaining arguments are positional.
@@ -842,7 +845,7 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
         } else {
             // Positional argument
             // Note this includes just single-dash arguments, which are often a stand-in for stdin
-            out_positionals->push_back(positional_argument_t(st.idx));
+            out_positionals->emplace_back(st.idx);
             st.idx += 1;
         }
     }
