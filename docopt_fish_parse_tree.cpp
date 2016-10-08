@@ -396,7 +396,7 @@ struct parse_context_t {
     }
 
     /* Given an expression list, if it wraps a single option, return a pointer to that option.
-     Else return NULL. */
+       Else return NULL. */
     static option_t *single_option(expression_list_t *list) {
         if (list->expressions.size() != 1) {
             return NULL;

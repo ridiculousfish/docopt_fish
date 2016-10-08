@@ -240,8 +240,8 @@ public:
         node_dumper_t dumper;
         dumper.begin(node);
         std::string result;
-        for (size_t i=0; i < dumper.lines.size(); i++) {
-            result.append(dumper.lines.at(i));
+        for (const std::string & line : dumper.lines) {
+            result.append(line);
             result.push_back('\n');
         }
         return result;
@@ -323,14 +323,14 @@ typedef std::vector<usage_t> usage_list_t;
 /* Collects options, i.e. tokens of the form --foo */
 static void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) {
     clause_collector_t collector;
-    for (size_t i=0; i < usages.size(); i++) {
-        collector.begin(usages.at(i));
+    for (const usage_t & usage : usages) {
+        collector.begin(usage);
     }
     
     // "Return" the values
-    out_options->swap(collector.options);
-    out_variables->swap(collector.variables);
-    out_static_arguments->swap(collector.fixeds);
+    *out_options = std::move(collector.options);
+    *out_variables = std::move(collector.variables);
+    *out_static_arguments = std::move(collector.fixeds);
 }
 
 
@@ -495,7 +495,7 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates, 
             }
             
             // "Delete" candidate by overwriting it with the last value, and decrementing the count
-            *candidate = options->back();
+            *candidate = std::move(options->back());
             options->pop_back();
             options_count -= 1;
             match_cursor -= 1; // have to re-evaluate this value
@@ -541,8 +541,7 @@ static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, 
     
     /* Get list of matching long options. */
     option_list_t matches;
-    for (size_t i=0; i < st->options.size(); i++) {
-        const option_t &opt = st->options.at(i);
+    for (const option_t &opt : st->options) {
         if (opt.has_type(type) && opt.names[type] == arg_name) {
             // Should never have separator_none for long options
             assert(opt.separator != option_t::sep_none);
@@ -553,8 +552,7 @@ static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, 
     if (matches.empty() && (st->flags & flag_resolve_unambiguous_prefixes)) {
         /* We didn't get any direct matches; look for an unambiguous prefix match */
         option_list_t prefix_matches;
-        for (size_t i=0; i < st->options.size(); i++) {
-            const option_t &opt = st->options.at(i);
+        for (const option_t &opt : st->options) {
             // Here we confirm that the option's name is longer than the name portion of the argument.
             // If they are equal; we would have had an exact match above; if the option is shorter, then the argument is not a prefix of it.
             // If the option is longer, we then do a substring comparison, up to the number of characters determined by the argument
@@ -655,8 +653,7 @@ static bool parse_unseparated_short(argv_separation_state_t *st, resolved_option
     // If not set, then we don't care if the separators match
     const bool relaxed_separators = ! (st->flags & flag_short_options_strict_separators);
     
-    for (size_t i=0; i < st->options.size(); i++) {
-        const option_t &opt = st->options.at(i);
+    for (const option_t &opt : st->options) {
         if (opt.has_type(option_t::single_short) && opt.has_value() && (relaxed_separators || opt.separator == option_t::sep_none)) {
             // Candidate short option.
             // This looks something like -DNDEBUG. We want to see if the D matches.
@@ -707,8 +704,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
         /* Get list of short options matching this resolved option. */
         const rstring_t::char_t short_char = arg.at(idx_in_arg);
         matches.clear();
-        for (size_t i=0; i < st->options.size(); i++) {
-            const option_t &opt = st->options.at(i);
+        for (const option_t &opt : st->options) {
             const rstring_t &name = opt.names[option_t::single_short];
             // This is a short option (-D) so we check the second character (idx 1)
             if (name.length() > 1 && name[1] == short_char) {
@@ -1279,9 +1275,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
     // Collect potential suggestions in here. We squelch them if we find that a later matched option has the same corresponding long name; we need to remove those from the suggestions
     option_list_t potential_suggestions;
     
-    for (size_t j=0; j < options_in_doc.size(); j++) {
-        const option_t &opt_in_doc = options_in_doc.at(j);
-        
+    for (const option_t &opt_in_doc : options_in_doc) {
         // Find the matching option from the resolved option list (i.e. argv)
         size_t resolved_opt_idx = npos;
         for (size_t i=0; i < ctx->resolved_options.size(); i++) {
@@ -1327,8 +1321,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
     
     // Now go through and handle potential suggestions
     if (ctx->flags & flag_generate_suggestions) {
-        for (size_t i=0; i < potential_suggestions.size(); i++) {
-            const option_t &suggestion = potential_suggestions.at(i);
+        for (const option_t &suggestion : potential_suggestions) {
             size_t type_idx = option_t::NAME_TYPE_COUNT;
             while (type_idx--) {
                 option_t::name_type_t type = static_cast<option_t::name_type_t>(type_idx);
@@ -1602,11 +1595,10 @@ public:
     /* Given a list of direct options, create a docopt_impl (allocated with new), populating its instance variables from the direct options. */
     static docopt_impl *build_from_annotated_options(const std::vector<annotated_option_t > &dopts) {
         typedef annotated_option_t doption_t;
-        const size_t count = dopts.size();
+        
         /* We need to build our storage first. */
         string_t storage;
-        for (size_t i=0; i < count; i++) {
-            const doption_t &dopt = dopts.at(i);
+        for (const doption_t &dopt : dopts) {
             maybe_append(&storage, dopt.option);
             maybe_append(&storage, dopt.value_name);
             maybe_append(&storage, dopt.metadata.command);
@@ -1620,8 +1612,7 @@ public:
         /* We're going to construct a list of variable arguments, that are not associated with an option Now populate impl->shortcut_options and free_variables. cursor tracks our location through our storage. */
         rstring_list_t free_variables;
         size_t cursor = 0;
-        for (size_t i=0; i < count; i++) {
-            const doption_t &dopt = dopts.at(i);
+        for (const doption_t &dopt : dopts) {
             base_metadata_t<rstring_t> md;
             
             // Note the order here must match that of the loop above
@@ -1675,8 +1666,7 @@ public:
         if (flags & flag_generate_empty_args) {
             // For each option, fill in the value in the map
             // This could be made more efficient via a single call to insert()
-            for (size_t i=0; i < all_options.size(); i++) {
-                const option_t &opt = all_options.at(i);
+            for (const option_t &opt : all_options) {
                 const rstring_t &name = opt.best_name();
                 // We merely invoke operator[]; this will do the insertion with a default value if necessary.
                 // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
@@ -1694,15 +1684,15 @@ public:
             
             // Fill in variables
             string_t name;
-            for (size_t i=0; i < all_variables.size(); i++) {
-                all_variables.at(i).copy_to(&name);
+            for (const rstring_t & var : all_variables) {
+                var.copy_to(&name);
                 // As above, we merely invoke operator[]
                 result[name];
             }
             
             // Fill in static arguments
-            for (size_t i=0; i < all_static_arguments.size(); i++) {
-                all_static_arguments.at(i).copy_to(&name);
+            for (const rstring_t & static_arg : all_static_arguments) {
+                static_arg.copy_to(&name);
                 // As above, we merely invoke operator[]
                 result[name];
             }
@@ -1821,8 +1811,7 @@ public:
         
         for (size_t i=0; i < this->shortcut_options.size(); i++) {
             const option_t &shortcut_opt = this->shortcut_options.at(i);
-            for (size_t j=0; j < usage_options.size(); j++) {
-                const option_t &usage_opt = usage_options.at(j);
+            for (const option_t &usage_opt : usage_options) {
                 if (shortcut_opt.has_same_name(usage_opt)) {
                     // Remove this shortcut, and decrement the index to reflect the position shift of the remaining items
                     this->shortcut_options.erase(this->shortcut_options.begin() + i);
