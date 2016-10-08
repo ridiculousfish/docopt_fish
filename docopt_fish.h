@@ -34,19 +34,16 @@ namespace docopt_fish
     /* Represents an error. */
     struct error_t {
         /* Location of the token where the error occurred, in either the docopt doc or the argument */
-        size_t location;
+        size_t location = size_t(-1);
         
         /* If the error occurred in an argument (i.e. argv), the index of the argument; otherwise -1 */
-        size_t argument_index;
+        size_t argument_index = size_t(-1);
         
         /* Internal code, for use in the tests */
-        int code;
+        int code = 0;
         
         /* Text of the error. This is an immortal string literal, but may someday need to be a std::string. */
-        const char *text;
-        
-        error_t() : location(-1), argument_index(-1), code(0), text(NULL)
-        {}
+        const char *text = nullptr;        
     };
     
     /* Represents an argument in the result */

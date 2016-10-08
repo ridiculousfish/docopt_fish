@@ -175,20 +175,33 @@ option_t option_t::parse_from_argument(const rstring_t &str, option_t::name_type
     
     // Get the name part
     const rstring_t dashes = remaining.scan_while<it_equals<'-'> >();
-    const rstring_t name = remaining.scan_while<char_is_valid_in_parameter>();
-    
-    // Check to see if there's an = sign
-    const rstring_t equals = remaining.scan_1_char('=');
-    
-    // If we got an equals sign, the rest is the value
-    // It can have any character at all, since it's coming from the argument, not from the usage spec
-    rstring_t value;
-    if (! equals.empty()) {
-        value = remaining;
+    rstring_t name, value;
+    option_t::separator_t separator = option_t::sep_space;
+    if (type == single_short) {
+        // Short option, perhaps with unseparated value
+        // here the name is just the next character (if any)
+        // and the value is anything after it
+        if (! remaining.empty()) {
+            name = remaining.substr(0, 1);
+            value = remaining.substr_from(1);
+            separator = option_t::sep_none;
+        }
+    } else {
+        // Long option
+        name = remaining.scan_while<char_is_valid_in_parameter>();
+        
+        // Check to see if there's an = sign
+        // If we got an equals sign, the rest is the value
+        // It can have any character at all, since it's coming from the argument, not from the usage spec
+        const rstring_t equals = remaining.scan_1_char('=');
+        if (! equals.empty()) {
+            value = remaining;
+            separator = option_t::sep_equals;
+        }
     }
     
     // Return the option
-    return option_t(type, dashes.merge(name), value, equals.empty() ? option_t::sep_space : option_t::sep_equals);
+    return option_t(type, dashes.merge(name), value, separator);
 }
 
 /* Helper class for pretty-printing */
@@ -522,54 +535,68 @@ struct argv_separation_state_t {
     bool has_double_dash_at(size_t idx) const {
         return idx < this->argv.size() && this->argv.at(idx).is_double_dash();
     }
+    
+    // Returns the list of options satisfying some predicate
+    template<typename UnaryFunc>
+    std::vector<option_t> filter_options(const UnaryFunc& pred) const {
+        std::vector<option_t> result;
+        copy_if(this->options.begin(), this->options.end(), std::back_inserter(result), pred);
+        return result;
+    }
 };
 
-/* Extracts a long option from the arg at idx, and appends the result to out_result. Updates idx.
- TODO: merge with parse_unseparated_short, etc
- */
-static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion) {
+
+// Parse either a long value (type is single_long or double_long),
+// or an unseparated short value like -DNDEBUG (type is single_short)
+// We do NOT handle separated short values (-D NDEBUG) here;
+// those are handled in parse_short
+static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_t::name_type_t type, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion)
+{
     const rstring_t &arg = st->arg();
-    assert(type == option_t::single_long || type == option_t::double_long);
-    assert(arg.has_prefix(type == option_t::single_long ? "-" : "--"));
+    assert(arg.has_prefix(type == option_t::double_long ? "--" : "-"));
     
-    /* Parse the argument into an 'option'. Note that this option does not appear in the options list because its range reflects the string in the argument. TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar) */
+    // If strict_separators is set, then we require that the option have sep_none
+    // If not set, then we don't care if the separators match
+    const bool relaxed_separators = ! (st->flags & flag_short_options_strict_separators);
+    
+    // Parse the argument into an 'option'. Note that this option does not appear in the options list
+    // because its range reflects the string in the argument.
+    // TODO: Need to distinguish between equivalent ways of specifying parameters (--foo=bar and --foo bar)
     option_t arg_as_option = option_t::parse_from_argument(arg, type);
-    assert(arg_as_option.separator != option_t::sep_none);
-    
     const rstring_t arg_name = arg_as_option.names[type];
     assert(! arg_name.empty());
     
-    /* Get list of matching long options. */
-    option_list_t matches;
-    for (const option_t &opt : st->options) {
-        if (opt.has_type(type) && opt.names[type] == arg_name) {
-            // Should never have separator_none for long options
-            assert(opt.separator != option_t::sep_none);
-            matches.push_back(opt);
+    // Get list of matching options.
+    // Short options must have a value to match, else we handle them in parse_short
+    // TODO: can eliminate matches array entirely, just use a single index
+    const option_list_t matches = st->filter_options([&](const option_t &opt) {
+        bool does_match = opt.names[type] == arg_name;
+        if (type == option_t::single_short) {
+            does_match = does_match && opt.has_value() && (relaxed_separators || opt.separator == option_t::sep_none);
         }
-    }
-        
-    /* TODO: Better error reporting */
-    /* TODO: can eliminate matches array entirely, just use a single index */
+        return does_match;
+    });
     
     bool success = false;
     size_t match_count = matches.size();
     // Our option de-duplication ensures we should never have more than one match
     assert(match_count <= 1);
     if (match_count < 1) {
-        append_argv_error(out_errors, st->idx, error_unknown_option, "Unknown long option");
+        append_argv_error(out_errors, st->idx, error_unknown_option, "Unknown option");
     } else {
         bool errored = false;
         assert(match_count == 1);
         const option_t &match = matches.at(0);
         
-        /* Ensure the option and argument agree on having a value */
+        // Ensure the option and argument agree on having a value
         rstring_t value;
         const size_t name_idx = st->idx;
         size_t arg_index = npos;
         if (match.has_value()) {
             if (arg_as_option.has_value()) {
-                // The arg was specified as --foo=bar. The range is the value portion; the index is the same as our argument.
+                // The arg was specified as --foo=bar (long) or -DNDEBUG (short)
+                // The range is the value portion; the index is the same as our argument.
+                // TODO: suggestions
                 value = arg_as_option.value;
                 arg_index = st->idx;
             } else {
@@ -613,55 +640,6 @@ static bool parse_long(argv_separation_state_t *st, option_t::name_type_t type, 
             st->idx += 1;
             success = true;
         }
-    }
-    return success;
-}
-
-// Given a list of short options, try parsing out an unseparated short, i.e. -DNDEBUG. We only look at short options with no separator. TODO: Use out_suggestion
-static bool parse_unseparated_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion UNUSED) {
-    const rstring_t arg(st->arg());
-    // must not be just a single dash
-    assert(arg.length() > 1 && arg.at(0) == '-');
-    bool success = false;
-    
-    // Construct the list of options in-order, corresponding to this argument
-    std::vector<option_t> matches;
-    
-    // If strict_separators is set, then we require that the option have sep_none
-    // If not set, then we don't care if the separators match
-    const bool relaxed_separators = ! (st->flags & flag_short_options_strict_separators);
-    
-    for (const option_t &opt : st->options) {
-        if (opt.has_type(option_t::single_short) && opt.has_value() && (relaxed_separators || opt.separator == option_t::sep_none)) {
-            // Candidate short option.
-            // This looks something like -DNDEBUG. We want to see if the D matches.
-            // Compare the character at offset 1 (to account for the dash) and length 1 (since it's a short option)
-            if (opt.names[option_t::single_short].at(1) == arg.at(1)) {
-                // Expect to always want a value here
-                matches.push_back(opt);
-            }
-        }
-    }
-    
-    // Our option de-duplication should ensure we should never have more than one match
-    assert(matches.size() <= 1);
-    if (matches.size() == 1) {
-        // Try to extract the value. This is very simple: it starts at index 2 and goes to the end of the arg.
-        const option_t &match = matches.at(0);
-        if (arg.length() <= 2) {
-            append_argv_error(out_errors, st->idx, error_option_has_missing_argument, "Option expects an argument");
-        } else {
-            // Got one
-            size_t name_idx = st->idx;
-            size_t value_idx = st->idx;
-            rstring_t value = arg.substr_from(2);
-            out_result->emplace_back(match, name_idx, value_idx, value);
-            st->idx += 1;
-            success = true;
-        }
-    } else {
-        // Common case: Match count is 0, so we didn't get any.
-        assert(matches.empty());
     }
     return success;
 }
@@ -787,7 +765,7 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
             st.idx += 1;
         } else if (st.arg().has_prefix("--")) {
             // Leading long option
-            if (parse_long(&st, option_t::double_long, out_resolved_options, out_errors, out_suggestion)) {
+            if (parse_long_or_unseparated_short(&st, option_t::double_long, out_resolved_options, out_errors, out_suggestion)) {
                 // parse_long will have updated st.idx and out_resolved_options
             } else {
                 // This argument is unused
@@ -804,9 +782,9 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
              We cache the errors locally so that failing to parse it as a long option doesn't report an error if it parses successfully as a short option. This may result in duplicate error messages.
              */
             error_list_t local_long_errors, local_short_errors;
-            if (parse_long(&st, option_t::single_long, out_resolved_options, &local_long_errors, out_suggestion)) {
+            if (parse_long_or_unseparated_short(&st, option_t::single_long, out_resolved_options, &local_long_errors, out_suggestion)) {
                 // parse_long succeeded
-            } else if (parse_unseparated_short(&st, out_resolved_options, &local_short_errors, out_suggestion)) {
+            } else if (parse_long_or_unseparated_short(&st, option_t::single_short, out_resolved_options, &local_short_errors, out_suggestion)) {
                 // parse_unseparated_short will have updated idx and out_resolved_options
             } else if (parse_short(&st, out_resolved_options, &local_short_errors, out_suggestion)) {
                 // parse_short succeeded.
