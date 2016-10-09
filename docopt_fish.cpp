@@ -287,7 +287,7 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
 
 /* Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty. On return, it will contain the line, with its end pointing just after the trailing newline, or possibly at the end. Returns true if a line was returned, false if we reached the end. */
 static bool get_next_line(const rstring_t &base, rstring_t *inout_line) {
-    assert(inout_line != NULL);
+    assert(inout_line != nullptr);
     if (inout_line->end() == base.end()) {
         // Line exhausted
         return false;
@@ -491,7 +491,6 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates, 
 
         // Find all options that share a name with this representative
         // Determine which one is best
-        // Overwrite them with an empty option, so we skip them next
         for (size_t match_cursor = outer + 1; match_cursor < options_count; match_cursor++) {
             option_t *candidate = &options->at(match_cursor);
             if (! representative->has_same_name(*candidate)) {
@@ -611,7 +610,7 @@ static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_
                     st->idx += 1;
                     arg_index = st->idx;
                     value = rstring_t(st->argv.at(arg_index));
-                } else if ((st->flags & flag_generate_suggestions) && out_suggestion != NULL) {
+                } else if ((st->flags & flag_generate_suggestions) && out_suggestion != nullptr) {
                     // We are at the last argument, and we expect a value. Return the value as a suggestion.
                     *out_suggestion = match.value;
                     errored = true;
@@ -716,7 +715,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
         if (st->idx + 1 < st->argv.size()) {
             val_idx_for_last_option = st->idx + 1;
             value_for_last_option = rstring_t(st->argv.at(st->idx + 1));
-        } else if ((st->flags & flag_generate_suggestions) && out_suggestion != NULL) {
+        } else if ((st->flags & flag_generate_suggestions) && out_suggestion != nullptr) {
             // We are at the last argument, and we expect a value. Return the value as a suggestion.
             const option_t &match = options_for_argument.back();
             *out_suggestion = match.value;
@@ -750,7 +749,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
 
 
 /* The Python implementation calls this "parse_argv" */
-static void separate_argv_into_options_and_positionals(const rstring_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, rstring_t *out_suggestion = NULL) {
+static void separate_argv_into_options_and_positionals(const rstring_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, rstring_t *out_suggestion = nullptr) {
     
     // double_dash means that all remaining values are arguments
     argv_separation_state_t st(argv, options, flags);
@@ -1172,7 +1171,7 @@ static void match(const expression_t &node, match_state_t state, match_context_t
              match one time, two times, three times...
              We stop when we get no more matches, which usually happens when we run out of positionals.
              */
-            assert(node.simple_clause.get() != NULL);
+            assert(node.simple_clause.get() != nullptr);
             size_t prior_state_count = resulting_states->size();
             match(*node.simple_clause, state.move(), ctx, resulting_states);
             /* Now we know that all states starting at state_count_before are newly added. If we have ellipsis, go until we stop getting new states. */
@@ -1189,7 +1188,7 @@ static void match(const expression_t &node, match_state_t state, match_context_t
              TODO: this may loop forever with states that do not consume any values, e.g. ([foo])...
              */
             size_t prior_state_count = resulting_states->size();
-            assert(node.alternation_list.get() != NULL);
+            assert(node.alternation_list.get() != nullptr);
             match(*node.alternation_list, state.move(), ctx, resulting_states);
             if (has_ellipsis) {
                 repeat_matching(*node.alternation_list, prior_state_count, ctx, resulting_states);
@@ -1202,7 +1201,7 @@ static void match(const expression_t &node, match_state_t state, match_context_t
             /* This is a square-bracketed clause which may have ellipsis, like [foo]...
              Same algorithm as the simple clause above, except that we also append the initial state as a not-taken branch.
              */
-            assert(node.alternation_list.get() != NULL);
+            assert(node.alternation_list.get() != nullptr);
             resulting_states->push_back(state.copy()); // append the not-taken-branch
             size_t prior_state_count = resulting_states->size();
             match(*node.alternation_list, std::move(state), ctx, resulting_states);
@@ -1722,21 +1721,21 @@ public:
         // Now return the winning state and its unused arguments
         if (best_state_idx != npos) {
             // We got a best state
-            if (out_unused_arguments != NULL) {
+            if (out_unused_arguments != nullptr) {
                 *out_unused_arguments = std::move(best_unused_args);
             }
-            if (out_option_map != NULL) {
+            if (out_option_map != nullptr) {
                 *out_option_map = std::move(result.at(best_state_idx).mut_argument_values());
             }
         } else {
             // No states. Every argument is unused.
-            if (out_unused_arguments != NULL) {
+            if (out_unused_arguments != nullptr) {
                 out_unused_arguments->clear();
                 for (size_t i=0; i < argv.size(); i++) {
                     out_unused_arguments->push_back(i);
                 }
             }
-            if (out_option_map != NULL) {
+            if (out_option_map != nullptr) {
                 out_option_map->clear();
             }
         }
@@ -1822,7 +1821,7 @@ public:
         positional_argument_list_t positionals;
         resolved_option_list_t resolved_options;
         rstring_t suggestion;
-        separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, NULL /* errors */, &suggestion);
+        separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals, &resolved_options, nullptr /* errors */, &suggestion);
         
         /* If we got a suggestion, it means that the last argument was of the form --foo, where --foo wants a value. That's all we care about. */
         if (! suggestion.empty()) {
@@ -1911,7 +1910,7 @@ std::vector<argument_status_t> argument_parser_t::validate_arguments(const std::
     
     index_list_t unused_args;
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
-    impl->best_assignment_for_argv(argv_rstrs, flags, NULL /* errors */, &unused_args, NULL);
+    impl->best_assignment_for_argv(argv_rstrs, flags, nullptr /* errors */, &unused_args, nullptr);
     
     // Unused arguments are all invalid
     for (size_t unused_arg_idx : unused_args) {
@@ -1986,15 +1985,15 @@ void argument_parser_t::set_options(const std::vector<annotated_option_t > &opts
 {
     delete this->impl; // may be null
     this->impl = docopt_impl::build_from_annotated_options(opts);
-    this->impl->preflight(NULL);
+    this->impl->preflight(nullptr);
 }
 
 /* Constructors */
 
-argument_parser_t::argument_parser_t() : impl(NULL) {}
+argument_parser_t::argument_parser_t() : impl(nullptr) {}
 
 
-argument_parser_t::argument_parser_t(const string_t &doc, error_list_t *out_errors) : impl(NULL) {
+argument_parser_t::argument_parser_t(const string_t &doc, error_list_t *out_errors) : impl(nullptr) {
     this->set_doc(doc, out_errors);
 }
 
