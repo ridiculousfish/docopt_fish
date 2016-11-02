@@ -1537,24 +1537,6 @@ public:
         }
     }
     
-    static void maybe_append(string_t *storage, const string_t &str) {
-        if (! str.empty()) {
-            storage->append(str);
-            storage->push_back('\n');
-        }
-    }
-    
-    rstring_t slice_string(size_t *cursor, const string_t &str) {
-        size_t start = *cursor, extent = str.size();
-        assert(start + extent <= this->rsource.length());
-        if (extent > 0)
-        {
-            // +1 for newline
-            *cursor += extent + 1;
-        }
-        return this->rsource.substr(start, extent);
-    }
-    
     /* Given a list of direct options, create a docopt_impl (allocated with new), populating its instance variables from the direct options. */
     static docopt_impl *build_from_annotated_options(const std::vector<annotated_option_t > &dopts) {
         typedef annotated_option_t doption_t;
@@ -1562,38 +1544,58 @@ public:
         /* We need to build our storage first. */
         string_t storage;
         for (const doption_t &dopt : dopts) {
-            maybe_append(&storage, dopt.option);
-            maybe_append(&storage, dopt.value_name);
-            maybe_append(&storage, dopt.metadata.command);
-            maybe_append(&storage, dopt.metadata.condition);
-            maybe_append(&storage, dopt.metadata.description);
+            auto strs = {
+                &dopt.option,
+                &dopt.value_name,
+                &dopt.metadata.command,
+                &dopt.metadata.condition,
+                &dopt.metadata.description
+            };
+            for (const string_t *str : strs) {
+                if (! str->empty()) {
+                    storage.append(*str);
+                    storage.push_back('\n');
+                }
+            }
         }
         
         /* Create the impl */
-        docopt_impl *impl = new docopt_impl(storage);
+        docopt_impl *impl = new docopt_impl(std::move(storage));
         
-        /* We're going to construct a list of variable arguments, that are not associated with an option Now populate impl->shortcut_options and free_variables. cursor tracks our location through our storage. */
-        rstring_list_t free_variables;
         size_t cursor = 0;
+        auto slice_string = [&](const string_t &str) {
+            size_t start = cursor, extent = str.size();
+            assert(start + extent <= impl->rsource.length());
+            if (extent > 0)
+            {
+                // +1 for newline
+                cursor += extent + 1;
+            }
+            return impl->rsource.substr(start, extent);
+        };
+        
+        // We're going to construct a list of variable arguments, that are not associated with an option
+        // Now populate impl->shortcut_options and free_variables. cursor tracks our location through our storage.
+        rstring_list_t free_variables;
         for (const doption_t &dopt : dopts) {
             base_metadata_t<rstring_t> md;
             
             // Note the order here must match that of the loop above
-            const rstring_t option_name = impl->slice_string(&cursor, dopt.option);
-            const rstring_t value_name = impl->slice_string(&cursor, dopt.value_name);
-            md.command = impl->slice_string(&cursor, dopt.metadata.command);
-            md.condition = impl->slice_string(&cursor, dopt.metadata.condition);
-            md.description = impl->slice_string(&cursor, dopt.metadata.description);
+            const rstring_t option_name = slice_string(dopt.option);
+            const rstring_t value_name = slice_string(dopt.value_name);
+            md.command = slice_string(dopt.metadata.command);
+            md.condition = slice_string(dopt.metadata.condition);
+            md.description = slice_string(dopt.metadata.description);
             md.tag = dopt.metadata.tag;
             
             if (! option_name.empty()) {
                 // Create an option
-                impl->shortcut_options.push_back(option_t());
-                option_t *option = &impl->shortcut_options.back();
                 size_t name_idx = static_cast<size_t>(dopt.type);
                 assert(name_idx < option_t::NAME_TYPE_COUNT);
-                option->names[name_idx] = option_name;
-                option->value = value_name; // maybe empty
+                option_t option;
+                option.names[name_idx] = option_name;
+                option.value = value_name; // maybe empty
+                impl->shortcut_options.push_back(std::move(option));
             } else if (! value_name.empty()) {
                 // option_name is empty, create a static
                 free_variables.push_back(value_name);
@@ -1610,9 +1612,8 @@ public:
         
         bool has_option = ! impl->shortcut_options.empty();
         
-        // Build usages
-        impl->usages.resize(1);
-        impl->usages.back().set_from_variables(free_variables, has_option);
+        // Build a usage
+        impl->usages.push_back(usage_t::build_from_variables(free_variables, has_option));
         
         return impl;
     }

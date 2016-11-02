@@ -445,16 +445,17 @@ void usage_t::make_default() {
     parse_one_usage(src, option_list_t(), this, NULL /* errors */);
 }
 
-void usage_t::set_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut) {
+usage_t usage_t::build_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut) {
     // Hackish?
     // Note this is safe because string literals are immortal
+    usage_t usage;
     const char *command_cstr = "command";
-    this->prog_name = rstring_t(command_cstr, strlen(command_cstr));
+    usage.prog_name = rstring_t(command_cstr, strlen(command_cstr));
     
     const size_t variable_count = variables.size();
     const size_t total_count = variable_count + (include_options_shortcut ? 1 : 0);
     
-    this->alternation_list.alternations.resize(total_count);
+    usage.alternation_list.alternations.resize(total_count);
     
     // Set variable clauses
     // This is so ugly
@@ -462,7 +463,7 @@ void usage_t::set_from_variables(const std::vector<rstring_t> &variables, bool i
     size_t idx = 0;
     for (; idx < variable_count; idx++) {
         const variable_clause_t clause = {variables.at(idx)};
-        expression_list_t *exprs = &this->alternation_list.alternations.at(idx);
+        expression_list_t *exprs = &usage.alternation_list.alternations.at(idx);
         exprs->expressions.resize(include_options_shortcut ? 2 : 1);
         
         expression_t *expr = &exprs->expressions.at(0);
@@ -481,7 +482,7 @@ void usage_t::set_from_variables(const std::vector<rstring_t> &variables, bool i
     
     // Also include just an options clause
     if (include_options_shortcut) {
-        expression_list_t *exprs = &this->alternation_list.alternations.at(idx);
+        expression_list_t *exprs = &usage.alternation_list.alternations.at(idx);
         expression_t options_expr;
         options_expr.production = 3;
         options_expr.options_shortcut.present = true;
@@ -490,6 +491,7 @@ void usage_t::set_from_variables(const std::vector<rstring_t> &variables, bool i
         idx++;
     }
     assert(idx == total_count);
+    return usage;
 }
 
 bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {

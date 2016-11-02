@@ -1994,11 +1994,6 @@ static void test_annotated_options()
     };
 
     
-    std::vector<doption_t> dopts;
-    dopts.push_back(d11);
-    dopts.push_back(d12);
-    dopts.push_back(d13);
-    
     /* Case 0 */
     run_1_annotated_option_test(0, 0,
                              "", // argv

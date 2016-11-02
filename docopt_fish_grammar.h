@@ -105,7 +105,7 @@ struct usage_t {
     /* Hackish function to build a parse tree from a (possibly empty) list of variable names, optionally including an options shortcut.
        Each variable becomes an element in an alternation list.
      */
-    void set_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut);
+    static usage_t build_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut);
 };
 
 struct opt_ellipsis_t {
