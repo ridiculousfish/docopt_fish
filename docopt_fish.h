@@ -112,10 +112,10 @@ namespace docopt_fish
         typedef std::vector<error_t> error_list_t;
         
         /* Sets the docopt doc for this parser. Returns any parse errors by reference. Returns true if successful. */
-        bool set_doc(const string_t &doc, error_list_t *out_errors);
+        bool set_doc(string_t doc, error_list_t *out_errors);
         
         /* Sets the doc via a list of programmatically-specified options. The usage spec is assumed to be `prog [options]` */
-        void set_options(const std::vector<annotated_option_t> &opts);
+        void set_options(std::vector<annotated_option_t> opts);
         
         /* Given a list of arguments, this returns a corresponding parallel array validating the arguments */
         std::vector<argument_status_t> validate_arguments(const string_list_t &argv, parse_flags_t flags) const;

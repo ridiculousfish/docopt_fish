@@ -1365,16 +1365,15 @@ class docopt_impl {
     
     /* Constructor takes the source in either narrow or wide form. */
 public:
-    /* Storage for our rstrings. Note that this must be shared_ptr so that we can have a sane copy constructor. Otherwise the copy constructor would copy our rstring_ts and have them pointing at the old docopt_impl! Plus this makes copying cheaper. */
-    const string_t storage;
-    docopt_impl(string_t s) : storage(std::move(s)) {}
+    docopt_impl(string_t s) : usage_storage(std::move(s)) {}
     docopt_impl(std::vector<annotated_option_t> opts) : annotated_options(std::move(opts)) {}
-    
+
     // No copying or moving
+    // Moving is supportable but we have no reason to yet
     docopt_impl(const docopt_impl &) = delete;
     docopt_impl &operator=(const docopt_impl &) = delete;
-    docopt_impl(docopt_impl &&) = default;
-    docopt_impl &operator=(docopt_impl &&) = default;
+    docopt_impl(docopt_impl &&) = delete;
+    docopt_impl &operator=(docopt_impl &&) = delete;
 
 
 #pragma mark -
@@ -1386,6 +1385,9 @@ public:
     
     /* The usage parse tree. */
     usage_list_t usages;
+    
+    /* When initialized via a usage spec (as a string), we acquire the string. Our rstring_t point into this. */
+    const string_t usage_storage;
     
     /* List of direct options. Some of our rstrings point to strings inside of these. */
     const std::vector<annotated_option_t> annotated_options;
@@ -1399,10 +1401,12 @@ public:
     /* Map from variable/option names to their metadata */
     metadata_map_t names_to_metadata;
     
-    /* Walk over the lines of our source, starting from the beginning. */
-    void populate_by_walking_lines(error_list_t *out_errors) {
-        // TODO: needs rstring work
-        /* Distinguish between normal (docopt) and exposition (e.g. description). */
+public:
+    
+    /* Populate ourselves from our usage storage. */
+    void populate_from_usage(error_list_t *out_errors) {
+        
+        // Distinguish between normal (docopt) and exposition (e.g. description). */
         enum mode_t {
             mode_normal,
             mode_exposition
@@ -1413,7 +1417,7 @@ public:
         rstring_list_t usage_specs;
         
         rstring_t line;
-        while (get_next_line(this->storage, &line)) {
+        while (get_next_line(this->usage_storage, &line)) {
             /* There are a couple of possibilitise for each line:
              
              1. It may have a header like "Usage:". If so, we want to strip that header, and optionally
@@ -1465,7 +1469,7 @@ public:
             rstring_t line_group = trimmed_line;
             rstring_t all_consumed_lines = line;
             rstring_t next_line = line;
-            while (get_next_line(this->storage, &next_line)) {
+            while (get_next_line(this->usage_storage, &next_line)) {
                 rstring_t trimmed_next_line = next_line.trim_whitespace();
                 size_t next_line_indent = compute_indent(next_line, trimmed_next_line);
                 if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
@@ -1517,19 +1521,12 @@ public:
         }
     }
     
-    /* Given a list of direct options, create a docopt_impl (allocated with new), populating its instance variables from the direct options. */
-    static docopt_impl *build_from_annotated_options(std::vector<annotated_option_t> input_dopts) {
-        typedef annotated_option_t doption_t;
-        
-        
-        /* Create the impl */
-        docopt_impl *impl = new docopt_impl(std::move(input_dopts));
-        
-
+    /* Populate ourselves from our annotated options */
+    void populate_from_annotated_options() {
         // We're going to construct a list of variable arguments, that are not associated with an option
         // Populate impl->shortcut_options and free_variables.
         rstring_list_t free_variables;
-        for (const doption_t &dopt : impl->annotated_options) {
+        for (const auto &dopt : this->annotated_options) {
             
             // Note the order here must match that of the loop above
             const rstring_t option_name(dopt.option);
@@ -1540,7 +1537,7 @@ public:
                 assert(dopt.type < option_t::NAME_TYPE_COUNT);
                 auto name_type = static_cast<option_t::name_type_t>(dopt.type);
                 option_t option(name_type, option_name, value_name);
-                impl->shortcut_options.push_back(option);
+                this->shortcut_options.push_back(option);
             } else if (! value_name.empty()) {
                 // option_name is empty, create a static
                 free_variables.push_back(value_name);
@@ -1554,19 +1551,17 @@ public:
             md.tag = dopt.metadata.tag;
             
             if (! option_name.empty()) {
-                impl->names_to_metadata[option_name] = md;
+                this->names_to_metadata[option_name] = md;
             }
             if (! value_name.empty()) {
-                impl->names_to_metadata[value_name] = md;
+                this->names_to_metadata[value_name] = md;
             }
         }
         
-        bool has_option = ! impl->shortcut_options.empty();
+        bool has_option = ! this->shortcut_options.empty();
         
         // Build a usage
-        impl->usages.push_back(usage_t::build_from_variables(free_variables, has_option));
-        
-        return impl;
+        this->usages.push_back(usage_t::build_from_variables(free_variables, has_option));
     }
     
     /* Given an option map (using rstring), convert it to an option map using the given std::basic_string type. */
@@ -1874,26 +1869,30 @@ argument_parser_t::parse_arguments(const std::vector<string_t> &argv,
 }
 
 
-bool argument_parser_t::set_doc(const string_t &doc, error_list_t *out_errors) {
-    docopt_impl *new_impl = new docopt_impl(doc);
-    
-    new_impl->populate_by_walking_lines(out_errors);
+bool argument_parser_t::set_doc(string_t doc, error_list_t *out_errors) {
+    docopt_impl *new_impl = new docopt_impl(std::move(doc));
+    new_impl->populate_from_usage(out_errors);
     bool preflighted = new_impl->preflight(out_errors);
-    
-    if (! preflighted) {
-        delete new_impl;
-    } else {
-        delete this->impl; // may be null
-        this->impl = new_impl;
+    if (preflighted) {
+        // install the new impl
+        // any existing one will be deleted
+        std::swap(this->impl, new_impl);
     }
+    delete new_impl; // may be null
     return preflighted;
 }
 
-void argument_parser_t::set_options(const std::vector<annotated_option_t > &opts)
+void argument_parser_t::set_options(std::vector<annotated_option_t> opts)
 {
-    delete this->impl; // may be null
-    this->impl = docopt_impl::build_from_annotated_options(opts);
-    this->impl->preflight(nullptr);
+    docopt_impl *new_impl = new docopt_impl(std::move(opts));
+    new_impl->populate_from_annotated_options();
+    bool preflighted = new_impl->preflight(nullptr);
+    if (preflighted) {
+        // install the new impl
+        // any existing one will be deleted
+        std::swap(this->impl, new_impl);
+    }
+    delete new_impl; // may be null
 }
 
 /* Constructors */
