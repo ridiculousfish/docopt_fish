@@ -468,7 +468,7 @@ struct option_t {
     
     option_t() : separator(sep_space) {}
     
-    option_t(enum name_type_t type, const rstring_t &name, const rstring_t &v, separator_t sep) : value(v), separator(sep) {
+    option_t(name_type_t type, const rstring_t &name, const rstring_t &v, separator_t sep = sep_space) : value(v), separator(sep) {
         assert(type < NAME_TYPE_COUNT);
         assert(name.length() >= 2);
         assert(name[0] == '-');

@@ -445,6 +445,12 @@ void usage_t::make_default() {
     parse_one_usage(src, option_list_t(), this, NULL /* errors */);
 }
 
+// Helper to reset a unique_ptr to a new value constructed from the given arg
+template<typename Contents, typename Arg>
+void emplace_unique(std::unique_ptr<Contents> *ptr, Arg &&arg) {
+    return ptr->reset(new Contents(std::forward<Arg>(arg)));
+}
+
 usage_t usage_t::build_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut) {
     // Hackish?
     // Note this is safe because string literals are immortal
@@ -452,45 +458,40 @@ usage_t usage_t::build_from_variables(const std::vector<rstring_t> &variables, b
     const char *command_cstr = "command";
     usage.prog_name = rstring_t(command_cstr, strlen(command_cstr));
     
-    const size_t variable_count = variables.size();
-    const size_t total_count = variable_count + (include_options_shortcut ? 1 : 0);
+    vector<expression_list_t> &alternations = usage.alternation_list.alternations;
+    alternations.reserve(variables.size() + (include_options_shortcut ? 1 : 0));
     
-    usage.alternation_list.alternations.resize(total_count);
+    // Helper to build an options expression_t
+    auto make_options_expr = []() -> expression_t {
+        expression_t options_expr;
+        options_expr.production = 3;
+        options_expr.options_shortcut.present = true;
+        return options_expr;
+    };
+    
+    // Helper to build a variable expression
+    auto make_variable_expr = [](const rstring_t &var_str) -> expression_t {
+        simple_clause_t sclause;
+        emplace_unique(&sclause.variable, variable_clause_t{var_str});
+        expression_t expr;
+        expr.production = 0;
+        emplace_unique(&expr.simple_clause, std::move(sclause));
+        return expr;
+    };
     
     // Set variable clauses
-    // This is so ugly
-    // TODO: clean this up
-    size_t idx = 0;
-    for (; idx < variable_count; idx++) {
-        const variable_clause_t clause = {variables.at(idx)};
-        expression_list_t *exprs = &usage.alternation_list.alternations.at(idx);
-        exprs->expressions.resize(include_options_shortcut ? 2 : 1);
-        
-        expression_t *expr = &exprs->expressions.at(0);
-        expr->production = 0;
-        expr->simple_clause.reset(new simple_clause_t());
-        simple_clause_t *sclause = expr->simple_clause.get();
-        sclause->variable.reset(new variable_clause_t(clause));
-        
+    for (const rstring_t &var : variables) {
+        expression_list_t exprs(make_variable_expr(var));
         if (include_options_shortcut) {
-            expression_t options_expr;
-            options_expr.production = 3;
-            options_expr.options_shortcut.present = true;
-            exprs->expressions.at(1) = std::move(options_expr);
+            exprs.expressions.push_back(make_options_expr());
         }
+        alternations.push_back(std::move(exprs));
     }
     
     // Also include just an options clause
     if (include_options_shortcut) {
-        expression_list_t *exprs = &usage.alternation_list.alternations.at(idx);
-        expression_t options_expr;
-        options_expr.production = 3;
-        options_expr.options_shortcut.present = true;
-
-        exprs->expressions.push_back(std::move(options_expr));
-        idx++;
+        alternations.emplace_back(expression_list_t(make_options_expr()));
     }
-    assert(idx == total_count);
     return usage;
 }
 

@@ -271,15 +271,15 @@ struct clause_collector_t : public node_visitor_t<clause_collector_t> {
     void accept(const option_clause_t& node) {
         options.push_back(node.option);
     }
-    
+
     void accept(const fixed_clause_t& node) {
         fixeds.push_back(node.word);
     }
-    
+
     void accept(const variable_clause_t& node) {
         variables.push_back(node.word);
     }
-    
+
     // Other types we ignore
     template<typename IGNORED_TYPE>
     void accept(const IGNORED_TYPE& t UNUSED) {}
@@ -336,10 +336,9 @@ typedef std::vector<usage_t> usage_list_t;
 /* Collects options, i.e. tokens of the form --foo */
 static void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) {
     clause_collector_t collector;
-    for (const usage_t & usage : usages) {
+    for (const usage_t &usage : usages) {
         collector.begin(usage);
     }
-    
     // "Return" the values
     *out_options = std::move(collector.options);
     *out_variables = std::move(collector.variables);
@@ -1056,7 +1055,6 @@ static void match_list(const T& node, match_state_list_t *incoming_state_list, m
 }
 
 
-/* Match overrides */
 static void match(const vector<usage_t> &usages, match_state_t state, match_context_t *ctx, match_state_list_t *resulting_states) {
     // Elide the copy in the last one
     size_t count = usages.size();
@@ -1385,25 +1383,32 @@ class docopt_impl {
     /* Constructor takes the source in either narrow or wide form. */
 public:
     /* Storage for our rstrings. Note that this must be shared_ptr so that we can have a sane copy constructor. Otherwise the copy constructor would copy our rstring_ts and have them pointing at the old docopt_impl! Plus this makes copying cheaper. */
-    const std::string storage_narrow;
-    const std::wstring storage_wide;
-    const rstring_t rsource;
-    docopt_impl(std::string s) : storage_narrow(std::move(s)), rsource(storage_narrow) {}
-    docopt_impl(std::wstring s) : storage_wide(std::move(s)), rsource(storage_wide) {}
+    const string_t storage;
+    const rstring_t rsource; // TODO: eliminate me
+    docopt_impl(string_t s) : storage(std::move(s)), rsource(storage) {}
     
-    docopt_impl() {}
+    docopt_impl(std::vector<annotated_option_t> opts) : annotated_options(std::move(opts)) {}
     
-    // No copying
+    // No copying or moving
     docopt_impl(const docopt_impl &) = delete;
     docopt_impl &operator=(const docopt_impl &) = delete;
+    docopt_impl(docopt_impl &&) = default;
+    docopt_impl &operator=(docopt_impl &&) = default;
+
 
 #pragma mark -
 #pragma mark Instance Variables
 #pragma mark -
     
+    /* Special support for direct options */
+    direct_usage_t direct_usage;
+    
     /* The usage parse tree. */
     usage_list_t usages;
     
+    /* List of direct options. Some of our rstrings point to strings inside of these. */
+    const std::vector<annotated_option_t> annotated_options;
+
     /* The list of options parsed from the "Options:" section. Referred to as "shortcut options" because the "[options]" directive can be used as a shortcut to reference them. */
     option_list_t shortcut_options;
     
@@ -1412,7 +1417,7 @@ public:
     
     /* All of the variables that appear (like <kn>) from the "Usage:" sections */
     rstring_list_t all_variables;
-    
+
     /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
     rstring_list_t all_static_arguments;
     
@@ -1538,70 +1543,41 @@ public:
     }
     
     /* Given a list of direct options, create a docopt_impl (allocated with new), populating its instance variables from the direct options. */
-    static docopt_impl *build_from_annotated_options(const std::vector<annotated_option_t > &dopts) {
+    static docopt_impl *build_from_annotated_options(std::vector<annotated_option_t> input_dopts) {
         typedef annotated_option_t doption_t;
         
-        /* We need to build our storage first. */
-        string_t storage;
-        for (const doption_t &dopt : dopts) {
-            auto strs = {
-                &dopt.option,
-                &dopt.value_name,
-                &dopt.metadata.command,
-                &dopt.metadata.condition,
-                &dopt.metadata.description
-            };
-            for (const string_t *str : strs) {
-                if (! str->empty()) {
-                    storage.append(*str);
-                    storage.push_back('\n');
-                }
-            }
-        }
         
         /* Create the impl */
-        docopt_impl *impl = new docopt_impl(std::move(storage));
+        docopt_impl *impl = new docopt_impl(std::move(input_dopts));
         
-        size_t cursor = 0;
-        auto slice_string = [&](const string_t &str) {
-            size_t start = cursor, extent = str.size();
-            assert(start + extent <= impl->rsource.length());
-            if (extent > 0)
-            {
-                // +1 for newline
-                cursor += extent + 1;
-            }
-            return impl->rsource.substr(start, extent);
-        };
-        
+
         // We're going to construct a list of variable arguments, that are not associated with an option
-        // Now populate impl->shortcut_options and free_variables. cursor tracks our location through our storage.
+        // Populate impl->shortcut_options and free_variables.
         rstring_list_t free_variables;
-        for (const doption_t &dopt : dopts) {
-            base_metadata_t<rstring_t> md;
+        for (const doption_t &dopt : impl->annotated_options) {
             
             // Note the order here must match that of the loop above
-            const rstring_t option_name = slice_string(dopt.option);
-            const rstring_t value_name = slice_string(dopt.value_name);
-            md.command = slice_string(dopt.metadata.command);
-            md.condition = slice_string(dopt.metadata.condition);
-            md.description = slice_string(dopt.metadata.description);
-            md.tag = dopt.metadata.tag;
+            const rstring_t option_name(dopt.option);
+            const rstring_t value_name(dopt.value_name);
             
             if (! option_name.empty()) {
                 // Create an option
-                size_t name_idx = static_cast<size_t>(dopt.type);
-                assert(name_idx < option_t::NAME_TYPE_COUNT);
-                option_t option;
-                option.names[name_idx] = option_name;
-                option.value = value_name; // maybe empty
-                impl->shortcut_options.push_back(std::move(option));
+                assert(dopt.type < option_t::NAME_TYPE_COUNT);
+                auto name_type = static_cast<option_t::name_type_t>(dopt.type);
+                option_t option(name_type, option_name, value_name);
+                impl->shortcut_options.push_back(option);
             } else if (! value_name.empty()) {
                 // option_name is empty, create a static
                 free_variables.push_back(value_name);
             }
             
             // Save metadata
+            base_metadata_t<rstring_t> md;
+            md.command = rstring_t(dopt.metadata.command);
+            md.condition = rstring_t(dopt.metadata.condition);
+            md.description = rstring_t(dopt.metadata.description);
+            md.tag = dopt.metadata.tag;
+            
             if (! option_name.empty()) {
                 impl->names_to_metadata[option_name] = md;
             }
@@ -1621,44 +1597,38 @@ public:
     /* Given an option map (using rstring), convert it to an option map using the given std::basic_string type. */
     argument_parser_t::argument_map_t finalize_option_map(const option_rmap_t &map, parse_flags_t flags) const {
         argument_parser_t::argument_map_t result;
+        
+        // Helper lambda to ensure our result map has a value for a given name
+        // We merely invoke operator[]; this will do the insertion with the
+        // default (empty) value if necessary. Re-use storage to avoid allocations.
+        string_t name_storage;
+        auto ensure_argument = [&](const rstring_t &name) -> argument_t& {
+            name.copy_to(&name_storage);
+            return result[name_storage];
+        };
+        
         // Turn our string_ts into std::strings
-        for (option_rmap_t::const_iterator iter = map.begin(); iter != map.end(); ++iter) {
-            result[iter->first.std_string()] = iter->second;
+        for (const auto &kv : map) {
+            result.insert({kv.first.std_string(), kv.second});
         }
         
         // Handle empty args
         if (flags & flag_generate_empty_args) {
-            // For each option, fill in the value in the map
-            // This could be made more efficient via a single call to insert()
+            // Fill in empty options, variables, and static arguments
             for (const option_t &opt : all_options) {
-                const rstring_t &name = opt.best_name();
-                // We merely invoke operator[]; this will do the insertion with a default value if necessary.
-                // Note that this is somewhat nasty because it may unnecessarily copy the key. We might use a find() beforehand to save memory
-                result[name.std_string()];
-                
-                if (opt.has_value() && ! opt.default_value.empty()) {
-                    // Maybe apply the default value for the variable
-                    string_t variable_name = opt.value.std_string();
-                    argument_t *var_arg = &result[variable_name];
-                    if (var_arg->values.empty()) {
-                        var_arg->values.push_back(opt.default_value.std_string());
-                    }
+                ensure_argument(opt.best_name());
+            }
+            std::for_each(all_variables.begin(), all_variables.end(), ensure_argument);
+            std::for_each(all_static_arguments.begin(), all_static_arguments.end(), ensure_argument);
+        }
+
+        // Apply default values for any variables
+        for (const option_t &opt : all_options) {
+            if (opt.has_value() && ! opt.default_value.empty()) {
+                argument_t &var_arg = ensure_argument(opt.value);
+                if (var_arg.values.empty()) {
+                    var_arg.values.push_back(opt.default_value.std_string());
                 }
-            }
-            
-            // Fill in variables
-            string_t name;
-            for (const rstring_t & var : all_variables) {
-                var.copy_to(&name);
-                // As above, we merely invoke operator[]
-                result[name];
-            }
-            
-            // Fill in static arguments
-            for (const rstring_t & static_arg : all_static_arguments) {
-                static_arg.copy_to(&name);
-                // As above, we merely invoke operator[]
-                result[name];
             }
         }
         
@@ -1880,28 +1850,6 @@ public:
         return result;
         
     }
-    
-    std::vector<string_t> get_variables() const {
-        std::vector<string_t> result;
-        
-        // Include explicit variables
-        for (const rstring_t &r : this->all_variables) {
-            result.push_back(r.std_string());
-        }
-        
-        // Include variables that are part of options
-        for (const option_t &opt : this->all_options) {
-            if (! opt.value.empty()) {
-                result.push_back(opt.value.std_string());
-            }
-        }
-        
-        // Sort and remove duplicates
-        std::sort(result.begin(), result.end());
-        result.erase(std::unique(result.begin(), result.end()), result.end());
-        return result;
-    }
-    
 }; // docopt_impl
 
 std::vector<argument_status_t> argument_parser_t::validate_arguments(const std::vector<string_t> &argv, parse_flags_t flags) const
@@ -1948,11 +1896,6 @@ metadata_t argument_parser_t::metadata_for_name(const string_t &var) const
 string_list_t argument_parser_t::get_command_names() const
 {
     return impl->get_command_names();
-}
-
-std::vector<string_t> argument_parser_t::get_variables() const
-{
-    return impl->get_variables();
 }
 
 argument_parser_t::argument_map_t
@@ -2006,11 +1949,7 @@ argument_parser_t::argument_parser_t(argument_parser_t &&rhs) {
 
 
 argument_parser_t &argument_parser_t::operator=(argument_parser_t &&rhs) {
-    if (this != &rhs) {
-        delete this->impl;
-        this->impl = rhs.impl;
-        rhs.impl = nullptr;
-    }
+    std::swap(this->impl, rhs.impl);
     return *this;
 }
 

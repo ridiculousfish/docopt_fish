@@ -2277,40 +2277,6 @@ static void test_commands()
     }
 }
 
-
-static void test_get_variables()
-{
-    const struct var_testcase_t {
-        const char *usage;
-        const char *expected_vars;
-    } testcases[] =
-    {   /* Case 0 */
-        {   "Usage: prog <pid> <grp> [options]\n"
-            "Options: -foo\n"
-            "         -bar <uid>",
-            "<grp>,<pid>,<uid>"
-        },
-        /* Case 1 */
-        {   "Usage: prog [options]\n"
-            "Options: -foo\n"
-            "         -bar",
-            "" // no options
-        },
-        {NULL, NULL}
-    };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
-        const var_testcase_t *testcase = &testcases[testcase_idx];
-        string_t doc(to_string(testcase->usage));
-        string_t actual_vars = join(argument_parser_t(doc, NULL).get_variables(), ",");
-        string_t expected_vars = to_string(testcase->expected_vars);
-        if (actual_vars != expected_vars) {
-            err("Variable test %lu.%lu expected '%ls', but instead got '%ls'", testcase_idx, 0LU, wide(expected_vars), wide(actual_vars));
-        }
-    }
-}
-
-
-
 static void test_errors_in_usage()
 {
     const struct usage_err_testcase_t {
@@ -2584,7 +2550,6 @@ void do_all_tests() {
     test_errors_in_usage();
     test_errors_in_argv();
     test_command_names();
-    test_get_variables();
     test_fuzzing();
 }
 

@@ -58,6 +58,10 @@ struct expression_list_t {
     
     // expression_list = expression opt_expression_list
     expression_list_t() {}
+    expression_list_t(expression_t &&rhs) {
+        expressions.push_back(std::move(rhs));
+    }
+    
     std::string name() const { return "expression_list"; }
     
     template<typename T>
@@ -203,6 +207,11 @@ struct variable_clause_t {
     void visit_children(T *v) const {
         v->visit(word);
     }
+};
+
+// Support for direct options
+struct direct_usage_t {
+    std::vector<annotated_option_t> annotated_options;
 };
 
 bool parse_one_usage(const rstring_t &src, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors);

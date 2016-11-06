@@ -15,7 +15,7 @@ namespace docopt_fish
         
         /* If set, specifies that we should generate arguments even for unspecified values. These will have a count of 0. */
         flag_generate_empty_args = 1U << 0,
-        
+
         /* If set, specifies that we should permit incomplete matching */
         flag_match_allow_incomplete = 1U << 1,
         
