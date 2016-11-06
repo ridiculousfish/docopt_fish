@@ -13,14 +13,11 @@ namespace docopt_fish
     enum {
         flags_default = 0U,
         
-        /* If set, specifies that we should generate arguments even for unspecified values. These will have a count of 0. */
-        flag_generate_empty_args = 1U << 0,
-
         /* If set, specifies that we should permit incomplete matching */
-        flag_match_allow_incomplete = 1U << 1,
+        flag_match_allow_incomplete = 1U << 0,
         
         /* If set, short options that accept values must have the separator as specified in the usage, that is, -DNDEBUG and -D NDEBUG are not both allowed. */
-        flag_short_options_strict_separators = 1U << 2
+        flag_short_options_strict_separators = 1U << 1
     };
     typedef unsigned int parse_flags_t;
     

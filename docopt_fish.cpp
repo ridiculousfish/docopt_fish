@@ -262,22 +262,12 @@ public:
 };
 
 /* Helper class for collecting clauses from a tree */
-struct clause_collector_t : public node_visitor_t<clause_collector_t> {
+struct option_collector_t : public node_visitor_t<option_collector_t> {
     option_list_t options;
-    rstring_list_t fixeds;
-    rstring_list_t variables;
     
     // The requested types we capture
     void accept(const option_clause_t& node) {
         options.push_back(node.option);
-    }
-
-    void accept(const fixed_clause_t& node) {
-        fixeds.push_back(node.word);
-    }
-
-    void accept(const variable_clause_t& node) {
-        variables.push_back(node.word);
     }
 
     // Other types we ignore
@@ -334,15 +324,12 @@ typedef std::vector<resolved_option_t> resolved_option_list_t;
 typedef std::vector<usage_t> usage_list_t;
 
 /* Collects options, i.e. tokens of the form --foo */
-static void collect_options_and_variables(const usage_list_t &usages, option_list_t *out_options, rstring_list_t *out_variables, rstring_list_t *out_static_arguments) {
-    clause_collector_t collector;
+static option_list_t collect_options(const usage_list_t &usages) {
+    option_collector_t collector;
     for (const usage_t &usage : usages) {
         collector.begin(usage);
     }
-    // "Return" the values
-    *out_options = std::move(collector.options);
-    *out_variables = std::move(collector.variables);
-    *out_static_arguments = std::move(collector.fixeds);
+    return std::move(collector.options);
 }
 
 
@@ -1415,12 +1402,6 @@ public:
     /* The list of options parsed from the "Options:" section and "Usage:" sections.  */
     option_list_t all_options;
     
-    /* All of the variables that appear (like <kn>) from the "Usage:" sections */
-    rstring_list_t all_variables;
-
-    /* All of the positional commands (like "checkout") that appear in the "Usage:" sections */
-    rstring_list_t all_static_arguments;
-    
     /* Map from variable/option names to their metadata */
     metadata_map_t names_to_metadata;
     
@@ -1595,7 +1576,7 @@ public:
     }
     
     /* Given an option map (using rstring), convert it to an option map using the given std::basic_string type. */
-    argument_parser_t::argument_map_t finalize_option_map(const option_rmap_t &map, parse_flags_t flags) const {
+    argument_parser_t::argument_map_t finalize_option_map(const option_rmap_t &map) const {
         argument_parser_t::argument_map_t result;
         
         // Helper lambda to ensure our result map has a value for a given name
@@ -1612,16 +1593,6 @@ public:
             result.insert({kv.first.std_string(), kv.second});
         }
         
-        // Handle empty args
-        if (flags & flag_generate_empty_args) {
-            // Fill in empty options, variables, and static arguments
-            for (const option_t &opt : all_options) {
-                ensure_argument(opt.best_name());
-            }
-            std::for_each(all_variables.begin(), all_variables.end(), ensure_argument);
-            std::for_each(all_static_arguments.begin(), all_static_arguments.end(), ensure_argument);
-        }
-
         // Apply default values for any variables
         for (const option_t &opt : all_options) {
             if (opt.has_value() && ! opt.default_value.empty()) {
@@ -1721,8 +1692,7 @@ public:
         }
         
         // Extract options and variables from the usage sections
-        option_list_t usage_options;
-        collect_options_and_variables(this->usages, &usage_options, &this->all_variables, &this->all_static_arguments);
+        option_list_t usage_options = collect_options(this->usages);
         
         // Combine these into a single list
         this->all_options.reserve(usage_options.size() + this->shortcut_options.size());
@@ -1906,7 +1876,7 @@ argument_parser_t::parse_arguments(const std::vector<string_t> &argv,
     const rstring_list_t argv_rstrs(argv.begin(), argv.end());
     option_rmap_t option_rmap;
     impl->best_assignment_for_argv(argv_rstrs, flags, out_errors, out_unused_arguments, &option_rmap);
-    return impl->finalize_option_map(option_rmap, flags);
+    return impl->finalize_option_map(option_rmap);
 }
 
 

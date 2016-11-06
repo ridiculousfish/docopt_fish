@@ -205,7 +205,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     argument_parser_t parser;
     bool parse_success = parser.set_doc(usage_str, &error_list);
     if (parse_success) {
-        results = parser.parse_arguments(argv, flag_generate_empty_args, &error_list, &unused_args);
+        results = parser.parse_arguments(argv, flags_default, &error_list, &unused_args);
     }
     
     bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
@@ -379,7 +379,7 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
     /* Perform the parsing */
     vector<size_t> unused_arg_idxs;
     argument_parser_t parser(usage_str, NULL);
-    parser.parse_arguments(argv, flag_generate_empty_args, NULL, &unused_arg_idxs);
+    parser.parse_arguments(argv, flags_default, NULL, &unused_arg_idxs);
     
     /* Construct unused argument string */
     string_list_t unused_args_vec;
@@ -552,7 +552,7 @@ static void test_correctness()
             "Options: -a  All.",
             {
                 {   "", // argv
-                    "-a:False"
+                    ""
                 },
                 {   "-a", // argv
                     "-a:True"
@@ -568,7 +568,7 @@ static void test_correctness()
             "Options: --all  All.",
             {
                 {   "", // argv
-                    "--all:False"
+                    ""
                 },
                 {   "--all", // argv
                     "--all:True"
@@ -666,7 +666,6 @@ static void test_correctness()
             " -p<PATH>  Path to files [default: ./]",
             {
                 {   "", // argv
-                    "-p:%0\n"
                     "<PATH>:./"
                 },
                 {   "-phome", // argv
@@ -682,7 +681,6 @@ static void test_correctness()
             "                [dEfAuLt: /root]",
             {
                 {   "", // argv
-                    "--path:%0\n"
                     "<files>:/root"
                 },
                 {   "--path=home", // argv
@@ -712,7 +710,6 @@ static void test_correctness()
                     "-r:True"
                 },
                 {   "-a -r", // argv
-                    "-m:False\n"
                     "-a:True\n"
                     "-r:True"
                 },
@@ -725,12 +722,10 @@ static void test_correctness()
             "         --verbose",
             {
                 {   "--version", // argv
-                    "--verbose:False\n"
                     "--version:True"
                 },
                 {   "--verbose", // argv
                     "--verbose:True\n"
-                    "--version:False"
                 },
                 {   "--ver", // argv
                     ERROR_EXPECTED
@@ -831,7 +826,6 @@ static void test_correctness()
                     ERROR_EXPECTED
                 },
                 {   "-b", // argv
-                    "-a:False\n"
                     "-b:True"
                 },
                 {   "", // argv
@@ -860,8 +854,7 @@ static void test_correctness()
                     ERROR_EXPECTED
                 },
                 {   "", // argv
-                    "-a:False\n"
-                    "-b:False"
+                    ""
                 },
             },
         },
@@ -878,11 +871,9 @@ static void test_correctness()
                     ERROR_EXPECTED
                 },
                 {   "-a", // argv
-                    "-a:True\n"
-                    "-b:False"
+                    "-a:True"
                 },
                 {   "-b", // argv
-                    "-a:False\n"
                     "-b:True"
                 },
             },
@@ -897,15 +888,12 @@ static void test_correctness()
                     ERROR_EXPECTED
                 },
                 {   "", // argv
-                    "-a:False\n"
-                    "-b:False"
+                    ""
                 },
                 {   "-a", // argv
-                    "-a:True\n"
-                    "-b:False"
+                    "-a:True"
                 },
                 {   "-b", // argv
-                    "-a:False\n"
                     "-b:True"
                 },
             },
@@ -934,7 +922,7 @@ static void test_correctness()
                     ERROR_EXPECTED
                 },
                 {   "", // argv
-                    "<arg>:None"
+                    ""
                 },
             },
         },
@@ -975,13 +963,13 @@ static void test_correctness()
                 },
                 {   "20 40", // argv
                     "<type>:40\n"
-                    "<kind>:None\n"
                     "<name>:20"
                 },
+                {   "20", // argv
+                    "<kind>:20"
+                },
                 {   "", // argv
-                    "<type>:None\n"
-                    "<kind>:None\n"
-                    "<name>:None"
+                    ""
                 },
             },
         },
@@ -993,12 +981,9 @@ static void test_correctness()
             {
                 {   "10 --all", // argv
                     "--all:True\n"
-                    "<kind>:10\n"
-                    "<name>:None"
+                    "<kind>:10"
                 },
                 {   "10", // argv
-                    "--all:False\n"
-                    "<kind>:None\n"
                     "<name>:10"
                 },
                 {   "", // argv
@@ -1013,7 +998,7 @@ static void test_correctness()
                     "<name>:10, 20"
                 },
                 {   "", // argv
-                    "<name>:None"
+                    ""
                 },
             },
         },
@@ -1027,7 +1012,7 @@ static void test_correctness()
                     ERROR_EXPECTED
                 },
                 {   "", // argv
-                    "<name>:None"
+                    ""
                 },
             },
         },
@@ -1055,7 +1040,7 @@ static void test_correctness()
                     "<NAME>:10"
                 },
                 {   "", // argv
-                    "<NAME>:None"
+                    ""
                 },
             },
         },
@@ -1069,7 +1054,7 @@ static void test_correctness()
                     "<NAME>:10"
                 },
                 {   "", // argv
-                    "<NAME>:None"
+                    ""
                 },
             },
         },
@@ -1083,7 +1068,7 @@ static void test_correctness()
                     "<NAME>:10"
                 },
                 {   "", // argv
-                    "<NAME>:None"
+                    ""
                 },
             },
         },
@@ -1093,7 +1078,6 @@ static void test_correctness()
             "options: --foo",
             {
                 {   "10", // argv
-                    "--foo:False\n"
                     "<NAME>:10"
                 },
                 {   "--foo 10", // argv
@@ -1112,19 +1096,14 @@ static void test_correctness()
             "options: --bar",
             {
                 {   "10", // argv
-                    "--bar:False\n"
-                    "--foo:False\n"
                     "<NAME>:10"
                 },
                 {   "10 20", // argv
-                    "--bar:False\n"
-                    "--foo:False\n"
                     "<NAME>:10, 20"
                 },
                 {   "--foo --bar", // argv
                     "--bar:True\n"
-                    "--foo:True\n"
-                    "<NAME>:None"
+                    "--foo:True"
                 },
             },
         },
@@ -1147,22 +1126,13 @@ static void test_correctness()
             "  --drifting    Drifting mine.",
             {
                 {   "ship Guardian move 150 300 --speed=20", // argv
-                    "shoot:False\n"
-                    "--moored:False\n"
-                    "--drifting:False\n"
                     "move:True\n"
                     "--speed:%1\n"
                     "<kn>:20\n"
-                    "mine:False\n"
-                    "new:False\n"
-                    "--version:False\n"
-                    "set:False\n"
-                    "remove:False\n"
                     "<name>:Guardian\n"
                     "ship:True\n"
                     "<x>:150\n"
                     "<y>:300\n"
-                    "--help:False"
                 },
             },
         },
@@ -1178,7 +1148,7 @@ static void test_correctness()
         {   "usage: prog [--hello=<world>]",
             {
                 {   "", // argv
-                    "--hello:False"
+                    ""
                 },
                 {   "--hello wrld", // argv
                     "--hello:%1\n"
@@ -1190,7 +1160,7 @@ static void test_correctness()
         {   "usage: prog [-o]",
             {
                 {   "", // argv
-                    "-o:False"
+                    ""
                 },
                 {   "-o", // argv
                     "-o:True"
@@ -1202,8 +1172,7 @@ static void test_correctness()
             {
                 {   "-op", // argv
                     "-o:True\n"
-                    "-p:True\n"
-                    "-r:False"
+                    "-p:True"
                 },
             },
         },
@@ -1211,8 +1180,10 @@ static void test_correctness()
         {   "usage: prog --aabb | --aa",
             {
                 {   "--aa", // argv
-                    "--aa:True\n"
-                    "--aabb:False"
+                    "--aa:True"
+                },
+                {   "--aabb", // argv
+                    "--aabb:True"
                 },
                 {   "--a", // argv
                     ERROR_EXPECTED
@@ -1231,7 +1202,7 @@ static void test_correctness()
         {   "Usage: prog [-v] [-v]",
             {
                 {   "", // argv
-                    "-v:%0"
+                    ""
                 },
                 {   "-v", // argv
                     "-v:%1"
@@ -1261,21 +1232,16 @@ static void test_correctness()
         /* Case 44 */
         {   "Usage: prog [-v | -vv | -vvv]\n"
             "\n"
-            "Description: This one is probably most readable user-friednly variant.",
+            "Description: This one is probably most readable user-friendly variant.",
             {
                 {   "", // argv
-                    "-v:False\n"
-                    "-vvv:False\n"
-                    "-vv:False"
+                    ""
                 },
                 {   "-v", // argv
                     "-v:True\n"
-                    "-vvv:False\n"
-                    "-vv:False"
+                    ""
                 },
                 {   "-vv", // argv
-                    "-v:False\n"
-                    "-vvv:False\n"
                     "-vv:True"
                 },
                 {   "-vvvv", // argv
@@ -1303,7 +1269,7 @@ static void test_correctness()
         {   "usage: prog [go go]",
             {
                 {   "", // argv
-                    "go:%0"
+                    ""
                 },
                 {   "go go", // argv
                     "go:%2"
@@ -1328,8 +1294,7 @@ static void test_correctness()
             "         -b",
             {
                 {   "-a", // argv
-                    "-a:True\n"
-                    "-b:False"
+                    "-a:True"
                 },
                 {   "-aa", // argv
                     ERROR_EXPECTED
@@ -1344,17 +1309,13 @@ static void test_correctness()
             {
                 {   "arg", // argv
                     "<A>:arg\n"
-                    "-v:False\n"
-                    "-q:False"
                 },
                 {   "-v arg", // argv
                     "<A>:arg\n"
                     "-v:True\n"
-                    "-q:False"
                 },
                 {   "-q arg", // argv
                     "<A>:arg\n"
-                    "-v:False\n"
                     "-q:True"
                 },
             },
@@ -1366,7 +1327,7 @@ static void test_correctness()
                     "-:True"
                 },
                 {   "", // argv
-                    "-:False"
+                    ""
                 },
             },
         },
@@ -1377,7 +1338,7 @@ static void test_correctness()
                     "<NAME>:a, b"
                 },
                 {   "", // argv
-                    "<NAME>:None"
+                    ""
                 },
             },
         },
@@ -1388,7 +1349,6 @@ static void test_correctness()
             " -m <msg>  Message",
             {
                 {   "-a", // argv
-                    "-m:False\n"
                     "-a:True"
                 },
             },
@@ -1405,7 +1365,7 @@ static void test_correctness()
         {   "usage: prog [--hello=<world>]",
             {
                 {   "", // argv
-                    "--hello:False"
+                    ""
                 },
                 {   "--hello wrld", // argv
                     "--hello:%1\n"
@@ -1417,7 +1377,7 @@ static void test_correctness()
         {   "usage: prog [-o]",
             {
                 {   "", // argv
-                    "-o:False"
+                    ""
                 },
                 {   "-o", // argv
                     "-o:True"
@@ -1430,8 +1390,17 @@ static void test_correctness()
                 {   "-op", // argv
                     "-o:True\n"
                     "-p:True\n"
-                    "-r:False"
                 },
+                {   "-or", // argv
+                    "-o:True\n"
+                    "-r:True\n"
+                },
+                {   "-por", // argv
+                    "-o:True\n"
+                    "-p:True\n"
+                    "-r:True\n"
+                },
+
             },
         },
         /* Case 58 */
@@ -1468,8 +1437,7 @@ static void test_correctness()
                     "<b>:2"
                 },
                 {   "", // argv
-                    "<a>:None\n"
-                    "<b>:None"
+                    ""
                 },
             },
         },
@@ -1478,8 +1446,7 @@ static void test_correctness()
             "       prog",
             {
                 {   "", // argv
-                    "<a>:None\n"
-                    "<b>:None"
+                    ""
                 },
             },
         },
@@ -1487,8 +1454,16 @@ static void test_correctness()
         {   "usage: prog [--file=<f>]",
             {
                 {   "", // argv
-                    "--file:False"
+                    ""
                 },
+                {   "--file", // argv
+                    ERROR_EXPECTED
+                },
+                {   "--file=derp", // argv
+                    "--file:%1\n"
+                    "<f>:derp\n"
+                },
+
             },
         },
         /* Case 64 */
@@ -1497,7 +1472,7 @@ static void test_correctness()
             "options: --file <a>",
             {
                 {   "", // argv
-                    "--file:False"
+                    ""
                 },
             },
         },
@@ -1507,7 +1482,6 @@ static void test_correctness()
             "Options: -a, --address <host_port>  TCP address [default: localhost:6283].",
             {
                 {   "", // argv
-                    "--address:%0\n"
                     "<host_port>:localhost:6283"
                 },
             },
@@ -1556,7 +1530,6 @@ static void test_correctness()
                     "<o>:this, that"
                 },
                 {   "", // argv
-                    "-o:%0\n"
                     "<o>:x"
                 },
             },
@@ -1571,7 +1544,6 @@ static void test_correctness()
                     "<o>:this"
                 },
                 {   "", // argv
-                    "-o:%0\n"
                     "<o>:x y"
                 },
             },
@@ -1623,7 +1595,6 @@ static void test_correctness()
             {
                 {   "fail --loglevel 5", // argv
                     "fail:True\n"
-                    "good:False\n"
                     "--loglevel:%1\n"
                     "<N>:5"
                 },
@@ -1651,7 +1622,6 @@ static void test_correctness()
             "other: NOT PART OF SECTION",
             {
                 {   "--foo", // argv
-                    "--bar:False\n"
                     "--foo:True"
                 },
             },
@@ -1664,7 +1634,6 @@ static void test_correctness()
             "anything: NOT PART OF SECTION",
             {
                 {   "--foo", // argv
-                    "--bar:False\n"
                     "--foo:True"
                 },
             },
@@ -1676,7 +1645,6 @@ static void test_correctness()
             "anything: NOT PART OF SECTION",
             {
                 {   "--foo", // argv
-                    "--bar:False\n"
                     "--foo:True"
                 },
             },
@@ -1694,10 +1662,7 @@ static void test_correctness()
             {
                 {   "--baz --egg", // argv
                     "--baz:True\n"
-                    "--bar:False\n"
-                    "--spam:False\n"
                     "--egg:True\n"
-                    "--foo:False"
                 },
             },
         },
@@ -1739,7 +1704,6 @@ static void test_correctness()
                 {   "-dx", // argv
                     "-d:True\n"
                     "-x:True\n"
-                    "-y:False"
                 },
             },
         },
@@ -1777,7 +1741,6 @@ static void test_correctness()
             {
                 {   "123 456", // argv
                     "<pid>:123, 456\n"
-                    "--pid:False"
                 }
             },
         },
@@ -1806,8 +1769,6 @@ static void test_correctness()
                     "--key:True\n"
                     "<SEQUENCE>:down\n"
                     "<COMMAND>:down-or-search\n"
-                    "--mode:False\n"
-                    "--sets-mode:False"
                 }
             },
         },
@@ -1819,21 +1780,17 @@ static void test_correctness()
             {
                 {   "-k", // argv
                     "--key:True\n"
-                    "--mode:%0\n"
                 },
                 {   "--key", // argv
                     "--key:True\n"
-                    "--mode:%0\n"
                 },
                 {   "-M left", // argv
                     "<MODE>:left\n"
                     "--mode:%1\n"
-                    "--key:%0\n"
                 },
                 {   "--mode left", // argv
                     "--mode:%1\n"
                     "<MODE>:left\n"
-                    "--key:%0\n"
                 }
             },
         },
@@ -1845,12 +1802,10 @@ static void test_correctness()
                 {   "-M left", // argv
                     "-M:%1\n"
                     "<BIGMODE>:left\n"
-                    "--mode:%0\n"
                 },
                 {   "--mode left", // argv
                     "--mode:%1\n"
                     "<LITTLEMODE>:left\n"
-                    "-M:%0\n"
                 }
             },
         },
@@ -1903,16 +1858,13 @@ static void test_correctness()
                 {   "--add -- --test", // argv
                     "--add:%1\n"
                     "<file>:--test\n"
-                    "<name>:%0"
                 },
                 {   "--add -- --", // argv
                     "--add:%1\n"
                     "<file>:--\n"
-                    "<name>:%0"
                 },
                 {   "-- --add", // argv
                     "<name>:--add\n"
-                    "--add:%0"
                 },
                 
             },
