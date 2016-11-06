@@ -11,18 +11,24 @@
 #include <set>
 #include <vector>
 
+namespace docopt_fish
+OPEN_DOCOPT_IMPL
+
 enum parse_result_t {
     parsed_ok,
     parsed_error,
     parsed_done
 };
 
-namespace docopt_fish
-OPEN_DOCOPT_IMPL
-
 #pragma mark -
 #pragma mark Usage Grammar
 #pragma mark -
+
+// Helper to reset a unique_ptr to a new value constructed from the given arg
+template<typename Contents, typename Arg>
+void emplace_unique(std::unique_ptr<Contents> *ptr, Arg &&arg) {
+    return ptr->reset(new Contents(std::forward<Arg>(arg)));
+}
 
 /* Context passed around in our recursive descent parser */
 struct parse_context_t {
@@ -140,11 +146,11 @@ struct parse_context_t {
     // Given a pointer to a unique_ptr, try populating it
     // Parse a local and then, if successfull, move it into a p
     template<typename T>
-    inline parse_result_t try_parse_auto(unique_ptr<T> *p) {
+    inline parse_result_t try_parse_unique(unique_ptr<T> *p) {
         T val;
         parse_result_t ret = this->parse(&val);
         if (ret == parsed_ok) {
-            p->reset(new T(std::move(val)));
+            emplace_unique(p, std::move(val));
         }
         return ret;
     }
@@ -174,12 +180,14 @@ struct parse_context_t {
             first = false;
         }
         if (status == parsed_done) {
-            /* We may get an empty alternation list if we are just the program name. In that case, ensure we have at least one. */
+            // We may get an empty alternation list if we are just the program name.
+            // In that case, ensure we have at least one.
             if (result->alternations.empty()) {
                 result->alternations.resize(1);
             }
             
-            /* Hackish place to do this */
+            // If we have an alternation like [-e | --erase], mark them as the same option
+            // This is kind of a hackish place to do this
             collapse_corresponding_options(result);
             
             status = parsed_ok;
@@ -236,12 +244,12 @@ struct parse_context_t {
         
         rstring_t::char_t c = word[0];
         if (c == '<') {
-            return this->try_parse_auto(&result->variable);
+            return this->try_parse_unique(&result->variable);
         } else if (c == '-' && word.length() > 1) {
             // A naked '-', is to be treated as a fixed value
-            return this->try_parse_auto(&result->option);
+            return this->try_parse_unique(&result->option);
         } else {
-            return this->try_parse_auto(&result->fixed);
+            return this->try_parse_unique(&result->fixed);
         }
     }
 
@@ -359,7 +367,7 @@ struct parse_context_t {
             result->production = 3;
             status = this->parse(&result->options_shortcut);
         } else if (this->scan('(', &token) || this->scan('[', &token)) {
-            status = this->try_parse_auto(&result->alternation_list);
+            status = this->try_parse_unique(&result->alternation_list);
             if (status != parsed_error) {
                 assert(token[0] == '(' || token[0] == '[');
                 bool is_paren = (token[0] == '(');
@@ -385,7 +393,7 @@ struct parse_context_t {
             status = parsed_done;
         } else {
             // Simple clause
-            status = try_parse_auto(&result->simple_clause);
+            status = try_parse_unique(&result->simple_clause);
             if (status != parsed_error) {
                 result->production = 0;
                 parse(&result->opt_ellipsis); // never fails
@@ -445,14 +453,12 @@ void usage_t::make_default() {
     parse_one_usage(src, option_list_t(), this, NULL /* errors */);
 }
 
-// Helper to reset a unique_ptr to a new value constructed from the given arg
-template<typename Contents, typename Arg>
-void emplace_unique(std::unique_ptr<Contents> *ptr, Arg &&arg) {
-    return ptr->reset(new Contents(std::forward<Arg>(arg)));
-}
-
+// Support for the annotated-options path of docopt
+// Given a list of variables, construct a synthetic usage_t
+// The usage_t should contain an alternation list, one entry per variable
+// If include_options_shortcut is set,then each alternation also gets an [options] expression,
+// and there is also an alternation which is just the options expression (i.e. no variable)
 usage_t usage_t::build_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut) {
-    // Hackish?
     // Note this is safe because string literals are immortal
     usage_t usage;
     const char *command_cstr = "command";
