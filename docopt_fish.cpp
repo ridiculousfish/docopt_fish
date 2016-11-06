@@ -276,25 +276,21 @@ struct option_collector_t : public node_visitor_t<option_collector_t> {
 };
 
 /* Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty. On return, it will contain the line, with its end pointing just after the trailing newline, or possibly at the end. Returns true if a line was returned, false if we reached the end. */
-static bool get_next_line(const rstring_t &base, rstring_t *inout_line) {
+static bool get_next_line(const string_t &base, rstring_t *inout_line) {
     assert(inout_line != nullptr);
-    if (inout_line->end() == base.end()) {
+    // Start at the end of the last line, or 0 if this is the first
+    const size_t line_start = inout_line->end();
+    assert(line_start <= base.size());
+    if (line_start == base.size()) {
         // Line exhausted
         return false;
     }
     
-    // Start at the end of the last line, or zero if this is the first call
-    // Subtract off base.start() to make the line_start relative to base
-    size_t line_start = (inout_line->empty() ? 0 : inout_line->end() - base.start());
-    rstring_t remainder = base.substr_from(line_start);
-    size_t newline = remainder.find("\n");
-    if (newline == rstring_t::npos) {
-        // Take everything
-        *inout_line = remainder;
-    } else {
-        // Take through the newline
-        *inout_line = remainder.substr(0, newline+1);
-    }
+    // Take everything up to (and including) the newline if we have one
+    size_t newline = base.find('\n', line_start);
+    size_t line_end = (newline == string_t::npos ? base.size() : newline+1);
+    assert(line_end > line_start);
+    *inout_line = rstring_t(base, line_start, line_end - line_start);
     // Empty lines are impossible
     assert(! inout_line->empty());
     return true;
@@ -1371,9 +1367,7 @@ class docopt_impl {
 public:
     /* Storage for our rstrings. Note that this must be shared_ptr so that we can have a sane copy constructor. Otherwise the copy constructor would copy our rstring_ts and have them pointing at the old docopt_impl! Plus this makes copying cheaper. */
     const string_t storage;
-    const rstring_t rsource; // TODO: eliminate me
-    docopt_impl(string_t s) : storage(std::move(s)), rsource(storage) {}
-    
+    docopt_impl(string_t s) : storage(std::move(s)) {}
     docopt_impl(std::vector<annotated_option_t> opts) : annotated_options(std::move(opts)) {}
     
     // No copying or moving
@@ -1419,7 +1413,7 @@ public:
         rstring_list_t usage_specs;
         
         rstring_t line;
-        while (get_next_line(this->rsource, &line)) {
+        while (get_next_line(this->storage, &line)) {
             /* There are a couple of possibilitise for each line:
              
              1. It may have a header like "Usage:". If so, we want to strip that header, and optionally
@@ -1471,7 +1465,7 @@ public:
             rstring_t line_group = trimmed_line;
             rstring_t all_consumed_lines = line;
             rstring_t next_line = line;
-            while (get_next_line(this->rsource, &next_line)) {
+            while (get_next_line(this->storage, &next_line)) {
                 rstring_t trimmed_next_line = next_line.trim_whitespace();
                 size_t next_line_indent = compute_indent(next_line, trimmed_next_line);
                 if (trimmed_next_line.empty() || next_line_indent <= line_indent) {
