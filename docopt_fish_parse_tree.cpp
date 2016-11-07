@@ -67,16 +67,6 @@ struct parse_context_t {
         return this->remaining.empty();
     }
     
-    // Try scanning a single character
-    bool scan(char c, rstring_t *tok = NULL) {
-        this->consume_leading_whitespace();
-        rstring_t scanned = this->remaining.scan_1_char(c);
-        if (tok) {
-            *tok = scanned;
-        }
-        return ! scanned.empty();
-    }
-    
     // Try scanning a string
     bool scan(const char *c, rstring_t *tok = NULL) {
         this->consume_leading_whitespace();
@@ -166,7 +156,7 @@ struct parse_context_t {
         while (status == parsed_ok) {
             // Scan a vert bar if we're not first
             rstring_t bar;
-            if (! first && ! this->scan('|', &bar)) {
+            if (! first && ! this->scan("|", &bar)) {
                 status = parsed_done;
                 break;
             }
@@ -367,13 +357,13 @@ struct parse_context_t {
         if (this->scan("[options]", &token)) {
             result->production = 3;
             status = this->parse(&result->options_shortcut);
-        } else if (this->scan('(', &token) || this->scan('[', &token)) {
+        } else if (this->scan("(", &token) || this->scan("[", &token)) {
             status = this->try_parse_unique(&result->alternation_list);
             if (status != parsed_error) {
                 assert(token[0] == '(' || token[0] == '[');
                 bool is_paren = (token[0] == '(');
                 rstring_t close_token;
-                if (this->scan(is_paren ? ')' : ']', &close_token)) {
+                if (this->scan(is_paren ? ")" : "]", &close_token)) {
                     result->production = is_paren ? 1 : 2;
                     parse(&result->opt_ellipsis); // never fails
                 } else {
