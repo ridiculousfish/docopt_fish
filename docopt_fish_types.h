@@ -13,80 +13,45 @@
 
 #define UNUSED __attribute__((unused))
 
+#if DOCOPT_USE_WCHAR
+  #define STRCONSTANT(x) L##x
+#else
+  #define STRCONSTANT(x) x
+#endif
+
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
-/* Oh god, we have our own string type? Why?
- 
- This grew out of a desire to support both char and wchar_t strings. Originally this was done with pervasive use of templates, but it became insane. So the first thing that rstring_t does is abstract away character widths, without using templates.
- 
- A second requirement is to track offsets, so that (e.g.) when we find a parse error, we know the location in the docopt spec and can return that information. Originally this was done by passing around ranges everywhere, and being careful to keep track of the original string from which the ranges came, and this was factored out of that: we have a base pointer and a range.
- 
- A third requirement is to have excellent performance with low memory usage. rstring_t is a small value type which does not allocate memory.
- 
- The biggest risk of rstring_t is lifetime control. The base pointer is not managed, so nothing prevents you from creating an rstring_t pointing at a std::string and then deallocating that string. docopt does not have long-running processes so it is generally pretty easy to reason about lifetimes, but be careful to ensure that rstring_ts do not outlive their source.
- 
- Note that rstring_ts are not null terminated.
-*/
-
+// rstring_t is a lightweight range of a base string
+// It is just a base, start, and length
+// Note that lifetimes are not controlled
+// It is the user's responsibility to ensure that the rstring
+// does not outlive the base pointer
 class rstring_t {
     
-    typedef uint8_t narrow_char_t;
-/* Check size of wchar_t */
-#if WCHAR_MAX > 0x10000
-    /* 32 bit we guess */
-    typedef uint32_t wide_char_t;
-#else
-    typedef uint16_t wide_char_t;
-#endif
-    
 public:
-    typedef uint32_t char_t;
+    typedef string_t::value_type char_t;
 
 private:
     size_t start_;
     size_t length_;
-    const void *base_;
-    enum width_t {
-        width_narrow = 0,
-        width_wide = 1
-    } width_;
-
-    rstring_t(const void *base, size_t start, size_t length, width_t width) : start_(start), length_(length), base_(base), width_(width) {}
+    const char_t *base_;
     
-    explicit rstring_t(const char_t *b, size_t start, size_t length) : start_(start), length_(length), base_(b), width_(resolve_width<char_t>()) {}
+    explicit rstring_t(const char_t *b, size_t start, size_t length) : start_(start), length_(length), base_(b) {}
     
-    width_t width() const {
-        return this->width_;
+    const char_t *ptr_begin() const {
+        return this->base_ + this->start_;
     }
     
-    // Avoid bad sign extension
-    static inline char_t to_char(char c) {
-        return static_cast<unsigned char>(c);
-    }
-    
-    template<typename T>
-    const T *base_as() const {
-        return reinterpret_cast<const T*>(this->base_);
-    }
-    
-    template<typename T>
-    const T *ptr_begin() const {
-        const uint8_t *p = this->base_as<uint8_t>();
-        p += this->start_ * sizeof(T);
-        return reinterpret_cast<const T *>(p);
-    }
-    
-    template<typename T, bool case_insensitive>
-    size_t find_internal(const char *needle) const {
+    inline size_t find_internal(const char *needle, bool case_insensitive) const {
         // Empty string always found first
         if (needle[0] == '\0') {
             return 0;
         }
-        const char_t his_first_low = (case_insensitive ? tolower(needle[0]) : to_char(needle[0]));
-        const char_t his_first_up = (case_insensitive ? toupper(needle[0]) : to_char(needle[0]));
+        const char_t his_first_low = (case_insensitive ? tolower(needle[0]) : needle[0]);
+        const char_t his_first_up = (case_insensitive ? toupper(needle[0]) : needle[0]);
         
-        const T *haystack = this->ptr_begin<T>();
+        const char_t *haystack = this->ptr_begin();
         size_t haystack_count = this->length();
         for (size_t outer=0; outer < haystack_count; outer++) {
             // Quick check for first character
@@ -107,11 +72,11 @@ private:
                     return npos;
                 } else {
                     char_t mine = haystack[outer + inner];
-                    if (mine >= 256) {
+                    if (static_cast<long>(mine) >= 256) {
                         // outside of ASCII, no match possible
                         break;
                     }
-                    char_t his = to_char(needle[inner]);
+                    char_t his = needle[inner];
                     bool matches = (mine == his || (case_insensitive && tolower(mine) == tolower(his)));
                     if (! matches) {
                         // no match at 'outer'
@@ -123,12 +88,11 @@ private:
         return npos;
     }
     
-    template<typename T1, typename T2>
-    static int compare_internal2(const rstring_t &lhs, const rstring_t &rhs) {
+    static int compare_internal(const rstring_t &lhs, const rstring_t &rhs) {
         size_t len1 = lhs.length(), len2 = rhs.length();
         size_t amt = std::min(len1, len2);
-        const T1 *p1 = lhs.ptr_begin<T1>();
-        const T2 *p2 = rhs.ptr_begin<T2>();
+        const char_t *p1 = lhs.ptr_begin();
+        const char_t *p2 = rhs.ptr_begin();
         for (size_t i=0; i < amt; i++) {
             char_t c1 = p1[i], c2 = p2[i];
             if (c1 != c2) {
@@ -141,20 +105,10 @@ private:
         return 0;
     }
     
-    template<typename T1>
-    int compare_internal1(const rstring_t &rhs) const {
-        switch (rhs.width()) {
-            case width_narrow:
-                return compare_internal2<T1, narrow_char_t>(*this, rhs);
-            case width_wide:
-                return compare_internal2<T1, wide_char_t>(*this, rhs);
-        }
-    }
-    
-    template<typename T>
     size_t find_1_internal(char_t needle) const {
+        const char_t *haystack = this->ptr_begin();
         size_t len = this->length();
-        const T *haystack = this->ptr_begin<T>();
+        
         for (size_t i=0; i < len; i++) {
             if (haystack[i] == needle) {
                 return i;
@@ -165,10 +119,10 @@ private:
     
     typedef bool (*scan_predicate_t)(char_t);
     
-    template<typename T, scan_predicate_t F>
+    template<scan_predicate_t F>
     rstring_t scan_while_internal() {
         const size_t length = this->length();
-        const T *haystack = this->ptr_begin<T>();
+        const char_t *haystack = this->ptr_begin();
         size_t amt = 0;
         while (amt < length && F(haystack[amt])) {
             amt++;
@@ -201,57 +155,27 @@ public:
     }
     
     char_t at(size_t idx) const {
-        assert(idx <= length_);
-        size_t offset = idx + this->start_;
-        switch (this->width()) {
-            case width_narrow:
-                return this->base_as<narrow_char_t>()[offset];
-            case width_wide:
-                return this->base_as<wide_char_t>()[offset];
-        }
+        assert(idx <= this->length_);
+        return this->base_[this->start_  + idx];
     }
     
     rstring_t substr(size_t offset, size_t length) const {
         assert(offset + length >= offset && offset + length <= this->length());
-        return rstring_t(this->base_, this->start_ + offset, length, this->width_);
+        return rstring_t(this->base_, this->start_ + offset, length);
     }
     
     // Finds needle in self, and returns the location or npos
     size_t find(const char *needle) const {
-        switch (this->width()) {
-            case width_narrow:
-                return this->find_internal<narrow_char_t, false>(needle);
-            case width_wide:
-                return this->find_internal<wide_char_t, false>(needle);
-        }
+        return this->find_internal(needle, false);
     }
     
     size_t find_case_insensitive(const char *needle) const {
-        switch (this->width()) {
-            case width_narrow:
-                return this->find_internal<narrow_char_t, true>(needle);
-            case width_wide:
-                return this->find_internal<wide_char_t, true>(needle);
-        }
+        return this->find_internal(needle, true);
     }
     
-    template<typename T>
-    static width_t resolve_width() {
-        switch (sizeof(T)) {
-            case sizeof(narrow_char_t): return width_narrow;
-            case sizeof(wide_char_t): return width_wide;
-            default:
-                assert(false && "Invalid width");
-        }
-    }
     
     size_t find(char_t needle) const {
-        switch (this->width()) {
-            case width_narrow:
-                return this->find_1_internal<narrow_char_t>(needle);
-            case width_wide:
-                return this->find_1_internal<wide_char_t>(needle);
-        }
+        return this->find_1_internal(needle);
     }
 
     rstring_t substr_from(size_t offset) const {
@@ -270,10 +194,10 @@ public:
         } else if (rhs.empty()) {
             return *this;
         } else {
-            assert(this->base_ == rhs.base_ && this->width_ == rhs.width_);
+            assert(this->base_ == rhs.base_);
             size_t start = std::min(this->start_, rhs.start_);
             size_t length = std::max(this->end(), rhs.end()) - start;
-            return rstring_t(this->base_, start, length, this->width_);
+            return rstring_t(this->base_, start, length);
         }
     }
     
@@ -291,12 +215,7 @@ public:
             return 0;
         }
         
-        switch (this->width()) {
-            case width_narrow:
-                return this->compare_internal1<narrow_char_t>(rhs);
-            case width_wide:
-                return this->compare_internal1<wide_char_t>(rhs);
-        }
+        return compare_internal(*this, rhs);
     }
     
     bool operator==(const rstring_t &rhs) const {
@@ -317,13 +236,13 @@ public:
     
     // Can compare against const char *
     // These are always statically known, so the strlen is free
-    bool has_prefix(const char *s) const {
+    inline bool has_prefix(const char *s) const {
         size_t len = strlen(s);
         if (len > this->length()) {
             return false;
         }
         for (size_t i=0; i < len; i++) {
-            char_t si = to_char(s[i]);
+            char_t si = s[i];
             if (this->at(i) != si) {
                 return false;
             }
@@ -336,8 +255,7 @@ public:
     }
 
     // Copies our contents into the given std::string
-    template<typename stdstring_t>
-    void copy_to(stdstring_t *outstr) const {
+    void copy_to(string_t *outstr) const {
         const size_t length = this->length();
         outstr->resize(length);
         for (size_t i=0; i < length; i++) {
@@ -357,12 +275,7 @@ public:
     // Adjusts self to be the remainder after the prefix.
     template<scan_predicate_t F>
     rstring_t scan_while() {
-        switch (this->width()) {
-            case width_narrow:
-                return this->scan_while_internal<narrow_char_t, F>();
-            case width_wide:
-                return this->scan_while_internal<wide_char_t, F>();
-        }
+        return this->scan_while_internal<F>();
     }
 
     // If this begins with c, returns a string containing c
@@ -374,7 +287,7 @@ public:
         if (len <= this->length()) {
             size_t i = 0;
             for (i=0; i < len; i++) {
-                char_t ci = to_char(c[i]);
+                char_t ci = c[i];
                 if (this->at(i) != ci) {
                     break;
                 }
@@ -395,7 +308,7 @@ public:
     // an empty string
     rstring_t scan_1_char(char c) {
         rstring_t result;
-        if (this->length() > 0 && this->at(0) == to_char(c)) {
+        if (this->length() > 0 && this->at(0) == c) {
             result = this->substr(0, 1);
             this->start_ += 1;
             this->length_ -= 1;
@@ -428,14 +341,14 @@ public:
         return this->substr(left, right - left);
     }
 
-    explicit rstring_t() : start_(0), length_(0), base_(NULL), width_(width_narrow) {}
+    explicit rstring_t() : start_(0), length_(0), base_(NULL) {}
     
     // Constructor from std::string. Note this borrows the storage so we must not outlive it.
     template<typename stdchar_t>
     explicit rstring_t(const std::basic_string<stdchar_t> &b, size_t start = 0, size_t length = npos) :
-    start_(start), length_(std::min(length, b.length() - start)), base_(b.c_str()), width_(resolve_width<stdchar_t>()) {}
+    start_(start), length_(std::min(length, b.length() - start)), base_(b.c_str()) {}
     
-    explicit rstring_t(const char *s, size_t len) : start_(0), length_(len), base_(s), width_(width_narrow) {}
+    explicit rstring_t(const char_t *s, size_t len) : start_(0), length_(len), base_(s) {}
 };
 
 /* An option represents something like '--foo=bar' */
@@ -541,9 +454,9 @@ struct option_t {
         result.push_back(' ');
         
         if (this->separator == sep_none) {
-            result += L" (no sep)";
+            result += STRCONSTANT(" (no sep)");
         } else if (this->separator == sep_equals) {
-            result += L" (= sep)";
+            result += STRCONSTANT(" (= sep)");
         }
 
         return result;

@@ -29,9 +29,24 @@ typedef std::vector<rstring_t> rstring_list_t;
 typedef std::vector<error_t> error_list_t;
 typedef std::vector<size_t> index_list_t;
 
-/* Class representing a metadata map. Keys are options and variables. */
+// Class representing a metadata map. Keys are options and variables.
 typedef base_metadata_t<rstring_t> rmetadata_t;
 typedef std::map<rstring_t, rmetadata_t> metadata_map_t;
+
+// String helper
+// Handles both wide and narrow string_t
+static inline string_t to_string(const char *s) {
+    return string_t(s, s + strlen(s));
+}
+
+static inline std::basic_ostream<string_t::value_type> &errstream() {
+#if DOCOPT_USE_WCHAR
+    return std::wcerr;
+#else
+    return std::cerr;
+#endif
+
+}
 
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
@@ -208,15 +223,15 @@ option_t option_t::parse_from_argument(const rstring_t &str, option_t::name_type
 class node_dumper_t : public node_visitor_t<node_dumper_t> {
     unsigned int depth;
     
-    std::vector<std::string> lines;
+    std::vector<string_t> lines;
     
     node_dumper_t() : depth(0) {}
     
 public:
     template<typename NODE_TYPE>
     void accept(const NODE_TYPE& node) {
-        std::string result(2 * depth, ' ');
-        result.append(node.name());
+        string_t result(2 * depth, ' ');
+        result.append(to_string(node.name().c_str()));
         lines.push_back(result);
     }
     
@@ -231,11 +246,10 @@ public:
     
     void accept(const rstring_t &t1) {
         if (! t1.empty()) {
-            std::string result(2 * depth, ' ');
+            string_t result(2 * depth, ' ');
+            const string_t quote(1, '\'');
             
-            std::string tmp;
-            t1.copy_to(&tmp);
-            result += "'" + tmp + "'";
+            result += quote + t1.std_string() + quote;
             
             char buff[32];
             if (t1.length() == 1) {
@@ -243,17 +257,17 @@ public:
             } else {
                 snprintf(buff, sizeof buff, "{%lu-%lu}", t1.start(), t1.length());
             }
-            result.append(buff);
+            result.append(to_string(buff));
             lines.push_back(result);
         }
     }
     
     template<typename NODE_TYPE>
-    static std::string dump_tree(const NODE_TYPE &node) {
+    static string_t dump_tree(const NODE_TYPE &node) {
         node_dumper_t dumper;
         dumper.begin(node);
-        std::string result;
-        for (const std::string & line : dumper.lines) {
+        string_t result;
+        for (const string_t & line : dumper.lines) {
             result.append(line);
             result.push_back('\n');
         }
@@ -1601,8 +1615,7 @@ public:
                     const positional_argument_list_t &positionals,
                     const resolved_option_list_t &resolved_options,
                     option_rmap_t *out_option_map,
-                    index_list_t *out_unused_arguments,
-                    bool log_stuff = false) const {
+                    index_list_t *out_unused_arguments) const {
         /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
         match_context_t ctx(flags | flag_stop_after_consuming_everything, this->shortcut_options, positionals, resolved_options, argv);
         match_state_t init_state;
@@ -1611,23 +1624,25 @@ public:
         match_state_list_t result;
         match(this->usages, init_state.move(), &ctx, &result);
         
+        // Illustration of some logging to help debug matching
+        const bool log_stuff = false;
         if (log_stuff) {
-            fprintf(stderr, "Matched %lu way(s)\n", result.size());
+            errstream() << "Matched " << result.size() << " way(s)\n";
             for (size_t i=0; i < result.size(); i++) {
                 const match_state_t &state = result.at(i);
                 bool is_incomplete = ! ctx.unused_arguments(&state).empty();
-                std::cerr <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
-                for (option_rmap_t::const_iterator iter = state.argument_values().begin(); iter != state.argument_values().end(); ++iter) {
-                    const rstring_t &name = iter->first;
-                    const argument_t &arg = iter->second;
-                    fprintf(stderr, "\t%ls: ", name.std_string().c_str());
+                errstream() <<  "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
+                for (const auto &kv : state.argument_values()) {
+                    const rstring_t &name = kv.first;
+                    const argument_t &arg = kv.second;
+                    errstream() << "\t" << name.std_string() << ": ";
                     for (size_t j=0; j < arg.values.size(); j++) {
                         if (j > 0) {
-                            fprintf(stderr, ", ");
+                            errstream() << ", ";
                         }
-                        fprintf(stderr, "%ls", arg.values.at(j).c_str());
+                        errstream() << arg.values.at(j);
                     }
-                    std::cerr << '\n';
+                    errstream() << '\n';
                 }
             }
         }
@@ -1718,12 +1733,12 @@ public:
         
         // Example of how to dump
         if ((0)) {
-            std::string dumped;
+            string_t dumped;
             for (size_t i=0; i < this->usages.size(); i++)
             {
                 dumped += node_dumper_t::dump_tree(this->usages.at(i));
             }
-            fprintf(stderr, "%s\n", dumped.c_str());
+            errstream() << dumped << "\n";
         }
         
         /* Successfully preflighted */

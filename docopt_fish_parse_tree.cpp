@@ -44,9 +44,8 @@ struct parse_context_t {
         return std::find(invalid, end, c) == end;
     }
     
-    // Note unowned pointer references in rstring_t. A parse context is stack allocated and transient.
-    
     // Range of source remains to be parsed
+    // Note unowned pointer references in rstring_t. A parse context is stack allocated and transient.
     rstring_t remaining;
 
     const option_list_t *shortcut_options;
@@ -56,12 +55,14 @@ struct parse_context_t {
     
     parse_context_t(const rstring_t &usage, const option_list_t &shortcuts) : remaining(usage), shortcut_options(&shortcuts) { }
     
-    /* Consume leading whitespace. Newlines are meaningful if their associated lines are indented the same or less than initial_indent. If they are indented more, we swallow those. */
+    // Consume leading whitespace.
+    // Newlines are meaningful if their associated lines are indented the same or less than initial_indent.
+    // If they are indented more, we swallow those.
     void consume_leading_whitespace() {
         this->remaining.scan_while<rstring_t::char_is_whitespace>();
     }
     
-    /* Returns true if there are no more next tokens */
+    // Returns true if there are no more next tokens
     bool is_at_end() const {
         return this->remaining.empty();
     }
@@ -445,11 +446,17 @@ struct parse_context_t {
     }
 };
 
+// Helper to build an rstring_t from a constant C string
+// Note this can't be a function since it has a dependency on DOCOPT_USE_WCHAR
+// Also note this is safe because string literals are immortal
+#if DOCOPT_USE_WCHAR
+  #define CONST_RSTRING(x) rstring_t(L##x, wcslen(L##x))
+#else
+  #define CONST_RSTRING(x) rstring_t(x, strlen(x))
+#endif
+
 void usage_t::make_default() {
-    // hackish?
-    // Note the only reason this is safe is that string literals are immortal
-    const char *storage = "command [options]";
-    const rstring_t src(storage, strlen(storage));
+    const rstring_t src = CONST_RSTRING("command [options]");
     parse_one_usage(src, option_list_t(), this, NULL /* errors */);
 }
 
@@ -461,8 +468,7 @@ void usage_t::make_default() {
 usage_t usage_t::build_from_variables(const std::vector<rstring_t> &variables, bool include_options_shortcut) {
     // Note this is safe because string literals are immortal
     usage_t usage;
-    const char *command_cstr = "command";
-    usage.prog_name = rstring_t(command_cstr, strlen(command_cstr));
+    usage.prog_name = CONST_RSTRING("command");
     
     vector<expression_list_t> &alternations = usage.alternation_list.alternations;
     alternations.reserve(variables.size() + (include_options_shortcut ? 1 : 0));

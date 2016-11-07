@@ -5,9 +5,14 @@
 #include <vector>
 #include <map>
 
+
 namespace docopt_fish
 {
+#ifdef DOCOPT_USE_WCHAR
     typedef std::wstring string_t;
+#else
+    typedef std::string string_t;
+#endif
     typedef std::vector<string_t> string_list_t;
     
     enum {

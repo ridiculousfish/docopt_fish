@@ -13,6 +13,8 @@ using namespace std;
 
 #define ERROR_EXPECTED "<ERROR>"
 
+#define UNUSED __attribute__((unused))
+
 /**
  Print formatted error string
  */
@@ -44,7 +46,7 @@ static void err(const char *blah, ...)
 }
 
 /* Helpers to make a wide C string from a wide or narrow string */
-static const wchar_t *wide(const wstring &t) {
+UNUSED static const wchar_t *wide(const wstring &t) {
     return t.c_str();
 }
 
