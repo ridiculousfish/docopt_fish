@@ -30,16 +30,10 @@ void emplace_unique(std::unique_ptr<Contents> *ptr, Arg &&arg) {
     return ptr->reset(new Contents(std::forward<Arg>(arg)));
 }
 
-/* Context passed around in our recursive descent parser */
+// Context passed around in our recursive descent parser
 struct parse_context_t {
     static bool char_is_valid_in_word(rstring_t::char_t c) {
-        const char *invalid = ".|()[],<> \t\n";
-        const char *end = invalid + strlen(invalid);
-        return std::find(invalid, end, c) == end;
-    }
-
-    static bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
-        const char *invalid = "|()[]>\t\n";
+        const char *invalid = ".|()[], \t\n";
         const char *end = invalid + strlen(invalid);
         return std::find(invalid, end, c) == end;
     }
@@ -80,29 +74,9 @@ struct parse_context_t {
     
     bool scan_word(rstring_t *tok) {
         this->consume_leading_whitespace();
-        /* A word may have embedded <...>. These may contain spaces. They may also abut: --foo<abc def>bar' is one word. So we use a loop. */
-        rstring_t result;
-        for (;;) {
-            // Scan non-bracketed sequence. This may be empty (in which case the merge does nothing)
-            result = result.merge(this->remaining.scan_while<char_is_valid_in_word>());
-            // Scan bracketed sequence
-            rstring_t bracket_start = this->remaining.scan_1_char('<');
-            if (! bracket_start.empty()) {
-                this->remaining.scan_while<char_is_valid_in_bracketed_word>();
-                rstring_t bracket_end = this->remaining.scan_1_char('>');
-                if (bracket_end.empty()) {
-                    // TODO: report unclosed bracket
-                } else {
-                    // Merging the bracket ranges will include the contents
-                    result = result.merge(bracket_start);
-                    result = result.merge(bracket_end);
-                }
-            }
-            // If we got an empty bracket range, then we're done; otherwise start again
-            if (bracket_start.empty()) {
-                break;
-            }
-        }
+        // A word may have embedded <>
+        // These may abut: --foo<abc_def>bar' is one word.
+        rstring_t result = this->remaining.scan_while<char_is_valid_in_word>();
         *tok = result;
         return ! result.empty();
     }

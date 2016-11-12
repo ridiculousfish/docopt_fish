@@ -1469,12 +1469,13 @@ public:
                 continue;
             }
             
-            /* Compute the indent. Note that the header is considered part of the indent, so that:
+            /*
+              Compute the indent. Note that the header is considered part of the indent, so that:
              
-             Usage: foo
-             bar
+              Usage: foo
+              bar
              
-             Here 'foo' is indented more than 'bar'.
+              Here 'foo' is indented more than 'bar'.
              */
             const size_t line_indent = compute_indent(line, trimmed_line);
             

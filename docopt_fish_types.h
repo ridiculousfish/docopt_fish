@@ -475,10 +475,11 @@ struct option_t {
         this->default_value.replace_if_empty(rhs.default_value);
     }
     
-    /* Given a string and the inout range 'remaining', parse out an option and return it. Update the remaining range to reflect the number of characters used. */
+    // Given a string and the inout range 'remaining', parse out an option and return it.
+    // Update the remaining range to reflect the number of characters used.
     static bool parse_from_string(rstring_t *remaining, option_t *result, std::vector<error_t> *errors = NULL);
 
-    /* Variant for when the remaining range is uninteresting. */
+    // Variant for when the remaining range is uninteresting.
     static bool parse_from_string(rstring_t str, option_t *result, std::vector<error_t> *errors = NULL) {
         return parse_from_string(&str, result, errors);
     }

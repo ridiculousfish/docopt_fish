@@ -1573,19 +1573,19 @@ static void test_correctness()
             },
         },
         /* Case 73 */
-        {   "usage: prog [<input file>]",
+        {   "usage: prog [<input_file>]",
             {
                 {   "f.txt", // argv
-                    "<input file>:f.txt"
+                    "<input_file>:f.txt"
                 },
             },
         },
         /* Case 74 */
-        {   "usage: prog [--input=<file name>]...",
+        {   "usage: prog [--input=<file_name>]...",
             {
                 {   "--input a.txt --input=b.txt", // argv
                     "--input:%2\n"
-                    "<file name>:a.txt, b.txt"
+                    "<file_name>:a.txt, b.txt"
                 },
             },
         },
