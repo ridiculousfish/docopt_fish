@@ -2,6 +2,7 @@
 #define DOCOPT_FISH_TYPES_H
 
 #include <vector>
+#include <array>
 #include <assert.h>
 #include <cstring>
 #include <stdio.h>
@@ -276,6 +277,13 @@ public:
     template<scan_predicate_t F>
     rstring_t scan_while() {
         return this->scan_while_internal<F>();
+    }
+
+    // Scan-while a sequence of predicates
+    template<scan_predicate_t... Fs>
+    std::array<rstring_t, sizeof...(Fs)>
+    scan_multiple() {
+        return {{this->scan_while<Fs>()...}};
     }
 
     // If this begins with c, returns a string containing c

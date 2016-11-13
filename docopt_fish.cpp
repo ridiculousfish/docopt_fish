@@ -402,9 +402,7 @@ static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *met
         result.merge_from(opt);
         
         // Skip over commas, which separate arguments
-        remaining.scan_while<char_is_space>();
-        remaining.scan_while<it_equals<','> >();
-        remaining.scan_while<char_is_space>();
+        remaining.scan_multiple<char_is_space, it_equals<','>, char_is_space>();
     }
     
     // Store any description in the metadata
