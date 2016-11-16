@@ -69,7 +69,7 @@ bool char_is_valid_in_parameter(rstring_t::char_t c) {
     return std::find(invalid, end, c) == end;
 }
 
-bool char_is_valid_in_bracketed_word(rstring_t::char_t c) {
+bool char_is_valid_in_variable_name(rstring_t::char_t c) {
     const char *invalid = "|()[]>\t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
@@ -79,90 +79,80 @@ bool char_is_space(rstring_t::char_t c) {
     return c == ' ';
 }
 
-/* Given an inout string, parse out an option and return it. Update the string to reflect the number of characters used. */
-bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_list_t *errors) {
+// Given an inout string, parse out an option and return it by reference.
+// Update the string to reflect the number of characters used.
+bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_list_t *out_errors) {
     assert(! remaining->empty());
+    error_list_t errors;
     
-    bool errored = false;
+    // An option is one or more dashes, the option name, maybe space and/or equals
+    rstring_t leading_dashes, name, space_separator, equals;
+    std::tie(leading_dashes, name, space_separator, equals, std::ignore) =
+        remaining->scan_multiple<it_equals<'-'>,
+                                 char_is_valid_in_parameter,
+                                 char_is_space,
+                                 it_equals<'='>,
+                                 char_is_space>();
     
-    // Count how many leading dashes
-    rstring_t leading_dashes = remaining->scan_while<it_equals<'-'> >();
+    // Now maybe scan the variable name as <var_name>
+    rstring_t variable_name, open_sign, close_sign;
+    open_sign = remaining->scan_1_char('<');
+    const bool has_variable = ! open_sign.empty();
+    if (has_variable) {
+        variable_name = remaining->scan_while<char_is_valid_in_variable_name>();
+        close_sign = remaining->scan_1_char('>');
+    }
+    
+    // Validate our fields
     const size_t dash_count = leading_dashes.length();
     assert(dash_count > 0);
     if (dash_count > 2) {
-        append_docopt_error(errors, leading_dashes, error_excessive_dashes, "Too many dashes");
+        append_docopt_error(&errors, leading_dashes, error_excessive_dashes, "Too many dashes");
     }
     
-    // Walk over characters valid in a name
-    rstring_t name = remaining->scan_while<char_is_valid_in_parameter>();
-    
-    // Check to see if there's a space
-    rstring_t space_separator = remaining->scan_while<char_is_space>();
-    
-    // Check to see if there's an = sign
-    const rstring_t equals = remaining->scan_while<it_equals<'='> >();
+    if (name.empty()) {
+        append_docopt_error(&errors, name, error_invalid_option_name, "Missing option name");
+    }
+
     if (equals.length() > 1) {
-        append_docopt_error(errors, equals, error_excessive_equal_signs, "Too many equal signs");
-        errored = true;
+        append_docopt_error(&errors, equals, error_excessive_equal_signs, "Too many equal signs");
     }
     
-    // Try to scan a variable
-    // TODO: If we have a naked equals sign (foo = ) generate an error
-    remaining->scan_while<char_is_space>();
+    // Report an error for cases like '--foo='
+    if (! has_variable && ! equals.empty()) {
+        append_docopt_error(&errors, equals, error_invalid_variable_name, "Missing variable for this assignment");
+    }
     
-    rstring_t variable;
-    rstring_t open_sign = remaining->scan_1_char('<');
-    if (! open_sign.empty()) {
-        rstring_t variable_name = remaining->scan_while<char_is_valid_in_bracketed_word>();
-        rstring_t close_sign = remaining->scan_1_char('>');
+    // Validate variable
+    if (has_variable) {
         if (variable_name.empty()) {
-            append_docopt_error(errors, variable_name, error_invalid_variable_name, "Missing variable name");
-            errored = true;
+            append_docopt_error(&errors, variable_name, error_invalid_variable_name, "Missing variable name");
         } else if (close_sign.empty()) {
-            append_docopt_error(errors, open_sign, error_invalid_variable_name, "Missing '>' to match this '<'");
-            errored = true;
-        } else {
-            variable = open_sign.merge(variable_name).merge(close_sign);
+            append_docopt_error(&errors, open_sign, error_invalid_variable_name, "Missing '>' to match this '<'");
+        } else if (! remaining->empty() && char_is_valid_in_parameter(remaining->at(0))) {
+            // Next character is not whitespace and not the end of the string
+            append_docopt_error(&errors, *remaining, error_invalid_variable_name, "Extra stuff after closing '>'");
         }
-        
-        // Check to see what the next character is. If it's not whitespace or the end of the string, generate an error.
-        if (! close_sign.empty() && ! remaining->empty() && char_is_valid_in_parameter(remaining->at(0))) {
-            append_docopt_error(errors, *remaining, error_invalid_variable_name, "Extra stuff after closing '>'");
-            errored = true;
-        }
-    }
-    
-    // Report an error for cases like --foo=
-    if (variable.empty() && ! equals.empty()) {
-        append_docopt_error(errors, equals, error_invalid_variable_name, "Missing variable for this assignment");
-        errored = true;
     }
     
     // Determine the separator type
     // If we got an equals range, it's something like 'foo = <bar>' or 'foo=<bar>'. The separator is equals and the space is ignored.
     // Otherwise, the space matters: 'foo <bar>' is space-separated, and 'foo<bar>' has no separator
-    // Hackish: store sep_space for options without a separator
-    option_t::separator_t separator;
-    if (variable.empty()) {
-        separator = option_t::sep_space;
-    } else if (! equals.empty()) {
-        separator = option_t::sep_equals;
-    } else if (! space_separator.empty()) {
-        separator = option_t::sep_space;
-    } else {
-        separator = option_t::sep_none;
+    // Hackish: store sep_space for options without a variable
+    option_t::separator_t separator = option_t::sep_space;
+    if (has_variable) {
+        if (! equals.empty()) {
+            separator = option_t::sep_equals;
+        } else if (! space_separator.empty()) {
+            separator = option_t::sep_space;
+        } else {
+            separator = option_t::sep_none;
+        }
     }
     
     // Generate an error on long options with no separators (--foo<bar>). Only short options support these.
     if (separator == option_t::sep_none && (dash_count > 1 || name.length() > 1)) {
-        append_docopt_error(errors, name, error_bad_option_separator, "Long options must use a space or equals separator");
-        errored = true;
-    }
-    
-    // Generate errors for missing name
-    if (name.empty()) {
-        append_docopt_error(errors, name, error_invalid_option_name, "Missing option name");
-        errored = true;
+        append_docopt_error(&errors, name, error_bad_option_separator, "Long options must use a space or equals separator");
     }
     
     // Determine the type
@@ -175,11 +165,15 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         type = single_short;
     }
     
-    // Create and return the option
-    if (! errored) {
+    bool success = errors.empty();
+    if (success) {
+        // Build the variable like '<foo>'
+        // If we don't have one, this will be empty
+        const rstring_t variable = open_sign.merge(variable_name).merge(close_sign);
         *result = option_t(type, leading_dashes.merge(name), variable, separator);
     }
-    return ! errored;
+    std::move(errors.begin(), errors.end(), std::back_inserter(*out_errors));
+    return success;
 }
 
 option_t option_t::parse_from_argument(const rstring_t &str, option_t::name_type_t type) {

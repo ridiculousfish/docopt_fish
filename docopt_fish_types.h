@@ -119,21 +119,7 @@ private:
     }
     
     typedef bool (*scan_predicate_t)(char_t);
-    
-    template<scan_predicate_t F>
-    rstring_t scan_while_internal() {
-        const size_t length = this->length();
-        const char_t *haystack = this->ptr_begin();
-        size_t amt = 0;
-        while (amt < length && F(haystack[amt])) {
-            amt++;
-        }
-        rstring_t result = this->substr(0, amt);
-        this->start_ += amt;
-        this->length_ -= amt;
-        return result;
-    }
-    
+        
 public:
     
     static const size_t npos = size_t(-1);
@@ -276,10 +262,19 @@ public:
     // Adjusts self to be the remainder after the prefix.
     template<scan_predicate_t F>
     rstring_t scan_while() {
-        return this->scan_while_internal<F>();
+        const size_t length = this->length();
+        const char_t *haystack = this->ptr_begin();
+        size_t amt = 0;
+        while (amt < length && F(haystack[amt])) {
+            amt++;
+        }
+        rstring_t result = this->substr(0, amt);
+        this->start_ += amt;
+        this->length_ -= amt;
+        return result;
     }
 
-    // Scan-while a sequence of predicates
+    // Scan-while a sequence of predicates, in order
     template<scan_predicate_t... Fs>
     std::array<rstring_t, sizeof...(Fs)>
     scan_multiple() {

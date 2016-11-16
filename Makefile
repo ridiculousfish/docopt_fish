@@ -1,7 +1,7 @@
 TEST_SRC_FILES=docopt_fish.cpp docopt_fish_test.cpp docopt_fish_parse_tree.cpp
 BENCHMARK_SRC_FILES=docopt_fish.cpp docopt_fish_benchmark.cpp docopt_fish_parse_tree.cpp
 HEADERS=docopt_fish.h docopt_fish_grammar.h docopt_fish_types.h
-CXXFLAGS=-std=c++11 -O3 -g -W -Wall -Wunknown-pragmas
+CXXFLAGS=-std=c++11 -g -W -Wall -Wunknown-pragmas
 
 test: docopt_test docopt_wide_test
 	./docopt_test ; ./docopt_wide_test
