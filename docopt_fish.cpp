@@ -1798,11 +1798,13 @@ public:
     }
     
     std::vector<string_t> get_command_names() const {
-        /* Get the command names. We store a set of seen names so we only return tha names once, but in the order matching their appearance in the usage spec. */
+        // Get the command names.
+        // We store a set of seen names so we only return each name once,
+        // but in the order matching their appearance in the usage spec.
         std::vector<string_t> result;
         std::set<rstring_t> seen;
         for (const usage_t &usage : this->usages) {
-            const rstring_t name = usage.prog_name;
+            const rstring_t &name = usage.prog_name;
             if (! name.empty() && seen.insert(name).second) {
                 result.push_back(name.std_string());
             }
