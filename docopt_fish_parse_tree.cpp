@@ -14,12 +14,6 @@
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
-enum parse_result_t {
-    parsed_ok,
-    parsed_error,
-    parsed_done
-};
-
 #pragma mark -
 #pragma mark Usage Grammar
 #pragma mark -
@@ -49,6 +43,13 @@ struct parse_context_t {
     
     parse_context_t(const rstring_t &usage, const option_list_t &shortcuts) : remaining(usage), shortcut_options(&shortcuts) { }
     
+    void error(const rstring_t &tok, int code, const char *txt) {
+        // Only bother to save the first error
+        if (this->errors.empty()) {
+            append_error(&this->errors, tok.start(), code, txt);
+        }
+    }
+    
     // Consume leading whitespace.
     // Newlines are meaningful if their associated lines are indented the same or less than initial_indent.
     // If they are indented more, we swallow those.
@@ -62,7 +63,7 @@ struct parse_context_t {
     }
     
     // Try scanning a string
-    bool scan(const char *c, rstring_t *tok = NULL) {
+    bool scan(const char *c, rstring_t *tok = nullptr) {
         this->consume_leading_whitespace();
         rstring_t scanned = this->remaining.scan_string(c);
         if (tok) {
@@ -99,111 +100,93 @@ struct parse_context_t {
     
     // Given a vector of T, try parsing and then appending a T
     template<typename T>
-    inline parse_result_t try_parse_appending(vector<T> *vec) {
+    inline bool try_parse_appending(vector<T> *vec) {
         T val;
-        parse_result_t status = this->parse(&val);
-        if (status == parsed_ok) {
+        bool parsed = this->parse(&val);
+        if (parsed) {
             vec->push_back(std::move(val));
         }
-        return status;
+        return parsed;
     }
     
     // Given a pointer to a unique_ptr, try populating it
     // Parse a local and then, if successfull, move it into a p
     template<typename T>
-    inline parse_result_t try_parse_unique(unique_ptr<T> *p) {
+    inline bool try_parse_unique(unique_ptr<T> *p) {
         T val;
-        parse_result_t ret = this->parse(&val);
-        if (ret == parsed_ok) {
+        bool parsed = this->parse(&val);
+        if (parsed) {
             emplace_unique(p, std::move(val));
         }
-        return ret;
+        return parsed;
     }
     
     #pragma mark Parse functions
     
-    parse_result_t parse(alternation_list_t *result) {
-        parse_result_t status = parsed_ok;
-        bool first = true;
+    bool parse(alternation_list_t *result) {
+        size_t count = 0;
         // We expect only one alternation
         result->alternations.reserve(1);
-        while (status == parsed_ok) {
+        for (;;) {
             // Scan a vert bar if we're not first
             rstring_t bar;
-            if (! first && ! this->scan("|", &bar)) {
-                status = parsed_done;
+            if (count > 0 && ! this->scan("|", &bar)) {
                 break;
             }
-            status = try_parse_appending(&result->alternations);
-            if (status == parsed_done) {
-                if (! first) {
-                    append_error(&this->errors, bar.start(), error_trailing_vertical_bar, "Trailing vertical bar");
-                    status = parsed_error;
+            if (! try_parse_appending(&result->alternations)) {
+                if (count > 0) {
+                    error(bar, error_trailing_vertical_bar, "Trailing vertical bar");
                 }
                 break;
             }
-            first = false;
+            count++;
         }
-        if (status == parsed_done) {
-            // We may get an empty alternation list if we are just the program name.
-            // In that case, ensure we have at least one.
-            if (result->alternations.empty()) {
-                result->alternations.resize(1);
-            }
-            
-            // If we have an alternation like [-e | --erase], mark them as the same option
-            // This is kind of a hackish place to do this
-            collapse_corresponding_options(result);
-            
-            status = parsed_ok;
-        }
-        return status;
+        
+        // If we have an alternation like [-e | --erase], mark them as the same option
+        // This is kind of a hackish place to do this
+        collapse_corresponding_options(result);
+        
+        return count > 0;
     }
     
-    parse_result_t parse(expression_list_t *result) {
-        result->expressions.reserve(6);
-        parse_result_t status = parsed_ok;
-        do {
-            status = try_parse_appending(&result->expressions);
-        } while (status == parsed_ok);
-
-        // Return OK if we got at least one thing
-        if (status == parsed_done && ! result->expressions.empty()) {
-            status = parsed_ok;
-        }
-        return status;
+    bool parse(expression_list_t *result) {
+        bool got_something = false;
+        while (try_parse_appending(&result->expressions))
+            got_something = true;
+        return got_something;
     }
     
     // Parse a usage_t
-    parse_result_t parse(usage_t *result) {
-        consume_leading_whitespace();
-        if (this->is_at_end()) {
-            return parsed_done;
-        }
-        
+    void parse(usage_t *result) {
         bool scanned = this->scan_word(&result->prog_name);
         assert(scanned); // else we should not have tried to parse this as a usage
-        return parse(&result->alternation_list);
+        parse(&result->alternation_list);
+        
+        // We may get an empty alternation list if we are just the program name.
+        // In that case, ensure we have at least one.
+        if (result->alternation_list.alternations.empty()) {
+            result->alternation_list.alternations.emplace_back();
+        }
     }
     
     // Parse ellipsis
-    parse_result_t parse(opt_ellipsis_t *result) {
+    bool parse(opt_ellipsis_t *result) {
         result->present = this->scan("...", &result->ellipsis);
-        return parsed_ok; // can't fail
+        return true; // can't fail
     }
     
     // "Parse" [options]
-    parse_result_t parse(options_shortcut_t *result) {
+    bool parse(options_shortcut_t *result) {
         result->present = true;
-        return parsed_ok; // can't fail
+        return true; // can't fail
     }
     
     // Parse a simple clause
-    parse_result_t parse(simple_clause_t *result) {
+    bool parse(simple_clause_t *result) {
         rstring_t word = this->peek_word();
         if (word.empty()) {
             // Nothing remaining to parse
-            return parsed_done;
+            return false;
         }
         
         rstring_t::char_t c = word[0];
@@ -218,10 +201,10 @@ struct parse_context_t {
     }
 
     // Parse options clause
-    parse_result_t parse(option_clause_t *result) {
+    bool parse(option_clause_t *result) {
         rstring_t word;
         if (! this->scan_word(&word)) {
-            return parsed_done;
+            return false;
         }
         
         // TODO: handle --
@@ -261,7 +244,9 @@ struct parse_context_t {
             // It's an option
             option_t opt_from_usage_section;
             if (! option_t::parse_from_string(&remaining, &opt_from_usage_section, &this->errors)) {
-                return parsed_error;
+                // must have an error in this case
+                assert(! this->errors.empty());
+                return false;
             }
             assert(! opt_from_usage_section.best_name().empty());
             
@@ -295,75 +280,62 @@ struct parse_context_t {
             result->word = word;
             result->option = opt_from_options_section ? *opt_from_options_section : opt_from_usage_section;
         }
-        return parsed_ok;
+        return true;
     }
     
     // Parse a fixed argument
-    parse_result_t parse(fixed_clause_t *result) {
-        if (this->scan_word(&result->word)) {
-            // TODO: handle invalid commands like foo<bar>
-            return parsed_ok;
-        } else {
-            return parsed_done;
-        }
+    bool parse(fixed_clause_t *result) {
+        // TODO: handle invalid commands like foo<bar>
+        return this->scan_word(&result->word);
     }
     
     // Parse a variable argument
-    parse_result_t parse(variable_clause_t *result) {
-        if (this->scan_word(&result->word)) {
-            // TODO: handle invalid variables like foo<bar>
-            return parsed_ok;
-        } else {
-            return parsed_done;
-        }
+    bool parse(variable_clause_t *result) {
+        // TODO: handle invalid variables like foo<bar>
+        return this->scan_word(&result->word);
     }
 
     // Parse a general expression
-    parse_result_t parse(expression_t *result) {
+    bool parse(expression_t *result) {
         if (this->is_at_end()) {
-            return parsed_done;
+            return false;
         }
         
-        parse_result_t status; // should be set in every branch
         rstring_t token;
+        bool success = false;
         // Note that options must come before trying to parse it as a list, because "[options]" itself looks like a list
         if (this->scan("[options]", &token)) {
             result->production = 3;
-            status = this->parse(&result->options_shortcut);
+            success = this->parse(&result->options_shortcut);
         } else if (this->scan("(", &token) || this->scan("[", &token)) {
-            status = this->try_parse_unique(&result->alternation_list);
-            if (status != parsed_error) {
-                assert(token[0] == '(' || token[0] == '[');
-                bool is_paren = (token[0] == '(');
-                rstring_t close_token;
-                if (this->scan(is_paren ? ")" : "]", &close_token)) {
-                    result->production = is_paren ? 1 : 2;
-                    parse(&result->opt_ellipsis); // never fails
+            this->try_parse_unique(&result->alternation_list);
+            bool is_paren = (token[0] == '(');
+            rstring_t close_token;
+            if (this->scan(is_paren ? ")" : "]", &close_token)) {
+                result->production = is_paren ? 1 : 2;
+                success = parse(&result->opt_ellipsis); // never fails
+            } else {
+                // No closing bracket or paren
+                if (is_paren) {
+                    error(token, error_missing_close_paren, "Missing ')' to match opening '('");
                 } else {
-                    // No closing bracket or paren
-                    if (is_paren) {
-                        append_error(&this->errors, token.start(), error_missing_close_paren, "Missing ')' to match opening '('");
-                    } else {
-                        append_error(&this->errors, token.start(), error_missing_close_bracket, "Missing ']' to match opening '['");
-                    }
-                    status = parsed_error;
+                    error(token, error_missing_close_bracket, "Missing ']' to match opening '['");
                 }
             }
         } else if (this->scan("...", &token)) {
-            append_error(&this->errors, token.start(), error_leading_ellipsis, "Ellipsis may only follow an expression");
-            status = parsed_error;
+            error(token, error_leading_ellipsis, "Ellipsis may only follow an expression");
         } else if (this->peek("|")) {
-            // End of an alternation list
-            status = parsed_done;
+            // End of an alternation list, nothing to do
+            success = false;
         } else {
             // Simple clause
-            status = try_parse_unique(&result->simple_clause);
-            if (status != parsed_error) {
+            success = try_parse_unique(&result->simple_clause);
+            if (success) {
                 result->production = 0;
-                parse(&result->opt_ellipsis); // never fails
+                parse(&result->opt_ellipsis); // never fails except on error
             }
         }
-        return status;
+        return success;
     }
 
     /* Given an expression list, if it wraps a single option, return a pointer to that option.
@@ -408,6 +380,15 @@ struct parse_context_t {
         }
     }
 };
+
+bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {
+    parse_context_t ctx(source, shortcut_options);
+    ctx.parse(out_usage);
+    if (out_errors) {
+        std::move(ctx.errors.begin(), ctx.errors.end(), std::back_inserter(*out_errors));
+    }
+    return ctx.errors.empty();
+}
 
 // Helper to build an rstring_t from a constant C string
 // Note this can't be a function since it has a dependency on DOCOPT_USE_WCHAR
@@ -468,16 +449,6 @@ usage_t usage_t::build_from_variables(const std::vector<rstring_t> &variables, b
         alternations.emplace_back(expression_list_t(make_options_expr()));
     }
     return usage;
-}
-
-bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {
-    parse_context_t ctx(source, shortcut_options);
-    parse_result_t status = ctx.parse(out_usage);
-    assert(! (status == parsed_error && ctx.errors.empty()));
-    if (out_errors) {
-        out_errors->insert(out_errors->end(), ctx.errors.begin(), ctx.errors.end());
-    }
-    return status != parsed_error;
 }
 
 CLOSE_DOCOPT_IMPL /* namespace */
