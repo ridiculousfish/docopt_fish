@@ -58,7 +58,7 @@ struct expression_list_t {
     
     // expression_list = expression opt_expression_list
     expression_list_t() {}
-    expression_list_t(expression_t &&rhs) {
+    explicit expression_list_t(expression_t &&rhs) {
         expressions.push_back(std::move(rhs));
     }
     

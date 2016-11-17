@@ -108,7 +108,7 @@ static string_list_t split_nonempty(const char *str, char delimiter) {
     const char *cursor = str;
     for (;;) {
         const char *next = strchr(cursor, delimiter);
-        if (next == NULL) {
+        if (next == nullptr) {
             next = cursor + strlen(cursor);
         }
         
@@ -281,7 +281,7 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
     va_start(va, dopt1);
     for (;;) {
         const doption_t *dopt = va_arg(va, const doption_t *);
-        if (dopt == NULL) {
+        if (dopt == nullptr) {
             break;
         }
         dopts.push_back(*dopt);
@@ -380,8 +380,8 @@ static void run_1_unused_argument_test(const char *usage, const char *joined_arg
     
     /* Perform the parsing */
     vector<size_t> unused_arg_idxs;
-    argument_parser_t parser(usage_str, NULL);
-    parser.parse_arguments(argv, flags_default, NULL, &unused_arg_idxs);
+    argument_parser_t parser(usage_str, nullptr);
+    parser.parse_arguments(argv, flags_default, nullptr, &unused_arg_idxs);
     
     /* Construct unused argument string */
     string_list_t unused_args_vec;
@@ -409,7 +409,7 @@ static void run_1_command_test(const char *usage, const char *variable, const ch
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t parser(usage_str, NULL);
+    argument_parser_t parser(usage_str, nullptr);
     
     const string_t var_string(variable, variable + strlen(variable));
     const string_t command_string = parser.metadata_for_name(var_string).command;
@@ -482,7 +482,7 @@ static void run_1_validation_test(const char *usage, const char *joined_argv, co
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t parser(usage_str, NULL);
+    argument_parser_t parser(usage_str, nullptr);
     
     /* Validate arguments */
     std::vector<argument_status_t> statuses = parser.validate_arguments(argv, flag_match_allow_incomplete);
@@ -512,7 +512,7 @@ static void run_1_description_test(const char *usage, const char *option, const 
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    argument_parser_t parser(usage_str, NULL);
+    argument_parser_t parser(usage_str, nullptr);
     
     const string_t option_string(option, option + strlen(option));
     const string_t description_string = parser.metadata_for_name(option_string).description;
@@ -1872,13 +1872,13 @@ static void test_correctness()
             },
         },
 
-        {NULL, {}}
+        {nullptr, {}}
     }
     ;
     
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const testcase_t *testcase = &testcases[testcase_idx];
-        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != nullptr; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
             run_1_correctness_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
@@ -1952,18 +1952,18 @@ static void test_annotated_options()
     run_1_annotated_option_test(0, 0,
                              "", // argv
                              "",
-                             &d11, &d12, &d13, NULL);
+                             &d11, &d12, &d13, nullptr);
     
     run_1_annotated_option_test(0, 1,
                              "-a", // argv
                              "-a:True",
-                             &d11, &d12, &d13, NULL);
+                             &d11, &d12, &d13, nullptr);
     
     run_1_annotated_option_test(0, 2,
                              "--radius foo", // argv
                              "--radius:True\n"
                              "<m>:foo\n",
-                             &d11, &d12, &d13, NULL);
+                             &d11, &d12, &d13, nullptr);
 
     run_1_annotated_option_test(0, 3,
                              "--radius foo -color red", // argv
@@ -1971,7 +1971,7 @@ static void test_annotated_options()
                              "<m>:foo\n"
                              "-color:True\n"
                              "<rgb>:red\n",
-                             &d11, &d12, &d13, NULL);
+                             &d11, &d12, &d13, nullptr);
     
     run_1_annotated_option_test(0, 4,
                                 "checkout --radius foo -color red", // argv
@@ -1980,7 +1980,7 @@ static void test_annotated_options()
                                 "<m>:foo\n"
                                 "-color:True\n"
                                 "<rgb>:red\n",
-                                &d11, &d12, &d13, &d14, NULL);
+                                &d11, &d12, &d13, &d14, nullptr);
     // todo: need to test description, etc.
 }
 
@@ -2078,11 +2078,11 @@ static void test_suggestions()
                 },
             },
         },
-        {NULL, {}}
+        {nullptr, {}}
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const testcase_t *testcase = &testcases[testcase_idx];
-        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != nullptr; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
             run_1_suggestion_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
@@ -2129,11 +2129,11 @@ static void test_unused_args()
                 },
             },
         },
-        {NULL, {}}
+        {nullptr, {}}
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const testcase_t *testcase = &testcases[testcase_idx];
-        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != nullptr; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
             run_1_unused_argument_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
@@ -2167,11 +2167,11 @@ static void test_descriptions()
                 },
             },
         },
-        {NULL, {}}
+        {nullptr, {}}
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const testcase_t *testcase = &testcases[testcase_idx];
-        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != nullptr; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
             run_1_description_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
@@ -2220,11 +2220,11 @@ static void test_commands()
                 }
             }
         },
-        {NULL, {}}
+        {nullptr, {}}
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const testcase_t *testcase = &testcases[testcase_idx];
-        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != NULL; arg_idx++) {
+        for (size_t arg_idx = 0; testcase->args[arg_idx].argv != nullptr; arg_idx++) {
             const args_t *args = &testcase->args[arg_idx];
             run_1_command_test(testcase->usage, args->argv, args->expected_results, testcase_idx, arg_idx);
         }
@@ -2307,10 +2307,10 @@ static void test_errors_in_usage()
         {   "Usage: prog --foo=<bar>baz \n",
             error_invalid_variable_name
         },
-        {NULL, 0}
+        {nullptr, 0}
         
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const usage_err_testcase_t *testcase = &testcases[testcase_idx];
         run_1_usage_err_test(testcase->usage, testcase->expected_error, testcase_idx, 0);
     }
@@ -2363,9 +2363,9 @@ static void test_errors_in_argv()
             error_wrong_separator
         },
 
-        {NULL, NULL, 0}
+        {nullptr, nullptr, 0}
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const argv_err_testcase_t *testcase = &testcases[testcase_idx];
         run_1_argv_err_test(testcase->usage, testcase->argv, testcase->expected_error, testcase_idx, 0);
     }
@@ -2394,9 +2394,9 @@ static void test_validation()
             "foo --baz", // argv
             "01"
         },
-        {NULL, NULL, NULL}
+        {nullptr, nullptr, nullptr}
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const validation_testcase_t *testcase = &testcases[testcase_idx];
         run_1_validation_test(testcase->usage, testcase->argv, testcase->valids, testcase_idx, 0);
     }
@@ -2425,12 +2425,12 @@ static void test_command_names()
             "       prog --baz\n",
             "prog,prog2"
         },
-        {NULL, NULL}
+        {nullptr, nullptr}
     };
-    for (size_t testcase_idx=0; testcases[testcase_idx].usage != NULL; testcase_idx++) {
+    for (size_t testcase_idx=0; testcases[testcase_idx].usage != nullptr; testcase_idx++) {
         const cmd_testcase_t *testcase = &testcases[testcase_idx];
         string_t doc(to_string(testcase->usage));
-        string_t actual_cmds = join(argument_parser_t(doc, NULL).get_command_names(), ",");
+        string_t actual_cmds = join(argument_parser_t(doc, nullptr).get_command_names(), ",");
         string_t expected_cmds = to_string(testcase->expected_names);
         if (actual_cmds != expected_cmds) {
             err("Command test %lu.%lu expected '%ls', but instead got '%ls'", testcase_idx, 0LU, wide(expected_cmds), wide(actual_cmds));
@@ -2479,7 +2479,7 @@ void test_fuzzing() {
             }
             
             // Try to parse it
-            // We should not crash or loop forever, and either parser should be non-null or we should have an error
+            // We should not crash or loop forever, and either parser should be non-nullptr or we should have an error
             argument_parser_t parser;
             bool parsed = parser.set_doc(storage, &errors);
             if (! parsed && errors.empty()) {

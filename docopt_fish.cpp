@@ -1371,8 +1371,8 @@ class docopt_impl {
     
     /* Constructor takes the source in either narrow or wide form. */
 public:
-    docopt_impl(string_t s) : usage_storage(std::move(s)) {}
-    docopt_impl(std::vector<annotated_option_t> opts) : annotated_options(std::move(opts)) {}
+    explicit docopt_impl(string_t s) : usage_storage(std::move(s)) {}
+    explicit docopt_impl(std::vector<annotated_option_t> opts) : annotated_options(std::move(opts)) {}
 
     // No copying or moving
     // Moving is supportable but we have no reason to yet

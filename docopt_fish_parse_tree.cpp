@@ -251,7 +251,7 @@ struct parse_context_t {
             assert(! opt_from_usage_section.best_name().empty());
             
             // See if we have a corresponding option in the options section
-            const option_t *opt_from_options_section = NULL;
+            const option_t *opt_from_options_section = nullptr;
             for (const option_t &test_op : *this->shortcut_options) {
                 if (opt_from_usage_section.has_same_name(test_op)) {
                     opt_from_options_section = &test_op;
@@ -339,15 +339,15 @@ struct parse_context_t {
     }
 
     /* Given an expression list, if it wraps a single option, return a pointer to that option.
-       Else return NULL. */
+       Else return nullptr. */
     static option_t *single_option(expression_list_t *list) {
         if (list->expressions.size() != 1) {
-            return NULL;
+            return nullptr;
         }
         expression_t *expr = &list->expressions[0];
         simple_clause_t *simple_clause = expr->simple_clause.get();
-        option_clause_t *option_clause = simple_clause ? simple_clause->option.get() : NULL;
-        return option_clause ? &option_clause->option : NULL;
+        option_clause_t *option_clause = simple_clause ? simple_clause->option.get() : nullptr;
+        return option_clause ? &option_clause->option : nullptr;
     }
     
     
@@ -359,7 +359,7 @@ struct parse_context_t {
      This applies if we have exactly two options.
      */
     void collapse_corresponding_options(alternation_list_t *list) {
-        assert(list != NULL);
+        assert(list != nullptr);
         // Must have exactly 2 alternations
         if (list->alternations.size() != 2) {
             return;
@@ -368,7 +368,7 @@ struct parse_context_t {
         option_t *second = single_option(&list->alternations[1]);
 
         /* Both options must be non-NULL, and they must not have overlapping name types, and their values must agree (perhaps both empty) */
-        bool options_correspond = (first != NULL && second != NULL &&
+        bool options_correspond = (first != nullptr && second != nullptr &&
                                    first->value == second->value &&
                                    ! first->name_types_overlap(*second));
         if (options_correspond) {
@@ -401,7 +401,7 @@ bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_opti
 
 void usage_t::make_default() {
     const rstring_t src = CONST_RSTRING("command [options]");
-    parse_one_usage(src, option_list_t(), this, NULL /* errors */);
+    parse_one_usage(src, option_list_t(), this, nullptr /* errors */);
 }
 
 // Support for the annotated-options path of docopt
