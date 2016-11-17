@@ -134,9 +134,6 @@ namespace docopt_fish
         /* Returns the list of command names (i.e. prog in `Usage: prog [options]`. Duplicate names are only returned once. */
         string_list_t get_command_names() const;
 
-        /* Returns the list of variables like '<foo>'. Duplicate names are only returned once. */
-        string_list_t get_variables() const;
-        
         /* Given a list of arguments (argv), parse them, producing a map from option names to values */
         argument_map_t parse_arguments(const string_list_t &argv,
                         parse_flags_t flags,

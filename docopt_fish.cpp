@@ -9,16 +9,9 @@
 #include <numeric>
 #include <algorithm>
 #include <set>
-
-#if defined(_LIBCPP_VERSION) || __cplusplus > 199711L
-// C++11 or libc++ (which is a C++11-only library, but the memory header works OK in C++03)
 #include <memory>
+
 using std::shared_ptr;
-#else
-// C++03 or libstdc++
-#include <tr1/memory>
-using std::tr1::shared_ptr;
-#endif
 
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
