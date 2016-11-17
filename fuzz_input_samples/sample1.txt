@@ -1,0 +1,20 @@
+matUsage:
+    bind [-M <MODE> | --mode <MODE>] [-m <NEW_MODE> | --sets-mode <NEW_MODE>]
+         [-k | --key] <SEQUENCE> <COMMAND>...
+    bind [-M <MODE> | --mode <MODE>] [-k | --key] <SEQUENCE>
+    bind (-f | --function-names)
+    bind (-K | --key-names) [(-a | --all)]
+    bind (-e | --erase) [-M <MODE> | --mode <MODE>]
+         [-a | --all] [-k | --key] [<SEQUENCE>...]
+    bind (-h | --help)
+Options:
+    -k, --key                                Specify a key name, such as 'left' or 'backspace' instead of a character sequence.
+    -K, --key-names                          Display a list of available key names. Specifying -a or --all
+                                             includes keys that don't have a known mapping
+    -M <MODE>, --mode <MODE>                 Specify a bind mode that the bind is used in. Defaults to 'default'
+    -m <NEW_MODE>, --sets-mode <NEW_MODE>    Change the current mode to NEW_MODE after this binding is executed
+    -e, --erase                              Erase the binding with the given sequence and mode instead of defining a new one.
+                                             Multiple sequences can be specified with this flag. Specifying -a or --all with -M or --mode
+                                             erases all binds in the given mode regardless of sequence. Specifying -a or --all
+                                             without -M or --mode erases all binds in all modes regardless of sequence.
+    -a, --all                                See --erase and --key-names.
