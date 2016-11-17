@@ -163,13 +163,12 @@ struct parse_context_t {
     parse_result_t parse(expression_list_t *result) {
         result->expressions.reserve(6);
         parse_result_t status = parsed_ok;
-        size_t count = -1;
-        while (status == parsed_ok) {
+        do {
             status = try_parse_appending(&result->expressions);
-            count++;
-        }
+        } while (status == parsed_ok);
+
         // Return OK if we got at least one thing
-        if (status == parsed_done && count > 0) {
+        if (status == parsed_done && ! result->expressions.empty()) {
             status = parsed_ok;
         }
         return status;
