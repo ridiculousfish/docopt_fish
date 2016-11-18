@@ -156,17 +156,19 @@ struct parse_context_t {
         return got_something;
     }
     
-    // Parse a usage_t
-    void parse(usage_t *result) {
-        bool scanned = this->scan_word(&result->prog_name);
+    // Entry point! Parse a usage_t.
+    usage_t parse_usage() {
+        usage_t result;
+        bool scanned = this->scan_word(&result.prog_name);
         assert(scanned); // else we should not have tried to parse this as a usage
-        parse(&result->alternation_list);
+        parse(&result.alternation_list);
         
         // We may get an empty alternation list if we are just the program name.
         // In that case, ensure we have at least one.
-        if (result->alternation_list.alternations.empty()) {
-            result->alternation_list.alternations.emplace_back();
+        if (result.alternation_list.alternations.empty()) {
+            result.alternation_list.alternations.emplace_back();
         }
+        return result;
     }
     
     // Parse ellipsis
@@ -308,7 +310,9 @@ struct parse_context_t {
             result->production = 3;
             success = this->parse(&result->options_shortcut);
         } else if (this->scan("(", &token) || this->scan("[", &token)) {
-            this->try_parse_unique(&result->alternation_list);
+            if (! this->try_parse_unique(&result->alternation_list)) {
+                error(token, error_empty_bracket_paren, "Expected an expression inside");
+            }
             bool is_paren = (token[0] == '(');
             rstring_t close_token;
             if (this->scan(is_paren ? ")" : "]", &close_token)) {
@@ -383,11 +387,18 @@ struct parse_context_t {
 
 bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {
     parse_context_t ctx(source, shortcut_options);
-    ctx.parse(out_usage);
-    if (out_errors) {
-        std::move(ctx.errors.begin(), ctx.errors.end(), std::back_inserter(*out_errors));
+    usage_t result = ctx.parse_usage();
+    if (ctx.errors.empty()) {
+        // Be careful not to return the usage in case of error
+        // It may be an invalid usage
+        *out_usage = std::move(result);
+        return true;
+    } else {
+        if (out_errors) {
+            std::move(ctx.errors.begin(), ctx.errors.end(), std::back_inserter(*out_errors));
+        }
+        return false;
     }
-    return ctx.errors.empty();
 }
 
 // Helper to build an rstring_t from a constant C string

@@ -526,6 +526,7 @@ enum {
     error_invalid_variable_name, // Bad variable name: Options: --foo=
     error_missing_close_paren, // Missing ): prog (foo
     error_missing_close_bracket, // Missing ]:  prog [foo
+    error_empty_bracket_paren, // Empty brackets or parens, like prog []
     error_missing_close_bracket_in_default, // No close bracket. Options: --send <msg> Specifies message [default: none
     error_missing_close_variable, // Missing >: <foo
     error_one_variable_multiple_commands, // Two commands for same var. <msg> foo \n <msg> foo

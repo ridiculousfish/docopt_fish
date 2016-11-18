@@ -2307,6 +2307,10 @@ static void test_errors_in_usage()
         {   "Usage: prog --foo=<bar>baz \n",
             error_invalid_variable_name
         },
+        /* Case 15 */
+        {   "Usage: prog [    ] \n",
+            error_empty_bracket_paren
+        },
         {nullptr, 0}
         
     };
