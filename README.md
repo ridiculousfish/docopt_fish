@@ -12,7 +12,7 @@ docopt_fish (better name TBD) is a "toolkit" that supports command line argument
 
 Usage specifications are treated as user-supplied (not developer-supplied) data. This means that rich error messages are generated for invalid usage specs.
 
-docopt_fish is written in C++98. It supports both std::string and std::wstring, and does not throw or catch exceptions.
+docopt_fish is written in C++11. It supports both std::string and std::wstring, and does not throw or catch exceptions.
 
 Philosophical Differences from docopt
 =====================
