@@ -2,6 +2,7 @@
 *.dSYM
 docopt_benchmark
 docopt_test
+docopt_wide_test
 docopt_fuzztarget
 copy_it.sh
 docopt_fish.xcodeproj
