@@ -841,9 +841,9 @@ public:
         return ensure_unique(&consumed_options_ref);
     }
     
-    match_state_t() :
+    match_state_t(size_t option_count) :
         argument_values_ref(std::make_shared<option_rmap_t>()),
-        consumed_options_ref(std::make_shared<std::vector<bool> >()),
+        consumed_options_ref(std::make_shared<std::vector<bool> >(option_count, false)),
         next_positional_index(0),
         fully_consumed(false)
     {}
@@ -1595,11 +1595,9 @@ public:
                     index_list_t *out_unused_arguments) const {
         /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
         match_context_t ctx(flags | flag_stop_after_consuming_everything, this->shortcut_options, positionals, resolved_options, argv);
-        match_state_t init_state;
-        init_state.mut_consumed_options().resize(resolved_options.size(), false);
         
         match_state_list_t result;
-        match(this->usages, init_state.move(), &ctx, &result);
+        match(this->usages, match_state_t(resolved_options.size()), &ctx, &result);
         
         // Illustration of some logging to help debug matching
         const bool log_stuff = false;
@@ -1750,10 +1748,8 @@ public:
         }
         
         match_context_t ctx(flags, shortcut_options, positionals, resolved_options, argv);
-        match_state_t init_state;
-        init_state.mut_consumed_options().resize(resolved_options.size(), false);
         match_state_list_t states;
-        match(this->usages, init_state.move(), &ctx, &states);
+        match(this->usages, match_state_t(resolved_options.size()), &ctx, &states);
         
         /* Find the state(s) with the fewest unused arguments, and then insert all of their suggestions into a list */
         rstring_list_t all_suggestions;
