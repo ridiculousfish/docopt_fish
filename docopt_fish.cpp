@@ -889,16 +889,13 @@ private:
     /** Returns true if the state has consumed all positionals and options */
     bool has_consumed_everything(const match_state_t &state) const {
         if (has_more_positionals(state)) {
-            /* Unconsumed positional */
+            // Unconsumed positional
             return false;
         }
-        for (std::vector<bool>::const_iterator iter = state.consumed_options().begin(); iter != state.consumed_options().end(); ++iter) {
-            if (! *iter) {
-                /* Unconsumed option */
-                return false;
-            }
-        }
-        return true;
+
+        // Now return whether all of our consumed options are true
+        const std::vector<bool> &ops = state.consumed_options();
+        return std::all_of(ops.begin(), ops.end(), [](bool v) { return v; });
     }
     
 public:
@@ -1049,9 +1046,8 @@ static void match(const vector<usage_t> &usages, match_state_t state, match_cont
         match(usages.at(i), state.copy(), ctx, resulting_states);
         
         if (ctx->flags & flag_stop_after_consuming_everything) {
-            size_t idx = resulting_states->size();
-            while (idx--) {
-                if (resulting_states->at(idx).fully_consumed) {
+            for (const match_state_t &ms : *resulting_states) {
+                if (ms.fully_consumed) {
                     fully_consumed = true;
                     break;
                 }
@@ -1509,10 +1505,9 @@ public:
         uniqueize_options(&this->shortcut_options, true /* error on duplicates */, out_errors);
         
         // Now parse our usage_spec_ranges
-        size_t usages_count = usage_specs.size();
-        this->usages.reserve(usages_count);
-        for (size_t i=0; i < usages_count; i++) {
-            usage_t usage = parse_one_usage(usage_specs.at(i), this->shortcut_options, out_errors);
+        this->usages.reserve(usage_specs.size());
+        for (const rstring_t &usage_spec : usage_specs) {
+            usage_t usage = parse_one_usage(usage_spec, this->shortcut_options, out_errors);
             this->usages.push_back(std::move(usage));
         }
     }
