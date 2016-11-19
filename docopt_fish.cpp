@@ -16,7 +16,7 @@ using std::shared_ptr;
 namespace docopt_fish
 OPEN_DOCOPT_IMPL
 
-static const size_t npos = (size_t)(-1);
+static const size_t npos = string_t::npos;
 
 typedef std::vector<rstring_t> rstring_list_t;
 typedef std::vector<error_t> error_list_t;
