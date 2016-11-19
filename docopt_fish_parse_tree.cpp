@@ -385,19 +385,22 @@ struct parse_context_t {
     }
 };
 
-bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors) {
+usage_t parse_one_usage(const rstring_t &source, const option_list_t &shortcut_options,vector<error_t> *out_errors) {
     parse_context_t ctx(source, shortcut_options);
     usage_t result = ctx.parse_usage();
+    
+    // Return errors
+    if (out_errors) {
+        std::move(ctx.errors.begin(), ctx.errors.end(), std::back_inserter(*out_errors));
+    }
+
+    // Be careful not to return the usage in case of error
+    // It may be an invalid usage, i.e. not respect the invariants
+    // expected in match()
     if (ctx.errors.empty()) {
-        // Be careful not to return the usage in case of error
-        // It may be an invalid usage
-        *out_usage = std::move(result);
-        return true;
+        return result;
     } else {
-        if (out_errors) {
-            std::move(ctx.errors.begin(), ctx.errors.end(), std::back_inserter(*out_errors));
-        }
-        return false;
+        return usage_t();
     }
 }
 
@@ -410,9 +413,9 @@ bool parse_one_usage(const rstring_t &source, const option_list_t &shortcut_opti
   #define CONST_RSTRING(x) rstring_t(x, strlen(x))
 #endif
 
-void usage_t::make_default() {
+usage_t usage_t::make_default() {
     const rstring_t src = CONST_RSTRING("command [options]");
-    parse_one_usage(src, option_list_t(), this, nullptr /* errors */);
+    return parse_one_usage(src, option_list_t(), nullptr /* errors */);
 }
 
 // Support for the annotated-options path of docopt

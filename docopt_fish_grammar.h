@@ -103,8 +103,8 @@ struct usage_t {
         v->visit(alternation_list);
     }
     
-    /* Turn the receiver into a "default" usage that has an empty program name and just the [options] portion. */
-    void make_default();
+    /* Create a "default" usage that has an empty program name and just the [options] portion. */
+    static usage_t make_default();
     
     /* Hackish function to build a parse tree from a (possibly empty) list of variable names, optionally including an options shortcut.
        Each variable becomes an element in an alternation list.
@@ -209,12 +209,7 @@ struct variable_clause_t {
     }
 };
 
-// Support for direct options
-struct direct_usage_t {
-    std::vector<annotated_option_t> annotated_options;
-};
-
-bool parse_one_usage(const rstring_t &src, const option_list_t &shortcut_options, usage_t *out_usage, vector<error_t> *out_errors);
+usage_t parse_one_usage(const rstring_t &src, const option_list_t &shortcut_options,vector<error_t> *out_errors);
 
 
 // Node visitor class, using CRTP. Child classes should override accept().

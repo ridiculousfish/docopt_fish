@@ -1379,9 +1379,6 @@ public:
 #pragma mark Instance Variables
 #pragma mark -
     
-    /* Special support for direct options */
-    direct_usage_t direct_usage;
-    
     /* The usage parse tree. */
     usage_list_t usages;
     
@@ -1515,8 +1512,7 @@ public:
         size_t usages_count = usage_specs.size();
         this->usages.reserve(usages_count);
         for (size_t i=0; i < usages_count; i++) {
-            usage_t usage;
-            parse_one_usage(usage_specs.at(i), this->shortcut_options, &usage, out_errors);
+            usage_t usage = parse_one_usage(usage_specs.at(i), this->shortcut_options, out_errors);
             this->usages.push_back(std::move(usage));
         }
     }
@@ -1677,8 +1673,7 @@ public:
     bool preflight(error_list_t *out_errors) {
         /* If we have no usage, apply the default one */
         if (this->usages.empty()) {
-            this->usages.resize(1);
-            this->usages.back().make_default();
+            this->usages.push_back(usage_t::make_default());
         }
         
         // Extract options and variables from the usage sections
