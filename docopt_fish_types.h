@@ -488,7 +488,7 @@ struct option_t {
     }
     
     /* Given an argument (i.e. from argv), produce an option. */
-    static option_t parse_from_argument(const rstring_t &str, option_t::name_type_t type);
+    static option_t parse_from_argument(const string_t &str, option_t::name_type_t type);
 
 };
 typedef std::vector<option_t> option_list_t;

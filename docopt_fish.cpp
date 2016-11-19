@@ -41,6 +41,11 @@ static inline std::basic_ostream<string_t::value_type> &errstream() {
 
 }
 
+// Little helper function
+bool is_double_dash(const string_t &str) {
+    return str.size() == 2 && str[0] == '-' && str[1] == '-';
+}
+
 // This represents an error in argv, i.e. the docopt description was OK but a parameter contained an error
 static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt, size_t pos_in_arg = 0) {
     append_error(errors, pos_in_arg, code, txt, arg_idx);
@@ -169,7 +174,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     return success;
 }
 
-option_t option_t::parse_from_argument(const rstring_t &str, option_t::name_type_t type) {
+option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_t type) {
     assert(! str.empty());
     assert(str.at(0) == '-');
     
@@ -499,21 +504,28 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates, 
 
 /* Transient stack-allocated data associated with separating argv */
 struct argv_separation_state_t {
-    const rstring_list_t &argv;
+    const string_list_t &argv;
     const option_list_t &options;
     parse_flags_t flags;
     size_t idx = 0;
     bool saw_double_dash = false;
     
-    argv_separation_state_t(const rstring_list_t &argv_, const option_list_t &options_, parse_flags_t flags_) : argv(argv_), options(options_), flags(flags_)
+    argv_separation_state_t(const string_list_t &argv_, const option_list_t &options_, parse_flags_t flags_) : argv(argv_), options(options_), flags(flags_)
     {}
     
-    const rstring_t &arg() const {
+    const string_t &arg() const {
         return this->argv.at(this->idx);
     }
     
+    bool arg_has_prefix(const char *p) const {
+        const string_t &arg = this->arg();
+        const size_t len = strlen(p);
+        return arg.size() >= len &&
+               std::equal(p, p + len, arg.begin());
+    }
+    
     bool has_double_dash_at(size_t idx) const {
-        return idx < this->argv.size() && this->argv.at(idx).is_double_dash();
+        return idx < this->argv.size() && is_double_dash(this->argv.at(idx));
     }
     
     // Returns the list of options satisfying some predicate
@@ -532,8 +544,8 @@ struct argv_separation_state_t {
 // those are handled in parse_short
 static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_t::name_type_t type, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion)
 {
-    const rstring_t &arg = st->arg();
-    assert(arg.has_prefix(type == option_t::double_long ? "--" : "-"));
+    const string_t &arg = st->arg();
+    assert(st->arg_has_prefix(type == option_t::double_long ? "--" : "-"));
     
     // If strict_separators is set, then we require that the option have sep_none
     // If not set, then we don't care if the separators match
@@ -628,8 +640,8 @@ static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_
 // There may be multiple arguments, e.g. 'tar -xc'
 // Only the last option may have an argument, e.g. 'tar -xcf somefile'
 static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result, error_list_t *out_errors, rstring_t *out_suggestion) {
-    const rstring_t &arg = st->arg();
-    assert(arg.has_prefix("-"));
+    const string_t &arg = st->arg();
+    assert(st->arg_has_prefix("-"));
     assert(arg.length() > 1); // must not be just a single dash
     bool errored = false;
     bool last_option_has_argument = false;
@@ -730,7 +742,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
 
 
 /* The Python implementation calls this "parse_argv" */
-static void separate_argv_into_options_and_positionals(const rstring_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, rstring_t *out_suggestion = nullptr) {
+static void separate_argv_into_options_and_positionals(const string_list_t &argv, const option_list_t &options, parse_flags_t flags, positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options, error_list_t *out_errors, rstring_t *out_suggestion = nullptr) {
     
     // double_dash means that all remaining values are arguments
     argv_separation_state_t st(argv, options, flags);
@@ -743,7 +755,7 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
             // Literal --. The remaining arguments are positional.
             st.saw_double_dash = true;
             st.idx += 1;
-        } else if (st.arg().has_prefix("--")) {
+        } else if (st.arg_has_prefix("--")) {
             // Leading long option
             if (parse_long_or_unseparated_short(&st, option_t::double_long, out_resolved_options, out_errors, out_suggestion)) {
                 // parse_long will have updated st.idx and out_resolved_options
@@ -752,7 +764,7 @@ static void separate_argv_into_options_and_positionals(const rstring_list_t &arg
                 // We have to update idx
                 st.idx += 1;
             }
-        } else if (st.arg().has_prefix("-") && st.arg().length() > 1) {
+        } else if (st.arg_has_prefix("-") && st.arg().length() > 1) {
             /* An option with a leading dash, like -foo
              This can be a lot of different things:
              1. A combined short option: tar -cf ...
@@ -905,7 +917,7 @@ public:
     const option_list_t &shortcut_options;
     const positional_argument_list_t &positionals;
     const resolved_option_list_t &resolved_options;
-    const rstring_list_t &argv;
+    const string_list_t &argv;
     
     bool has_more_positionals(const match_state_t &state) const {
         assert(state.next_positional_index <= this->positionals.size());
@@ -952,7 +964,7 @@ public:
         
         /* Don't report the first -- as unused */
         for (size_t i=0; i < this->argv.size(); i++) {
-            if (this->argv.at(i).is_double_dash()) {
+            if (is_double_dash(this->argv.at(i))) {
                 used_indexes.at(i) = true;
                 break;
             }
@@ -978,7 +990,7 @@ public:
         return positionals.at(state->next_positional_index++);
     }
     
-    match_context_t(parse_flags_t f, const option_list_t &shortcut_opts, const positional_argument_list_t &p, const resolved_option_list_t &r, const rstring_list_t &av) : flags(f), shortcut_options(shortcut_opts), positionals(p), resolved_options(r), argv(av)
+    match_context_t(parse_flags_t f, const option_list_t &shortcut_opts, const positional_argument_list_t &p, const resolved_option_list_t &r, const string_list_t &av) : flags(f), shortcut_options(shortcut_opts), positionals(p), resolved_options(r), argv(av)
     {}
     
     /* If we want to stop a search and this state has consumed everything, stop the search */
@@ -1308,8 +1320,8 @@ static void match(const fixed_clause_t &node, match_state_t state, match_context
     // Compare the next positional to this static argument
     if (ctx->has_more_positionals(state)) {
         const positional_argument_t &positional = ctx->next_positional(&state);
-        const rstring_t &name = ctx->argv.at(positional.idx_in_argv);
-        if (node.word == rstring_t(name)) {
+        rstring_t name = rstring_t(ctx->argv.at(positional.idx_in_argv));
+        if (node.word == name) {
             // The static argument matches
             state.mut_argument_values()[name].count += 1;
             ctx->acquire_next_positional(&state);
@@ -1335,8 +1347,8 @@ static void match(const variable_clause_t &node, match_state_t state, match_cont
         // Note we retain the brackets <> in the variable name
         argument_t *arg = &state.mut_argument_values()[name];
         const positional_argument_t &positional = ctx->acquire_next_positional(&state);
-        const rstring_t &positional_value = ctx->argv.at(positional.idx_in_argv);
-        arg->values.push_back(positional_value.std_string());
+        const string_t &positional_value = ctx->argv.at(positional.idx_in_argv);
+        arg->values.push_back(positional_value);
         ctx->try_mark_fully_consumed(&state);
         resulting_states->push_back(state.move());
     } else {
@@ -1587,7 +1599,7 @@ public:
     }
 
     /* Matches argv */
-    void match_argv(const rstring_list_t &argv,
+    void match_argv(const string_list_t &argv,
                     parse_flags_t flags,
                     const positional_argument_list_t &positionals,
                     const resolved_option_list_t &resolved_options,
@@ -1719,8 +1731,7 @@ public:
         return true;
     }
     
-    // TODO: make this const by stop touching error_list
-    void best_assignment_for_argv(const rstring_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments, option_rmap_t *out_option_map) const
+    void best_assignment_for_argv(const string_list_t &argv, parse_flags_t flags, error_list_t *out_errors, index_list_t *out_unused_arguments, option_rmap_t *out_option_map) const
     {
         positional_argument_list_t positionals;
         resolved_option_list_t resolved_options;
@@ -1732,7 +1743,7 @@ public:
         this->match_argv(argv, flags, positionals, resolved_options, out_option_map, out_unused_arguments);
     }
     
-    rstring_list_t suggest_next_argument(const rstring_list_t &argv, parse_flags_t flags) const
+    rstring_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const
     {
         /* Set internal flags to generate suggestions */
         flags |= flag_generate_suggestions;
@@ -1806,8 +1817,7 @@ std::vector<argument_status_t> argument_parser_t::validate_arguments(const std::
     std::vector<argument_status_t> result(arg_count, status_valid);
     
     index_list_t unused_args;
-    const rstring_list_t argv_rstrs(argv.begin(), argv.end());
-    impl->best_assignment_for_argv(argv_rstrs, flags, nullptr /* errors */, &unused_args, nullptr);
+    impl->best_assignment_for_argv(argv, flags, nullptr /* errors */, &unused_args, nullptr);
     
     // Unused arguments are all invalid
     for (size_t unused_arg_idx : unused_args) {
@@ -1819,8 +1829,7 @@ std::vector<argument_status_t> argument_parser_t::validate_arguments(const std::
 
 string_list_t argument_parser_t::suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const
 {
-    const rstring_list_t argv_rstrs(argv.begin(), argv.end());
-    rstring_list_t suggestions = impl->suggest_next_argument(argv_rstrs, flags);
+    rstring_list_t suggestions = impl->suggest_next_argument(argv, flags);
     
     string_list_t result;
     result.reserve(suggestions.size());
@@ -1847,13 +1856,12 @@ string_list_t argument_parser_t::get_command_names() const
 }
 
 argument_parser_t::argument_map_t
-argument_parser_t::parse_arguments(const std::vector<string_t> &argv,
+argument_parser_t::parse_arguments(const string_list_t &argv,
                                                 parse_flags_t flags,
                                                 error_list_t *out_errors,
                                                 std::vector<size_t> *out_unused_arguments) const {
-    const rstring_list_t argv_rstrs(argv.begin(), argv.end());
     option_rmap_t option_rmap;
-    impl->best_assignment_for_argv(argv_rstrs, flags, out_errors, out_unused_arguments, &option_rmap);
+    impl->best_assignment_for_argv(argv, flags, out_errors, out_unused_arguments, &option_rmap);
     return impl->finalize_option_map(option_rmap);
 }
 

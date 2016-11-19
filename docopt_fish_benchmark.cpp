@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
     vector<wstring> doc_argv = {L"bind", L"abc", L"forward-word", L"--mode", L"derp"};
     
     before = timef();
-    for (size_t i=0; i < amt; i++) {
+    for (size_t i=0; i < amt || false; i++) {
         parser.parse_arguments(doc_argv, flags_default, NULL, NULL);
     }
     after = timef();
