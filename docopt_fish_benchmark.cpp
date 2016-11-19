@@ -55,11 +55,11 @@ int main(int argc, char *argv[])
         amt = strtoul(argv[1], NULL, 0);
     }
     
-    const std::wstring bind_usage(g_bind_usage, g_bind_usage + strlen(g_bind_usage));
+    const docopt_fish::string_t bind_usage(g_bind_usage, g_bind_usage + strlen(g_bind_usage));
     before = timef();
     argument_parser_t parser;
     for (size_t i=0; i < amt || false; i++) {
-        parser.set_doc(bind_usage.c_str(), NULL);
+        parser.set_doc(bind_usage, NULL);
     }
     after = timef();
     fprintf(stderr, "construct msec per: %f\n", (after - before) * (1000.0) / amt);
@@ -67,12 +67,7 @@ int main(int argc, char *argv[])
     bool parsed = parser.set_doc(bind_usage.c_str(), NULL);
     assert(parsed);
 
-    vector<wstring> doc_argv;
-    doc_argv.push_back(L"bind");
-    doc_argv.push_back(L"abc");
-    doc_argv.push_back(L"forward-word");
-    doc_argv.push_back(L"--mode");
-    doc_argv.push_back(L"derp");
+    vector<wstring> doc_argv = {L"bind", L"abc", L"forward-word", L"--mode", L"derp"};
     
     before = timef();
     for (size_t i=0; i < amt; i++) {
