@@ -56,12 +56,7 @@ struct parse_context_t {
     void consume_leading_whitespace() {
         this->remaining.scan_while<rstring_t::char_is_whitespace>();
     }
-    
-    // Returns true if there are no more next tokens
-    bool is_at_end() const {
-        return this->remaining.empty();
-    }
-    
+
     // Try scanning a string
     bool scan(const char *c, rstring_t *tok = nullptr) {
         this->consume_leading_whitespace();
@@ -299,10 +294,6 @@ struct parse_context_t {
 
     // Parse a general expression
     bool parse(expression_t *result) {
-        if (this->is_at_end()) {
-            return false;
-        }
-        
         rstring_t token;
         bool success = false;
         // Note that options must come before trying to parse it as a list, because "[options]" itself looks like a list
