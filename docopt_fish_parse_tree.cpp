@@ -36,7 +36,7 @@ struct parse_context_t {
     // Note unowned pointer references in rstring_t. A parse context is stack allocated and transient.
     rstring_t remaining;
 
-    const option_list_t *shortcut_options;
+    const option_list_t * const shortcut_options;
     
     // Errors we generate
     vector<error_t> errors;
@@ -58,23 +58,18 @@ struct parse_context_t {
     }
 
     // Try scanning a string
-    bool scan(const char *c, rstring_t *tok = nullptr) {
+    bool scan(const char *c, rstring_t *tok) {
         this->consume_leading_whitespace();
-        rstring_t scanned = this->remaining.scan_string(c);
-        if (tok) {
-            *tok = scanned;
-        }
-        return ! scanned.empty();
+        *tok = this->remaining.scan_string(c);
+        return ! tok->empty();
     }
-
     
     bool scan_word(rstring_t *tok) {
         this->consume_leading_whitespace();
         // A word may have embedded <>
         // These may abut: --foo<abc_def>bar' is one word.
-        rstring_t result = this->remaining.scan_while<char_is_valid_in_word>();
-        *tok = result;
-        return ! result.empty();
+        *tok = this->remaining.scan_while<char_is_valid_in_word>();
+        return ! tok->empty();
     }
     
     bool peek(const char *s) {
