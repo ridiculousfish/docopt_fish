@@ -803,8 +803,19 @@ static void separate_argv_into_options_and_positionals(const string_list_t &argv
 #pragma mark -
 
 
-/* The result of parsing argv */
+// The result of parsing argv
 typedef std::map<rstring_t, argument_t> option_rmap_t;
+
+// COW helper
+// Given a shared_ptr, if the pointer is not the unique owner
+// of the object, copy the object and create a new pointer to it
+template<typename T>
+static T& copy_if_shared(shared_ptr<T> *ptr) {
+    if (! ptr->unique()) {
+        *ptr = std::make_shared<T>(**ptr);
+    }
+    return **ptr;
+}
 
 struct match_state_t {
     friend struct match_context_t;
@@ -824,6 +835,7 @@ public:
     // Next positional to dequeue
     size_t next_positional_index;
     
+    // Suggestions generated for this state
     std::set<rstring_t> suggested_next_arguments;
     
     // Whether this match has fully consumed all positionals and options
@@ -833,16 +845,8 @@ public:
         return *argument_values_ref;
     }
     
-    template<typename T>
-    static T& ensure_unique(shared_ptr<T> *ptr) {
-        if (! ptr->unique()) {
-            *ptr = std::make_shared<T>(**ptr);
-        }
-        return **ptr;
-    }
-    
     option_rmap_t &mut_argument_values() {
-        return ensure_unique(&argument_values_ref);
+        return copy_if_shared(&argument_values_ref);
     }
     
     const std::vector<bool> &consumed_options() const {
@@ -850,7 +854,7 @@ public:
     }
     
     std::vector<bool> &mut_consumed_options() {
-        return ensure_unique(&consumed_options_ref);
+        return copy_if_shared(&consumed_options_ref);
     }
     
     match_state_t(size_t option_count) :
@@ -873,7 +877,6 @@ public:
     match_state_t &&move() {
         return std::move(*this);
     }
-    
     
     // Returns the "progress" of a state. This is a sum of the number of positionals and
     // arguments consumed, plus the number of suggestions. This is not directly comparable
@@ -898,7 +901,7 @@ typedef std::vector<match_state_t> match_state_list_t;
 
 struct match_context_t {
 private:
-    /** Returns true if the state has consumed all positionals and options */
+    // Returns true if the state has consumed all positionals and options
     bool has_consumed_everything(const match_state_t &state) const {
         if (has_more_positionals(state)) {
             // Unconsumed positional
@@ -913,7 +916,8 @@ private:
 public:
     const parse_flags_t flags;
     
-    /* Note: these are stored references. Match context objects are expected to be transient and stack-allocated. */
+    // Note: these are stored references.
+    // Match context objects are expected to be transient and stack-allocated.
     const option_list_t &shortcut_options;
     const positional_argument_list_t &positionals;
     const resolved_option_list_t &resolved_options;
@@ -933,15 +937,18 @@ public:
          3. It is an option that was not found in the tree at all
          */
         
-        /* Make a vector the same size as argv. As we walk over positionals and options, we will mark the corresponding index as used. At the end, the unset bits are the unused arguments */
+        // Make a vector the same size as argv.
+        // As we walk over positionals and options, we will mark the corresponding index as used.
+        // At the end, the unset bits are the unused arguments
         std::vector<bool> used_indexes(this->argv.size(), false);
         
-        /* Walk over used positionals. next_positional_index is the first unused one.  */
+        // Walk over used positionals. next_positional_index is the first unused one.
         for (size_t i=0; i < state->next_positional_index; i++) {
             used_indexes.at(this->positionals.at(i).idx_in_argv) = true;
         }
         
-        /* Walk over options matched during tree descent. We should have one bit per option */
+        // Walk over options matched during tree descent.
+        // We should have one bit per option
         assert(state->consumed_options().size() == this->resolved_options.size());
         for (size_t i=0; i < state->consumed_options().size(); i++) {
             if (state->consumed_options().at(i)) {
@@ -954,7 +961,9 @@ public:
             }
         }
         
-        /* Walk over options NOT matched during tree descent and clear their bits. An argument may be both matched and unmatched, i.e. if "-vv" is parsed into two short options. In that case, we want to mark it as unmatched. */
+        // Walk over options NOT matched during tree descent and clear their bits.
+        // An argument may be both matched and unmatched, i.e. if "-vv" is parsed into two short options.
+        // In that case, we want to mark it as unmatched.
         for (size_t i=0; i < state->consumed_options().size(); i++) {
             if (! state->consumed_options().at(i)) {
                 const resolved_option_t &opt = this->resolved_options.at(i);
@@ -962,7 +971,7 @@ public:
             }
         }
         
-        /* Don't report the first -- as unused */
+        // Don't report the first -- as unused
         for (size_t i=0; i < this->argv.size(); i++) {
             if (is_double_dash(this->argv.at(i))) {
                 used_indexes.at(i) = true;
@@ -970,7 +979,7 @@ public:
             }
         }
         
-        /* Extract the unused indexes from the bitmap of used arguments */
+        // Extract the unused indexes from the bitmap of used arguments
         index_list_t unused_argv_idxs;
         for (size_t i=0; i < used_indexes.size(); i++) {
             if (! used_indexes.at(i)) {
@@ -1030,7 +1039,7 @@ static void match_list(const T& node, match_state_list_t *incoming_state_list, m
         match(node, state->move(), ctx, resulting_states);
         
         if (require_progress) {
-            /* Keep only those results that have increased in progress. States after init_size are new. */
+            // Keep only those results that have increased in progress. States after init_size are new.
             size_t idx = resulting_states->size();
             assert(idx >= init_size);
             while (idx-- > init_size) { // last processed idx will be init_size
