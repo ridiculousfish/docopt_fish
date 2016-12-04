@@ -14,3 +14,21 @@ addons:
     - g++-4.8
     - clang
 script: make test
+env:
+  global:
+   # The next declaration is the encrypted COVERITY_SCAN_TOKEN, created
+   #   via the "travis encrypt" command using the project repo's public key
+   - secure: "cw2QTxH025BdFH6w0kzAQ4Uxau6Ug6gA5fOkNa+Z65quSILTQCS9Lc07V9b+vJoQxyLsJlKtrfi26ODO2Z/3quxenLZ0RYUHeIb9djjypicF/ouG4GGK4D2a78xKIJGlohaWv6uX7FceQr6dJSuN8rAfG7fSz2mM3mdT8/hLcE0="
+
+before_install:
+      - echo -n | openssl s_client -connect scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca-
+
+addons:
+  coverity_scan:
+    project:
+      name: "ridiculousfish/docopt_fish"
+      description: "docopt for fish"
+    notification_email: corydoras@ridiculousfish.com
+    build_command_prepend: ""
+    build_command:   "make docopt_test docopt_wide_test"
+    branch_pattern: coverity_scan
