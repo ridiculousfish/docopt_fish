@@ -917,6 +917,14 @@ static T &copy_if_shared(shared_ptr<T> *ptr) {
     return **ptr;
 }
 
+// Match state objects
+// Match states represent the state of matching argv against our docopt usage tree
+// THese are passed around and may be copied, etc.
+// Matching is very performance sensitive, so this uses a few optimization tricks
+// Implicit copying and moving (via constructors, std::move, etc.) is not allowed
+// Instead use copy() and move()
+// Also, since states need to diverge but often share structure, we use shared_ptr
+// extensively, and copy-on-write
 struct match_state_t {
     friend struct match_context_t;
 
@@ -1958,9 +1966,8 @@ class docopt_impl {
                                                    &resolved_options, nullptr /* errors */,
                                                    &suggestion);
 
-        /* If we got a suggestion, it means that the last argument was of the form
-         * --foo, where
-         * --foo wants a value. That's all we care about. */
+        // If we got a suggestion, it means that the last argument was of the form
+        // --foo, where --foo wants a value. That's all we care about.
         if (!suggestion.empty()) {
             return rstring_list_t(1, suggestion);
         }
@@ -1969,9 +1976,8 @@ class docopt_impl {
         match_state_list_t states;
         match(this->usages, match_state_t(resolved_options.size()), &ctx, &states);
 
-        /* Find the state(s) with the fewest unused arguments, and then insert all
-         * of their
-         * suggestions into a list */
+        // Find the state(s) with the fewest unused arguments,
+        // and then insert all of their suggestions into a list
         rstring_list_t all_suggestions;
         size_t best_unused_arg_count = (size_t)-1;
         for (const match_state_t &state : states) {
