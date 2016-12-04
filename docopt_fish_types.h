@@ -275,16 +275,32 @@ class rstring_t {
         return result;
     }
 
-    // Stupid C++11 hack
+private:
+    // Stupid C++11 nonsense
     template<scan_predicate_t Unused>
     struct rstring_return_t { typedef rstring_t type; };
+
+    template<int>
+    std::tuple<> scan_multiple_helper() { return std::tuple<>(); }
+
+    template<int, scan_predicate_t F, scan_predicate_t... Fs>
+    std::tuple<rstring_t, typename rstring_return_t<Fs>::type...>
+    scan_multiple_helper() {
+        auto fst = std::make_tuple(this->scan_while<F>());
+        return std::tuple_cat(fst, scan_multiple_helper<0, Fs...>());
+    }
+
+public:
 
     // Scan-while a sequence of predicates, in order
     template <scan_predicate_t... Fs>
     std::tuple<typename rstring_return_t<Fs>::type...>
     scan_multiple() {
-        // must use list-initialization to guarantee left to right order
-        return std::tuple<typename rstring_return_t<Fs>::type...>{this->scan_while<Fs>()...};
+        // we need to scan our arguments from left to right
+        // list-initialization is supposed to guarantee left to right order,
+        // but gcc bug 51253 means it sometimes won't
+        // so we have to hack it with this obnoxious recursive implementation
+        return scan_multiple_helper<0, Fs...>();
     }
 
     // If this begins with c, returns a string containing c
