@@ -14,6 +14,8 @@ Usage specifications are treated as user-supplied (not developer-supplied) data.
 
 docopt_fish is written in C++11. It supports both std::string and std::wstring, and does not throw or catch exceptions.
 
+docopt_fish is made available under the zlib license. See the LICENSE file.
+
 Philosophical Differences from docopt
 =====================
 
