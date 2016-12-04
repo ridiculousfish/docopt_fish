@@ -11,6 +11,9 @@
 using namespace docopt_fish;
 using namespace std;
 
+// work around annoying error_t in glibc
+typedef docopt_fish::error_t doc_error_t;
+
 #define ERROR_EXPECTED "<ERROR>"
 
 #define UNUSED __attribute__((unused))
@@ -161,7 +164,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
     
-    std::vector<error_t> errors;
+    std::vector<doc_error_t> errors;
     argument_parser_t parser(usage_str, &errors);
     
     if (! errors.empty()) {
@@ -202,7 +205,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
     
     /* Perform the parsing */
     arg_map_t results;
-    std::vector<error_t> error_list;
+    std::vector<doc_error_t> error_list;
     vector<size_t> unused_args;
     argument_parser_t parser;
     bool parse_success = parser.set_doc(usage_str, &error_list);
@@ -299,7 +302,7 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
     
     /* Perform the parsing */
     arg_map_t results;
-    std::vector<error_t> error_list;
+    std::vector<doc_error_t> error_list;
     vector<size_t> unused_args;
     argument_parser_t parser;
     parser.set_options(dopts);
@@ -425,7 +428,7 @@ static void run_1_usage_err_test(const char *usage, int expected_error_code, siz
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    std::vector<error_t> error_list;
+    std::vector<doc_error_t> error_list;
     argument_parser_t parser(usage_str, &error_list);
     
     /* Check errors */
@@ -450,7 +453,7 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
     const string_t usage_str(usage, usage + strlen(usage));
     
     /* Perform the parsing */
-    std::vector<error_t> error_list;
+    std::vector<doc_error_t> error_list;
     argument_parser_t parser(usage_str, &error_list);
     
     /* Check arguments */
@@ -2465,7 +2468,7 @@ void test_fuzzing() {
         "="
     };
     string_t storage;
-    std::vector<error_t> errors;
+    std::vector<doc_error_t> errors;
     const uint32_t token_count = sizeof tokens / sizeof *tokens;
     const uint32_t max_fuzz = 4; //could be raised up to 6 at the cost of some slowdown
     unsigned max_permutation = 1;

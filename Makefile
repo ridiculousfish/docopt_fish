@@ -3,7 +3,7 @@ TEST_SRC_FILES=${DOCOPT_SRC_FILES} docopt_fish_test.cpp
 BENCHMARK_SRC_FILES=${DOCOPT_SRC_FILES} docopt_fish_benchmark.cpp
 FUZZTARGET_SRC_FILES=${DOCOPT_SRC_FILES} docopt_fuzz_driver.cpp
 HEADERS=docopt_fish.h docopt_fish_grammar.h docopt_fish_types.h
-CXXFLAGS=-std=c++11 -g -W -Wall -Wunknown-pragmas
+CXXFLAGS=-std=c++11 -g -W -Wall -Wno-unknown-pragmas
 
 test: docopt_test docopt_wide_test
 	./docopt_test ; ./docopt_wide_test

@@ -275,10 +275,16 @@ class rstring_t {
         return result;
     }
 
+    // Stupid C++11 hack
+    template<scan_predicate_t Unused>
+    struct rstring_return_t { typedef rstring_t type; };
+
     // Scan-while a sequence of predicates, in order
     template <scan_predicate_t... Fs>
-    std::array<rstring_t, sizeof...(Fs)> scan_multiple() {
-        return {{this->scan_while<Fs>()...}};
+    std::tuple<typename rstring_return_t<Fs>::type...>
+    scan_multiple() {
+        // must use list-initialization to guarantee left to right order
+        return std::tuple<typename rstring_return_t<Fs>::type...>{this->scan_while<Fs>()...};
     }
 
     // If this begins with c, returns a string containing c
