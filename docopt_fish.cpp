@@ -58,7 +58,7 @@ static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, co
 // position
 static void append_docopt_error(error_list_t *errors, const rstring_t &token, int code,
                                 const char *txt) {
-    append_error(errors, token.start(), code, txt, -1);
+    append_error(errors, token.offset(), code, txt, -1);
 }
 
 /* Parsing helpers */
@@ -259,9 +259,9 @@ class node_dumper_t : public node_visitor_t<node_dumper_t> {
 
             char buff[32];
             if (t1.length() == 1) {
-                snprintf(buff, sizeof buff, "{%lu}", t1.start());
+                snprintf(buff, sizeof buff, "{%lu}", t1.offset());
             } else {
-                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.start(), t1.length());
+                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.offset(), t1.length());
             }
             result.append(to_string(buff));
             lines.push_back(result);
@@ -305,7 +305,7 @@ struct option_collector_t : public node_visitor_t<option_collector_t> {
 static bool get_next_line(const string_t &base, rstring_t *inout_line) {
     assert(inout_line != nullptr);
     // Start at the end of the last line, or 0 if this is the first
-    const size_t line_start = inout_line->end();
+    const size_t line_start = inout_line->end_offset();
     assert(line_start <= base.size());
     if (line_start == base.size()) {
         // Line exhausted
@@ -468,7 +468,7 @@ static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *ou
                                             rstring_t *out_command, error_list_t *out_errors) {
     bool result = false;
     assert(!spec.empty() && spec[0] == '<');
-    const size_t close_bracket = spec.find('>');
+    const size_t close_bracket = spec.find(">");
     if (close_bracket == rstring_t::npos) {
         append_docopt_error(out_errors, spec, error_missing_close_variable,
                             "No > to balance this <");
@@ -486,10 +486,11 @@ static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *ou
 // is indented. Tabs are treated as 4 spaces. newlines are unexpected, and
 // treated as one space.
 static size_t compute_indent(const rstring_t &src, const rstring_t &trimmed_src) {
-    assert(trimmed_src.start() >= src.start() && trimmed_src.end() <= src.end());
+    assert(trimmed_src.offset() >= src.offset() && trimmed_src.end_offset() <= src.end_offset());
     const size_t tabstop = 4;
     // Walk over the prefix of src, up to trimmed_src
-    size_t result = 0, length = trimmed_src.start() - src.start();
+    size_t result = 0;
+    size_t length = trimmed_src.offset() - src.offset();
     for (size_t i = 0; i < length; i++) {
         if (src.at(i) != '\t') {
             // not a tab
@@ -1722,24 +1723,23 @@ class docopt_impl {
     /* Populate ourselves from our annotated options */
     void populate_from_annotated_options() {
         // We're going to construct a list of variable arguments, that are not
-        // associated with an
-        // option
+        // associated with an option
         // Populate impl->shortcut_options and free_variables.
         rstring_list_t free_variables;
-        for (const auto &dopt : this->annotated_options) {
-            // Note the order here must match that of the loop above
+        for (const annotated_option_t &dopt : this->annotated_options) {
             const rstring_t option_name(dopt.option);
             const rstring_t value_name(dopt.value_name);
-
-            if (!option_name.empty()) {
+            
+            if (dopt.type == annotated_option_t::value_only) {
+                // No option, just a free variable
+                assert(! dopt.value_name.empty());
+                free_variables.push_back(value_name);
+            } else {
                 // Create an option
-                assert(dopt.type < option_t::NAME_TYPE_COUNT);
-                auto name_type = static_cast<option_t::name_type_t>(dopt.type);
+                assert(! dopt.option.empty());
+                auto name_type = static_cast<option_t::name_type_t>(dopt.type - 1);
                 option_t option(name_type, option_name, value_name);
                 this->shortcut_options.push_back(option);
-            } else if (!value_name.empty()) {
-                // option_name is empty, create a static
-                free_variables.push_back(value_name);
             }
 
             // Save metadata

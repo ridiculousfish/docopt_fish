@@ -79,14 +79,14 @@ typedef base_metadata_t<string_t> metadata_t;
 
 // A "direct" option for constructing arguments parsers programatically.
 struct annotated_option_t {
-    enum {
+    enum type_t {
+        value_only,    // no option, like ls <file>
         single_short,  // like -f
         single_long,   // like -foo
         double_long,   // like --foo
     } type;
 
     // The name of the option, including any dashes.
-    // If empty, the type is ignored.
     string_t option;
 
     // Name of a variable representing the value, or empty

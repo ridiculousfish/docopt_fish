@@ -49,7 +49,7 @@ struct parse_context_t {
     void error(const rstring_t &tok, int code, const char *txt) {
         // Only bother to save the first error
         if (this->errors.empty()) {
-            append_error(&this->errors, tok.start(), code, txt);
+            append_error(&this->errors, tok.offset(), code, txt);
         }
     }
 

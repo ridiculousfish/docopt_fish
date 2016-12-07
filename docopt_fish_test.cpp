@@ -1944,7 +1944,7 @@ static void test_annotated_options()
     };
     
     doption_t d14 = {
-        doption_t::single_short,
+        doption_t::value_only,
         to_string(""),
         to_string("<command>"),
         metadata_t()
