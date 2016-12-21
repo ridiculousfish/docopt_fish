@@ -213,8 +213,7 @@ option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_
         // Check to see if there's an = sign
         // If we got an equals sign, the rest is the value
         // It can have any character at all, since it's coming from the argument,
-        // not from the usage
-        // spec
+        // not from the usage spec
         const rstring_t equals = remaining.scan_1_char('=');
         if (!equals.empty()) {
             value = remaining;
@@ -602,24 +601,20 @@ static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_
     const bool relaxed_separators = !(st->flags & flag_short_options_strict_separators);
 
     // Parse the argument into an 'option'. Note that this option does not appear
-    // in the options
-    // list
-    // because its range reflects the string in the argument.
+    // in the options list because its range reflects the string in the argument.
     // TODO: Need to distinguish between equivalent ways of specifying parameters
-    // (--foo=bar and
-    // --foo bar)
+    // (--foo=bar and --foo bar)
     option_t arg_as_option = option_t::parse_from_argument(arg, type);
     const rstring_t arg_name = arg_as_option.names[type];
     assert(!arg_name.empty());
 
     // Get list of matching options.
-    // Short options must have a value to match, else we handle them in
-    // parse_short
+    // Short options must have a value to match, else we handle them in parse_short
     // TODO: can eliminate matches array entirely, just use a single index
     const option_list_t matches = st->filter_options([&](const option_t &opt) {
         bool does_match = opt.names[type] == arg_name;
-        if (type == option_t::single_short) {
-            does_match = does_match && opt.has_value() &&
+        if (does_match && type == option_t::single_short) {
+            does_match = opt.has_value() &&
                          (relaxed_separators || opt.separator == option_t::sep_none);
         }
         return does_match;
@@ -648,10 +643,15 @@ static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_
                 // TODO: suggestions
                 value = arg_as_option.value;
                 arg_index = st->idx;
+            } else if (match.value_is_optional) {
+                // No option was specified, but we may have an optional value
+                // Give the optional value as a suggestion
+                if ((st->flags & flag_generate_suggestions) && out_suggestion != nullptr) {
+                    *out_suggestion = match.value;
+                }
             } else {
                 // The arg was (hopefully) specified as --foo bar
-                // The index is of the next argument, and the range is the entire
-                // argument
+                // The index is of the next argument, and the range is the entire argument
                 // Maybe do double-dash
                 if (st->has_double_dash_at(st->idx + 1)) {
                     st->saw_double_dash = true;
@@ -663,8 +663,7 @@ static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_
                     value = rstring_t(st->argv.at(arg_index));
                 } else if ((st->flags & flag_generate_suggestions) && out_suggestion != nullptr) {
                     // We are at the last argument, and we expect a value. Return the
-                    // value as a
-                    // suggestion.
+                    // value as a suggestion.
                     *out_suggestion = match.value;
                     errored = true;
                 } else {
@@ -821,7 +820,10 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
     return !errored;
 }
 
-/* The Python implementation calls this "parse_argv" */
+// The Python implementation calls this "parse_argv"
+// Given an argv list, a set of options, and a set of flags,
+// parse the argv into a set of positionals, options, errors, and optionally a suggestion
+// last_argument_is_partial tracks whether the last argument is being used for suggestions
 static void separate_argv_into_options_and_positionals(
     const string_list_t &argv, const option_list_t &options, parse_flags_t flags,
     positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options,
@@ -1720,7 +1722,7 @@ class docopt_impl {
         }
     }
 
-    /* Populate ourselves from our annotated options */
+    // Populate ourselves from our annotated options
     void populate_from_annotated_options() {
         // We're going to construct a list of variable arguments, that are not
         // associated with an option
@@ -1739,6 +1741,10 @@ class docopt_impl {
                 assert(! dopt.option.empty());
                 auto name_type = static_cast<option_t::name_type_t>(dopt.type - 1);
                 option_t option(name_type, option_name, value_name);
+                if (dopt.value_is_optional) {
+                    option.value_is_optional = true;
+                    option.separator = option_t::sep_equals;
+                }
                 this->shortcut_options.push_back(option);
             }
 

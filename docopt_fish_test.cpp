@@ -1911,6 +1911,7 @@ static void test_annotated_options()
         doption_t::single_short,
         to_string("-a"),
         empty,
+        false,
         build_metadata(
             "",
             "",
@@ -1923,6 +1924,7 @@ static void test_annotated_options()
         doption_t::single_long,
         to_string("-color"),
         to_string("<rgb>"),
+        false,
         build_metadata(
             "",
             "",
@@ -1935,6 +1937,7 @@ static void test_annotated_options()
         doption_t::double_long,
         to_string("--radius"),
         to_string("<m>"),
+        false,
         build_metadata(
             "slow fast sideways",
             "",
@@ -1947,10 +1950,19 @@ static void test_annotated_options()
         doption_t::value_only,
         to_string(""),
         to_string("<command>"),
+        false,
+        metadata_t()
+    };
+    
+    doption_t d15 = {
+        doption_t::double_long,
+        to_string("--backup"),
+        to_string("<file>"),
+        true, // optional argument!
         metadata_t()
     };
 
-    
+
     /* Case 0 */
     run_1_annotated_option_test(0, 0,
                              "", // argv
@@ -1984,6 +1996,25 @@ static void test_annotated_options()
                                 "-color:True\n"
                                 "<rgb>:red\n",
                                 &d11, &d12, &d13, &d14, nullptr);
+    
+    run_1_annotated_option_test(0, 5,
+                                "checkout --backup", // argv
+                                "<command>:checkout\n"
+                                "--backup:True\n",
+                                &d11, &d12, &d13, &d14, &d15, nullptr);
+    
+    run_1_annotated_option_test(0, 6,
+                                "checkout --backup=qwerty", // argv
+                                "<command>:checkout\n"
+                                "--backup:True\n"
+                                "<file>:qwerty\n",
+                                &d11, &d12, &d13, &d14, &d15, nullptr);
+    
+    run_1_annotated_option_test(0, 6,
+                                "checkout --backup qwerty", // argv
+                                ERROR_EXPECTED,
+                                &d11, &d12, &d13, &d14, &d15, nullptr);
+
     // todo: need to test description, etc.
 }
 

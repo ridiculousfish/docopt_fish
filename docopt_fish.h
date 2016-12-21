@@ -93,6 +93,13 @@ struct annotated_option_t {
     // Separators are assumed to be flexible
     string_t value_name;
 
+    // Indicates that any value is optional
+    // It is rare for values to be optional. An example is
+    // the --backup option to cp, which may be specified alone
+    // or may take an option.
+    // Options with optional values may only use the = separator.
+    bool value_is_optional;
+
     // Metadata associated with the option
     // Note for historic reasons, this applies equally to both the option and
     // variable

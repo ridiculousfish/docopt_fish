@@ -346,14 +346,18 @@ struct option_t {
     // Default value. Empty for none.
     rstring_t default_value;
 
+    // indicates that the value (if it exists) is optional
+    // this can only be set via direct (annotated) options today
+    bool value_is_optional = false;
+
     // How we separate the name from the value
     enum separator_t {
         sep_space,   // curl -o file
         sep_equals,  // -std=c++98
         sep_none     // -DNDEBUG. Must be a single_short option.
-    } separator;
+    } separator = sep_space;
 
-    option_t() : separator(sep_space) {}
+    option_t() {}
 
     option_t(name_type_t type, const rstring_t &name, const rstring_t &v,
              separator_t sep = sep_space)
