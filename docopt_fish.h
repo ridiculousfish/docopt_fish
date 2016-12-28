@@ -76,6 +76,17 @@ struct base_metadata_t {
 };
 
 typedef base_metadata_t<string_t> metadata_t;
+    
+// Flags set for annotated options
+enum {
+    // Indicates that any value is optional
+    // It is rare for values to be optional. An example is
+    // the --backup option to cp, which may be specified alone
+    // or may take an option.
+    // Options with optional values may only use the = separator.
+    value_is_optional = 1 << 0
+};
+typedef uint32_t annotated_option_flags_t;
 
 // A "direct" option for constructing arguments parsers programatically.
 struct annotated_option_t {
@@ -93,18 +104,35 @@ struct annotated_option_t {
     // Separators are assumed to be flexible
     string_t value_name;
 
-    // Indicates that any value is optional
-    // It is rare for values to be optional. An example is
-    // the --backup option to cp, which may be specified alone
-    // or may take an option.
-    // Options with optional values may only use the = separator.
-    bool value_is_optional;
+    // Flags controlling how the option is interpreted
+    // These are mostly fish-specific
+    annotated_option_flags_t flags;
 
     // Metadata associated with the option
     // Note for historic reasons, this applies equally to both the option and
     // variable
     metadata_t metadata;
 };
+
+// Suggestions are returned from suggest_next_argument and suggest_option_completion
+struct suggestion_t {
+    // The token to be inserted
+    string_t token;
+    
+    // Metadata about the token
+    metadata_t md;
+    
+    // Helpers for sorting
+    bool operator==(const suggestion_t &rhs) const {
+        return token == rhs.token;
+    }
+    
+    bool operator<(const suggestion_t &rhs) const {
+        return token < rhs.token;
+    }
+
+};
+typedef std::vector<suggestion_t> suggestion_list_t;
 
 class docopt_impl;
 
@@ -137,7 +165,12 @@ class argument_parser_t {
     // Given a list of arguments, returns an array of potential next values. A value may be either a
     // literal flag -foo, or a variable; these may be distinguished by the <> surrounding the
     // variable.
-    string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const;
+    suggestion_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const;
+
+    // Given a partial argument that may be an option, suggest completions for it
+    // This handles unseparated or =-separated options
+    // Each returned value may be an option, a literal separator (like =), or a variable like <file>
+    suggestion_list_t suggest_option_completion(const string_t &arg, parse_flags_t flags) const;
 
     // Given a name (either an option or a variable), returns any metadata for that name
     metadata_t metadata_for_name(const string_t &name) const;

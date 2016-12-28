@@ -75,7 +75,7 @@ static string_list_t split(const string_t &str, const char *delim) {
     string_list_t result;
     const string_t delim_string = to_string(delim);
     size_t cursor = 0;
-    while (cursor < str.size()) {
+    while (cursor <= str.size()) {
         size_t delim_pos = str.find(delim_string, cursor);
         if (delim_pos == string_t::npos) {
             delim_pos = str.size();
@@ -87,6 +87,18 @@ static string_list_t split(const string_t &str, const char *delim) {
 }
 
 /* Joins a vector of strings via a delimiter */
+
+string_t join(const suggestion_list_t &vec, const char *delim) {
+    string_t result;
+    const string_t delim_string = to_string(delim);
+    for (size_t i=0; i < vec.size(); i++) {
+        if (i > 0) {
+            result.append(delim_string);
+        }
+        result.append(vec.at(i).token);
+    }
+    return result;
+}
 
 string_t join(const string_list_t &vec, const char *delim) {
     string_t result;
@@ -158,8 +170,9 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
     /* Separate argv by spaces */
     string_list_t argv = split_nonempty(joined_argv, ' ');
     
-    /* Prepend the program name for every argument */
+    /* Prepend the program name for every argument. Also append an empty string for the last (partial) argument */
     argv.insert(argv.begin(), to_string("prog"));
+    argv.push_back(string_t());
     
     /* Usage as a string */
     const string_t usage_str(usage, usage + strlen(usage));
@@ -174,7 +187,7 @@ static void run_1_suggestion_test(const char *usage, const char *joined_argv, co
         }
     } else {
         /* Get the suggested arguments, then sort and join them */
-        string_list_t suggestions = parser.suggest_next_argument(argv, flag_match_allow_incomplete);
+        suggestion_list_t suggestions = parser.suggest_next_argument(argv, flag_match_allow_incomplete);
         sort(suggestions.begin(), suggestions.end());
         const string_t sugg_string = join(suggestions, ", ");
         
@@ -228,7 +241,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
         const string_map_t expected = parse_expected_results(joined_expected_results);
         
         // Verify everything we expected appears in our map
-        for (string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
+        for (auto iter = expected.cbegin(); iter != expected.cend(); ++iter) {
             const string_t &key = iter->first;
             const string_t &val = iter->second;
             arg_map_t::const_iterator arg_iter = results.find(key);
@@ -261,7 +274,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
         }
         
         // Verify nothing we didn't expect appears in our map
-        for (arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
+        for (auto iter = results.cbegin(); iter != results.cend(); ++iter) {
             const string_t &key = iter->first;
             string_map_t::const_iterator result = expected.find(key);
             if (result == expected.end()) {
@@ -273,24 +286,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
 
 
 
-static void run_1_annotated_option_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *joined_expected_results, const annotated_option_t *dopt1, ...) {
-    
-    typedef annotated_option_t doption_t;
-    
-    std::vector<doption_t> dopts;
-    dopts.push_back(*dopt1);
-    
-    va_list va;
-    va_start(va, dopt1);
-    for (;;) {
-        const doption_t *dopt = va_arg(va, const doption_t *);
-        if (dopt == nullptr) {
-            break;
-        }
-        dopts.push_back(*dopt);
-    }
-    va_end(va);
-    
+static void run_1_annotated_option_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *joined_expected_results, const std::vector<annotated_option_t> &dopts) {
     typedef map<string_t, argument_t > arg_map_t;
     typedef map<string_t, string_t> string_map_t;
     
@@ -306,13 +302,10 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
     vector<size_t> unused_args;
     argument_parser_t parser;
     parser.set_options(dopts);
-    bool parse_success = true;
-    if (parse_success) {
-        results = parser.parse_arguments(argv, 0, &error_list, &unused_args);
-    }
+    results = parser.parse_arguments(argv, 0, &error_list, &unused_args);
     
     bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
-    bool did_error = ! parse_success || ! unused_args.empty() || ! error_list.empty();
+    bool did_error = ! unused_args.empty() || ! error_list.empty();
     
     if (expects_error && ! did_error) {
         err("Direct option test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
@@ -326,7 +319,7 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
         const string_map_t expected = parse_expected_results(joined_expected_results);
         
         // Verify everything we expected appears in our map
-        for (string_map_t::const_iterator iter = expected.begin(); iter != expected.end(); ++iter) {
+        for (auto iter = expected.cbegin(); iter != expected.cend(); ++iter) {
             const string_t &key = iter->first;
             const string_t &val = iter->second;
             arg_map_t::const_iterator arg_iter = results.find(key);
@@ -361,9 +354,48 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
         // Verify nothing we didn't expect appears in our map
         for (arg_map_t::const_iterator iter = results.begin(); iter != results.end(); ++iter) {
             const string_t &key = iter->first;
-            string_map_t::const_iterator result = expected.find(key);
+            auto result = expected.find(key);
             if (result == expected.end()) {
                 err("Test %lu.%lu: Unexpected key %ls with count %u", test_idx, arg_idx, wide(key), iter->second.count);
+            }
+        }
+    }
+}
+
+static void run_1_annotated_suggestion_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *joined_expected_results, const std::vector<annotated_option_t> &dopts) {
+    
+    // Separate argv by spaces
+    // Ensure we have at least one argument (partial last)
+    string_list_t argv = split(to_string(joined_argv), " ");
+    if (argv.empty()) argv.push_back(string_t());
+    
+    // Prepend the program name for every argument
+    argv.insert(argv.begin(), to_string("prog"));
+    
+    /* Perform the parsing */
+    std::vector<doc_error_t> error_list;
+    vector<size_t> unused_args;
+    argument_parser_t parser;
+    parser.set_options(dopts);
+    suggestion_list_t results = parser.suggest_next_argument(argv, 0);
+    
+    bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
+    bool did_error = ! unused_args.empty() || ! error_list.empty();
+    
+    if (expects_error && ! did_error) {
+        err("Direct option suggestion test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
+    } else if (did_error && ! expects_error) {
+        err("Direct option suggestion test %lu.%lu was expected to succeed, but instead errored", test_idx, arg_idx);
+        for (size_t i=0; i < error_list.size(); i++) {
+            fprintf(stderr, "\t%ls\n", wide(error_list.at(i).text));
+        }
+    } else if (! did_error && ! expects_error) {
+        // joined_expected_results is a space-separated list
+        string_t expected = to_string(joined_expected_results);
+        string_t actual = join(results, " ");
+        if (expected != actual) {
+            if (expected != actual) {
+                err("Annotated suggestion test %lu.%lu: Wrong suggestions. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected), wide(actual));
             }
         }
     }
@@ -1906,12 +1938,14 @@ static void test_annotated_options()
     
     const string_t empty;
     
+    const annotated_option_flags_t default_flags = 0;
+    
     /* Case 0 */
     doption_t d11 = {
         doption_t::single_short,
         to_string("-a"),
         empty,
-        false,
+        default_flags,
         build_metadata(
             "",
             "",
@@ -1924,7 +1958,7 @@ static void test_annotated_options()
         doption_t::single_long,
         to_string("-color"),
         to_string("<rgb>"),
-        false,
+        default_flags,
         build_metadata(
             "",
             "",
@@ -1937,7 +1971,7 @@ static void test_annotated_options()
         doption_t::double_long,
         to_string("--radius"),
         to_string("<m>"),
-        false,
+        default_flags,
         build_metadata(
             "slow fast sideways",
             "",
@@ -1950,7 +1984,7 @@ static void test_annotated_options()
         doption_t::value_only,
         to_string(""),
         to_string("<command>"),
-        false,
+        default_flags,
         metadata_t()
     };
     
@@ -1958,7 +1992,7 @@ static void test_annotated_options()
         doption_t::double_long,
         to_string("--backup"),
         to_string("<file>"),
-        true, // optional argument!
+        default_flags | value_is_optional,
         metadata_t()
     };
 
@@ -1967,18 +2001,18 @@ static void test_annotated_options()
     run_1_annotated_option_test(0, 0,
                              "", // argv
                              "",
-                             &d11, &d12, &d13, nullptr);
+                             {d11, d12, d13});
     
     run_1_annotated_option_test(0, 1,
                              "-a", // argv
                              "-a:True",
-                             &d11, &d12, &d13, nullptr);
+                             {d11, d12, d13});
     
     run_1_annotated_option_test(0, 2,
                              "--radius foo", // argv
                              "--radius:True\n"
                              "<m>:foo\n",
-                             &d11, &d12, &d13, nullptr);
+                             {d11, d12, d13});
 
     run_1_annotated_option_test(0, 3,
                              "--radius foo -color red", // argv
@@ -1986,7 +2020,7 @@ static void test_annotated_options()
                              "<m>:foo\n"
                              "-color:True\n"
                              "<rgb>:red\n",
-                             &d11, &d12, &d13, nullptr);
+                             {d11, d12, d13});
     
     run_1_annotated_option_test(0, 4,
                                 "checkout --radius foo -color red", // argv
@@ -1995,25 +2029,80 @@ static void test_annotated_options()
                                 "<m>:foo\n"
                                 "-color:True\n"
                                 "<rgb>:red\n",
-                                &d11, &d12, &d13, &d14, nullptr);
+                                {d11, d12, d13, d14});
     
     run_1_annotated_option_test(0, 5,
                                 "checkout --backup", // argv
                                 "<command>:checkout\n"
                                 "--backup:True\n",
-                                &d11, &d12, &d13, &d14, &d15, nullptr);
+                                {d11, d12, d13, d14, d15});
     
     run_1_annotated_option_test(0, 6,
                                 "checkout --backup=qwerty", // argv
                                 "<command>:checkout\n"
                                 "--backup:True\n"
                                 "<file>:qwerty\n",
-                                &d11, &d12, &d13, &d14, &d15, nullptr);
+                                {d11, d12, d13, d14, d15});
     
     run_1_annotated_option_test(0, 6,
                                 "checkout --backup qwerty", // argv
                                 ERROR_EXPECTED,
-                                &d11, &d12, &d13, &d14, &d15, nullptr);
+                                {d11, d12, d13, d14, d15});
+    
+    doption_t d21 = {
+        doption_t::single_short,
+        to_string("-A"),
+        empty,
+        default_flags,
+        metadata_t()
+    };
+    
+    doption_t d22 = {
+        doption_t::single_short,
+        to_string("-Q"),
+        empty,
+        default_flags,
+        metadata_t()
+    };
+    
+    doption_t d23 = {
+        doption_t::single_short,
+        to_string("-W"),
+        empty,
+        default_flags,
+        metadata_t()
+    };
+    
+    doption_t d24 = {
+        doption_t::single_short,
+        to_string("-C"),
+        to_string("<CVal>"),
+        default_flags,
+        metadata_t()
+    };
+    
+    run_1_annotated_suggestion_test(1, 0,
+                                "-A", // argv
+                                "-AQ -AW",
+                                {d21, d22, d23});
+    
+    run_1_annotated_suggestion_test(1, 1,
+                                    "-A", // argv
+                                    "-AC -AQ -AW",
+                                    {d21, d22, d23, d24});
+    
+    // Shouldn't combine shorts if we have a value
+    run_1_annotated_suggestion_test(1, 2,
+                                    "-C ", // argv
+                                    "<CVal>",
+                                    {d21, d22, d23, d24});
+
+    run_1_annotated_suggestion_test(1, 3,
+                                    "", // argv
+                                    "-A -C -Q -W",
+                                    {d21, d22, d23, d24});
+
+
 
     // todo: need to test description, etc.
 }

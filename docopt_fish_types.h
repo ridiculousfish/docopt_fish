@@ -346,9 +346,9 @@ struct option_t {
     // Default value. Empty for none.
     rstring_t default_value;
 
-    // indicates that the value (if it exists) is optional
-    // this can only be set via direct (annotated) options today
-    bool value_is_optional = false;
+    // special flags
+    // these can only be set via annotated options today
+    annotated_option_flags_t flags = 0;
 
     // How we separate the name from the value
     enum separator_t {
