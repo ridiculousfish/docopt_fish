@@ -34,17 +34,17 @@ enum argument_status_t {
 // Represents an error in either the usage spec, or during argument parsing
 struct error_t {
     // Location of the token where the error occurred, in either the docopt doc or the argument
-    size_t location = size_t(-1);
+    size_t location;
 
     // If the error occurred in an argument (i.e. argv), the index of the argument; otherwise -1
-    size_t argument_index = size_t(-1);
+    size_t argument_index;
 
     // Internal code, for use in the tests
-    int code = 0;
+    int code;
 
     // Text of the error. This is an immortal string literal, but may someday need to be a
     // std::string.
-    const char *text = nullptr;
+    const char *text;
 };
 
 // Represents an argument in the result
@@ -70,7 +70,7 @@ struct base_metadata_t {
     STR command;
     STR condition;
     STR description;
-    long tag;  // arbitrary application use
+    int tag;  // arbitrary application use
 
     base_metadata_t() : tag(0) {}
 };
@@ -169,8 +169,8 @@ class argument_parser_t {
 
     // Given a partial argument that may be an option, suggest completions for it
     // This handles unseparated or =-separated options
-    // Each returned value may be an option, a literal separator (like =), or a variable like <file>
-    suggestion_list_t suggest_option_completion(const string_t &arg, parse_flags_t flags) const;
+    // Each returned value is a variable that is meant to be appended to the argument
+    suggestion_list_t suggest_option_completion(const string_t &partial_arg, parse_flags_t flags) const;
 
     // Given a name (either an option or a variable), returns any metadata for that name
     metadata_t metadata_for_name(const string_t &name) const;

@@ -1921,7 +1921,7 @@ static void test_correctness()
 }
 
 
-static metadata_t build_metadata(const char *command, const char *description, const char *condition, long tag) {
+static metadata_t build_metadata(const char *command, const char *description, const char *condition, int tag) {
     metadata_t result;
     const string_t empty;
     result.command = command ? to_string(command) : empty;
@@ -1998,23 +1998,23 @@ static void test_annotated_options()
 
 
     /* Case 0 */
-    run_1_annotated_option_test(0, 0,
+    run_1_annotated_option_test(1, 0,
                              "", // argv
                              "",
                              {d11, d12, d13});
     
-    run_1_annotated_option_test(0, 1,
+    run_1_annotated_option_test(1, 1,
                              "-a", // argv
                              "-a:True",
                              {d11, d12, d13});
     
-    run_1_annotated_option_test(0, 2,
+    run_1_annotated_option_test(1, 2,
                              "--radius foo", // argv
                              "--radius:True\n"
                              "<m>:foo\n",
                              {d11, d12, d13});
 
-    run_1_annotated_option_test(0, 3,
+    run_1_annotated_option_test(1, 3,
                              "--radius foo -color red", // argv
                              "--radius:True\n"
                              "<m>:foo\n"
@@ -2022,7 +2022,7 @@ static void test_annotated_options()
                              "<rgb>:red\n",
                              {d11, d12, d13});
     
-    run_1_annotated_option_test(0, 4,
+    run_1_annotated_option_test(1, 4,
                                 "checkout --radius foo -color red", // argv
                                 "<command>:checkout\n"
                                 "--radius:True\n"
@@ -2031,20 +2031,20 @@ static void test_annotated_options()
                                 "<rgb>:red\n",
                                 {d11, d12, d13, d14});
     
-    run_1_annotated_option_test(0, 5,
+    run_1_annotated_option_test(1, 5,
                                 "checkout --backup", // argv
                                 "<command>:checkout\n"
                                 "--backup:True\n",
                                 {d11, d12, d13, d14, d15});
     
-    run_1_annotated_option_test(0, 6,
+    run_1_annotated_option_test(1, 6,
                                 "checkout --backup=qwerty", // argv
                                 "<command>:checkout\n"
                                 "--backup:True\n"
                                 "<file>:qwerty\n",
                                 {d11, d12, d13, d14, d15});
     
-    run_1_annotated_option_test(0, 6,
+    run_1_annotated_option_test(1, 7,
                                 "checkout --backup qwerty", // argv
                                 ERROR_EXPECTED,
                                 {d11, d12, d13, d14, d15});
@@ -2081,26 +2081,62 @@ static void test_annotated_options()
         metadata_t()
     };
     
-    run_1_annotated_suggestion_test(1, 0,
+    doption_t d25 = {
+        doption_t::double_long,
+        to_string("--LONG"),
+        to_string("<LVal>"),
+        default_flags,
+        metadata_t()
+    };
+    
+    doption_t d26 = {
+        doption_t::double_long,
+        to_string("--backup"),
+        to_string("<file>"),
+        default_flags | value_is_optional,
+        metadata_t()
+    };
+    
+    run_1_annotated_suggestion_test(2, 0,
                                 "-A", // argv
                                 "-AQ -AW",
                                 {d21, d22, d23});
     
-    run_1_annotated_suggestion_test(1, 1,
+    run_1_annotated_suggestion_test(2, 1,
                                     "-A", // argv
                                     "-AC -AQ -AW",
                                     {d21, d22, d23, d24});
     
     // Shouldn't combine shorts if we have a value
-    run_1_annotated_suggestion_test(1, 2,
+    run_1_annotated_suggestion_test(2, 2,
                                     "-C ", // argv
                                     "<CVal>",
                                     {d21, d22, d23, d24});
 
-    run_1_annotated_suggestion_test(1, 3,
+    run_1_annotated_suggestion_test(2, 3,
                                     "", // argv
                                     "-A -C -Q -W",
                                     {d21, d22, d23, d24});
+    
+    run_1_annotated_suggestion_test(2, 4,
+                                    "-C", // argv
+                                    "-C<CVal>",
+                                    {d21, d22, d23, d24});
+    
+    run_1_annotated_suggestion_test(2, 5,
+                                    "--LONG=", // argv
+                                    "--LONG=<LVal>",
+                                    {d21, d22, d23, d24, d25});
+    
+    run_1_annotated_suggestion_test(2, 6,
+                                    "--backup=", // argv
+                                    "--backup=<file>",
+                                    {d21, d22, d23, d24, d25, d26});
+    
+    run_1_annotated_suggestion_test(2, 7,
+                                    "-", // argv
+                                    "--backup",
+                                    {d26});
 
 
 

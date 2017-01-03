@@ -4,9 +4,9 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <tuple>
 #include <cstring>
 #include <vector>
+#include <array>
 
 // Hide open and close brackets to avoid an annoying leading indent inside our class
 #define OPEN_DOCOPT_IMPL namespace docopt_fish {
@@ -338,7 +338,7 @@ struct option_t {
         NAME_TYPE_COUNT
     };
 
-    rstring_t names[NAME_TYPE_COUNT];
+    std::array<rstring_t, NAME_TYPE_COUNT> names;
 
     // value of the option, i.e. variable name. Empty for no value.
     rstring_t value;
@@ -389,12 +389,19 @@ struct option_t {
         return this->names[single_short];  // is empty
     }
 
-    /* We want a value if we have a non-empty value range */
+    // Indicates where this option takes a value
     bool has_value() const {
-        return !value.empty();
+        return ! value.empty();
+    }
+    
+    // Returns whether any of our names matches
+    bool has_name(const rstring_t &name) const {
+        assert(! name.empty());
+        const auto where = std::find(this->names.cbegin(), this->names.cend(), name);
+        return where != this->names.end();
     }
 
-    /* Hackish? Returns true if we share a name type */
+    // Hackish? Returns true if we share a name type
     bool name_types_overlap(const option_t &rhs) const {
         bool result = false;
         size_t idx = NAME_TYPE_COUNT;
@@ -419,8 +426,8 @@ struct option_t {
         }
         return result;
     }
-
-    /* Helper function for dumping */
+    
+    // Helper function for dumping
     string_t describe() const {
         string_t result;
         rstring_t name = this->best_name();
@@ -472,15 +479,10 @@ struct option_t {
 };
 typedef std::vector<option_t> option_list_t;
 
-inline void append_error(std::vector<error_t> *errors, size_t where, int code, const char *txt,
+inline void append_error(std::vector<error_t> *errors, size_t location, int code, const char *text,
                          size_t arg_idx = -1) {
-    if (errors != NULL) {
-        errors->resize(errors->size() + 1);
-        error_t *error = &errors->back();
-        error->location = where;
-        error->code = code;
-        error->argument_index = arg_idx;
-        error->text = txt;
+    if (errors != nullptr) {
+        errors->push_back(error_t{location, arg_idx, code, text});
     }
 }
 
