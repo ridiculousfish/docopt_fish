@@ -1547,10 +1547,11 @@ static void match(const variable_clause_t &node, match_state_t state, match_cont
     const rstring_t &name = node.word;
     if (ctx->has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
-        argument_t *arg = &state.mut_argument_values()[name];
+        // Note also that 'arg' points into an entry in the state argument value map
         const positional_argument_t &positional = ctx->acquire_next_positional(&state);
         const string_t &positional_value = ctx->argv.at(positional.idx_in_argv);
-        arg->values.push_back(positional_value);
+        option_rmap_t &args = state.mut_argument_values();
+        args[name].values.push_back(positional_value);
         ctx->try_mark_fully_consumed(&state);
         resulting_states->push_back(state.move());
     } else {
@@ -1790,9 +1791,8 @@ class docopt_impl {
         this->usages.push_back(usage_t::build_from_variables(free_variables, has_option));
     }
 
-    /* Given an option map (using rstring), convert it to an option map using the
-     * given
-     * std::basic_string type. */
+    // Given an option map (using rstring), convert it to an option map using the
+    // given std::basic_string type
     argument_parser_t::argument_map_t finalize_option_map(const option_rmap_t &map) const {
         argument_parser_t::argument_map_t result;
 
@@ -1823,7 +1823,9 @@ class docopt_impl {
         return result;
     }
 
-    /* Matches argv */
+    // Attempts to match argv against our usages
+    // We are given a list of positionals and options
+    // Return by reference the resulting option map, and list of unused arguments
     void match_argv(const string_list_t &argv, parse_flags_t flags,
                     const positional_argument_list_t &positionals,
                     const resolved_option_list_t &resolved_options, option_rmap_t *out_option_map,
@@ -1857,44 +1859,40 @@ class docopt_impl {
                 }
             }
         }
-
-        // Determine the index of the one with the fewest unused arguments
-        size_t best_state_idx = npos;
-        index_list_t best_unused_args;
-        for (size_t i = 0; i < result.size(); i++) {
-            const match_state_t &state = result.at(i);
-            index_list_t unused_args = ctx.unused_arguments(&state);
-            size_t unused_arg_count = unused_args.size();
-            if (i == 0 || unused_arg_count < best_unused_args.size()) {
-                best_state_idx = i;
-                best_unused_args = std::move(unused_args);
-                // If we got zero, we're done
-                if (unused_arg_count == 0) {
-                    break;
-                }
-            }
-        }
-
-        // Now return the winning state and its unused arguments
-        if (best_state_idx != npos) {
-            // We got a best state
-            if (out_unused_arguments != nullptr) {
-                *out_unused_arguments = std::move(best_unused_args);
-            }
-            if (out_option_map != nullptr) {
-                *out_option_map = std::move(result.at(best_state_idx).mut_argument_values());
+        
+        index_list_t unused_arguments;
+        option_rmap_t option_map;
+        if (result.empty()) {
+            // We had no states
+            // Every arg is unused
+            for (size_t i = 0; i < argv.size(); i++) {
+                unused_arguments.push_back(i);
             }
         } else {
-            // No states. Every argument is unused.
-            if (out_unused_arguments != nullptr) {
-                out_unused_arguments->clear();
-                for (size_t i = 0; i < argv.size(); i++) {
-                    out_unused_arguments->push_back(i);
+            // We got at least one state
+            // Find the one with the fewest unused arguments
+            const match_state_t *best_state = nullptr;
+            for (const match_state_t &st : result) {
+                index_list_t st_unused_args = ctx.unused_arguments(&st);
+                if (best_state == nullptr || st_unused_args.size() < unused_arguments.size()) {
+                    best_state = &st;
+                    unused_arguments = std::move(st_unused_args);
+                    // If there's no unused arguments, we're done
+                    if (unused_arguments.empty()) {
+                        break;
+                    }
                 }
             }
-            if (out_option_map != nullptr) {
-                out_option_map->clear();
-            }
+            assert(best_state != nullptr);
+            option_map = best_state->argument_values();
+        }
+        
+        // We got a best state
+        if (out_unused_arguments != nullptr) {
+            *out_unused_arguments = std::move(unused_arguments);
+        }
+        if (out_option_map != nullptr) {
+            *out_option_map = std::move(option_map);
         }
     }
 
