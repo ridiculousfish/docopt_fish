@@ -122,6 +122,15 @@ struct suggestion_t {
     // Metadata about the token
     metadata_t md;
     
+    // Position of the token to be inserted
+    // This is only used for partial arg
+    size_t offset;
+    
+    suggestion_t() : offset(0) {}
+    
+    suggestion_t(string_t t, metadata_t m, size_t off = 0):
+        token(std::move(t)), md(std::move(m)), offset(off) {}
+    
     // Helpers for sorting
     bool operator==(const suggestion_t &rhs) const {
         return token == rhs.token;
@@ -166,11 +175,6 @@ class argument_parser_t {
     // literal flag -foo, or a variable; these may be distinguished by the <> surrounding the
     // variable.
     suggestion_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const;
-
-    // Given a partial argument that may be an option, suggest completions for it
-    // This handles unseparated or =-separated options
-    // Each returned value is a variable that is meant to be appended to the argument
-    suggestion_list_t suggest_option_completion(const string_t &partial_arg, parse_flags_t flags) const;
 
     // Given a name (either an option or a variable), returns any metadata for that name
     metadata_t metadata_for_name(const string_t &name) const;

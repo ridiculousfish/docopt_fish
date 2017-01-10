@@ -552,18 +552,18 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates,
 
 // Helper function to derive a suggestion from a key and its metadata
 // Returns "empty" metadata if no metadata is stored for the given name
-static suggestion_t suggestion_for(const rstring_t &name, const metadata_map_t &md_map) {
-    suggestion_t result;
-    result.token = name.std_string();
+static suggestion_t suggestion_for(const rstring_t &name, const metadata_map_t &md_map, size_t offset = 0) {
+    metadata_t md;
     auto suggestion_iter = md_map.find(name);
     if (suggestion_iter != md_map.end()) {
-        const auto &md = suggestion_iter->second;
-        result.md.command = md.command.std_string();
-        result.md.condition = md.condition.std_string();
-        result.md.description = md.description.std_string();
-        result.md.tag = md.tag;
+        // rmd contains rstring_t, convert to string_t
+        const auto &rmd = suggestion_iter->second;
+        md.command = rmd.command.std_string();
+        md.condition = rmd.condition.std_string();
+        md.description = rmd.description.std_string();
+        md.tag = rmd.tag;
     }
-    return result;
+    return suggestion_t(name.std_string(), std::move(md), offset);
 }
 
 // Object that knows how to separate argv into options and positionals
@@ -2058,7 +2058,7 @@ class docopt_impl {
                                               is_short_option_suggestion),
                                suggestions->end());
             for (const auto &p : char_to_suggestion) {
-                suggestions->push_back({partial_str + p.first, p.second.md});
+                suggestions->emplace_back(partial_str + p.first, p.second.md);
             }
         }
     }
@@ -2066,39 +2066,45 @@ class docopt_impl {
     // Given the partial last argument, suggest something to complete it
     // If the last argument is --foo=, where foo wants a value, we will suggest the variable
     // corresponding to the value
-    suggestion_list_t suggest_option_completion(const string_t &partial_arg, parse_flags_t flags) const {
+    suggestion_list_t suggest_value_completion(const string_t &partial_arg,
+                                                parse_flags_t flags) const {
+        (void)flags;
         
         if (partial_arg.size() < 2 || partial_arg.front() != '-')
             return {};
         
         suggestion_list_t suggestions;
 
-        if (partial_arg.back() == '=') {
-            // Look for a value-carrying option with this long name
-            // For example, --foo=<value>
-            const rstring_t long_name(partial_arg, 0, partial_arg.size() - 1);
-            for (const option_t &opt : this->all_options) {
-                if (long_name == opt.names[option_t::single_long] ||
-                    long_name == opt.names[option_t::double_long]) {
-                    suggestion_t s = suggestion_for(opt.value, this->names_to_metadata);
-                    s.token = long_name.std_string() + string_t::value_type('=');
-                    suggestions.push_back(std::move(s));
-                    break;
-                }
-            }
+        rstring_t long_name, short_name;
+        const size_t short_name_len = 2; // like -D
+        const size_t equals_pos = partial_arg.find('=');
+        if (equals_pos != string_t::npos) {
+            assert(equals_pos < partial_arg.size());
+            // For example, we look like --foo=bar
+            // Look for a value-carrying option with this long name (--foo)
+            long_name = rstring_t(partial_arg, 0, equals_pos);
         } else {
-            // Try matching as an unseparated short option, like -D<Value>
-            const rstring_t short_name(partial_arg, 0, 2);
-            for (const option_t &opt : this->all_options) {
-                if (short_name == opt.names[option_t::single_short]) {
-                    suggestion_t s = suggestion_for(opt.value, this->names_to_metadata);
-                    s.token = short_name.std_string();
-                    suggestions.push_back(std::move(s));
-                    break;
-                }
-            }
+            // We will try matching as an unseparated short option, like -D<Value>
+            short_name = rstring_t(partial_arg, 0, short_name_len);
         }
         
+        for (const option_t &opt : this->all_options) {
+            if (! opt.has_value())
+                continue;
+            
+            if (! long_name.empty()) {
+                if (long_name == opt.names[option_t::single_long] ||
+                    long_name == opt.names[option_t::double_long]) {
+                    suggestions.push_back(suggestion_for(opt.value, this->names_to_metadata, equals_pos + 1));
+                    break;
+                }
+            }
+            
+            if (! short_name.empty() && short_name == opt.names[option_t::single_short]) {
+                suggestions.push_back(suggestion_for(opt.value, this->names_to_metadata, short_name_len));
+                break;
+            }
+        }
         return suggestions;
     }
     
@@ -2113,6 +2119,15 @@ class docopt_impl {
         if (! argv.empty()) {
             partial_last_arg = argv.back();
             argv.pop_back();
+        }
+        
+        // Try completing a value for the last partial argument
+        // This includes both --foo=bar... and -DND...
+        if (! partial_last_arg.empty()) {
+            suggestion_list_t value_suggestions = this->suggest_value_completion(partial_last_arg, flags);
+            if (! value_suggestions.empty()) {
+                return value_suggestions;
+            }
         }
         
 #warning Rationalize option separators
@@ -2210,10 +2225,6 @@ std::vector<argument_status_t> argument_parser_t::validate_arguments(
 suggestion_list_t argument_parser_t::suggest_next_argument(const string_list_t &argv,
                                                            parse_flags_t flags) const {
     return impl->suggest_next_argument(argv, flags);
-}
-
-suggestion_list_t argument_parser_t::suggest_option_completion(const string_t &partial_arg, parse_flags_t flags) const {
-    return impl->suggest_option_completion(partial_arg, flags);
 }
 
 metadata_t argument_parser_t::metadata_for_name(const string_t &var) const {

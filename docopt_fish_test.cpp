@@ -362,14 +362,14 @@ static void run_1_annotated_option_test(unsigned long test_idx, unsigned long ar
     }
 }
 
-static void run_1_annotated_suggestion_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *joined_expected_results, const std::vector<annotated_option_t> &dopts) {
+static void run_1_annotated_suggestion_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, std::pair<const char *, size_t> expected_token_and_offset, const std::vector<annotated_option_t> &dopts) {
     
     // Separate argv by spaces
     // Ensure we have at least one argument (partial last)
     string_list_t argv = split(to_string(joined_argv), " ");
     if (argv.empty()) argv.push_back(string_t());
     
-    // Prepend the program name for every argument
+    // Prepend the program name for every test case
     argv.insert(argv.begin(), to_string("prog"));
     
     /* Perform the parsing */
@@ -378,6 +378,8 @@ static void run_1_annotated_suggestion_test(unsigned long test_idx, unsigned lon
     argument_parser_t parser;
     parser.set_options(dopts);
     suggestion_list_t results = parser.suggest_next_argument(argv, 0);
+    
+    const char *joined_expected_results = expected_token_and_offset.first;
     
     bool expects_error = ! strcmp(joined_expected_results, ERROR_EXPECTED);
     bool did_error = ! unused_args.empty() || ! error_list.empty();
@@ -398,7 +400,20 @@ static void run_1_annotated_suggestion_test(unsigned long test_idx, unsigned lon
                 err("Annotated suggestion test %lu.%lu: Wrong suggestions. Expected '%ls', got '%ls'", test_idx, arg_idx, wide(expected), wide(actual));
             }
         }
+        
+        // Verify offsets
+        size_t expected_offset = expected_token_and_offset.second;
+        for (const suggestion_t &s : results) {
+            if (s.offset != expected_offset) {
+                err("Annotated suggestion test %lu.%lu: Wrong offset. Expected %lu, got %lu", test_idx, arg_idx, expected_offset, s.offset);
+                break;
+            }
+        }
     }
+}
+
+static void run_1_annotated_suggestion_test(unsigned long test_idx, unsigned long arg_idx, const char *joined_argv, const char *expected_token, const std::vector<annotated_option_t> &dopts) {
+    run_1_annotated_suggestion_test(test_idx, arg_idx, joined_argv, {expected_token, 0}, dopts);
 }
 
 
@@ -2120,20 +2135,41 @@ static void test_annotated_options()
     
     run_1_annotated_suggestion_test(2, 4,
                                     "-C", // argv
-                                    "-C<CVal>",
+                                    {"<CVal>", 2},
                                     {d21, d22, d23, d24});
     
     run_1_annotated_suggestion_test(2, 5,
+                                  "-CX", // argv
+                                  {"<CVal>", 2},
+                                  {d21, d22, d23, d24});
+
+    run_1_annotated_suggestion_test(2, 6,
+                                  "-CXX", // argv
+                                  {"<CVal>", 2},
+                                  {d21, d22, d23, d24});
+
+
+    run_1_annotated_suggestion_test(2, 7,
                                     "--LONG=", // argv
-                                    "--LONG=<LVal>",
+                                    {"<LVal>", 7},
                                     {d21, d22, d23, d24, d25});
     
-    run_1_annotated_suggestion_test(2, 6,
+    run_1_annotated_suggestion_test(2, 8,
                                     "--backup=", // argv
-                                    "--backup=<file>",
+                                    {"<file>", 9},
                                     {d21, d22, d23, d24, d25, d26});
     
-    run_1_annotated_suggestion_test(2, 7,
+    run_1_annotated_suggestion_test(2, 9,
+                                  "--backup=X", // argv
+                                  {"<file>", 9},
+                                  {d21, d22, d23, d24, d25, d26});
+
+    run_1_annotated_suggestion_test(2, 10,
+                                  "--backup=XX", // argv
+                                  {"<file>", 9},
+                                  {d21, d22, d23, d24, d25, d26});
+
+    run_1_annotated_suggestion_test(2, 11,
                                     "-", // argv
                                     "--backup",
                                     {d26});
