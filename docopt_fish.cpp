@@ -55,7 +55,7 @@ static void append_token_error(error_list_t *errors, const rstring_t &token, int
 
 // Annoying helper unction to move-append one vector to a receiver
 template<typename T>
-void move_append(std::vector<T> &&victim, std::vector<T> *receiver) {
+void append(std::vector<T> &&victim, std::vector<T> *receiver) {
     if (receiver)
         std::move(victim.begin(), victim.end(), std::back_inserter(*receiver));
 }
@@ -560,6 +560,12 @@ static suggestion_t suggestion_for(const rstring_t &name, const metadata_map_t &
     return suggestion_t(name.std_string(), std::move(md), offset);
 }
 
+struct arg_classification_t {
+    positional_argument_list_t positionals;
+    resolved_option_list_t resolved_options;
+    size_t double_dash_idx = -1;
+};
+
 // Object that knows how to separate argv into options and positionals
 // This is stack-allocated and transient
 class argv_separator_t {
@@ -571,13 +577,11 @@ class argv_separator_t {
 
     // separator internal state
     size_t idx = 0;
-    bool saw_double_dash = false;
     
     // output of our separator
-    positional_argument_list_t positionals;
-    resolved_option_list_t resolved_options;
+    arg_classification_t classification;
     suggestion_t suggestion;
-
+    
     const string_t &arg() const {
         return this->argv.at(this->idx);
     }
@@ -618,9 +622,9 @@ class argv_separator_t {
     
 public:
     
-    static void extract_options_and_positionals(const string_list_t &argv, const option_list_t &options, const metadata_map_t &md_map, parse_flags_t flags,
-                                                 positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options,
-                                                 error_list_t *out_errors, suggestion_t *out_suggestion = nullptr);
+    static arg_classification_t classify_arguments(const string_list_t &argv, const option_list_t &options,
+                                                     const metadata_map_t &md_map, parse_flags_t flags,
+                                                     error_list_t *out_errors, suggestion_t *out_suggestion = nullptr);
 
 };
 
@@ -707,7 +711,7 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
         }
 
         if (!errored) {
-            this->resolved_options.emplace_back(match, name_idx, arg_index, value);
+            this->classification.resolved_options.emplace_back(match, name_idx, arg_index, value);
             this->idx += 1;
         }
     }
@@ -808,7 +812,7 @@ bool argv_separator_t::parse_unseparated_short_options(error_list_t *out_errors)
                 val_idx = val_idx_for_last_option;
             }
             const option_t &opt = options_for_argument.at(i);
-            this->resolved_options.emplace_back(opt, name_idx, val_idx, value);
+            this->classification.resolved_options.emplace_back(opt, name_idx, val_idx, value);
         }
 
         // Update the index
@@ -820,13 +824,14 @@ bool argv_separator_t::parse_unseparated_short_options(error_list_t *out_errors)
 void argv_separator_t::parse_next_arg(error_list_t *out_errors) {
     assert(this->idx < argv.size());
     
-    if (this->saw_double_dash) {
-        // double-dash means everything remaining is positional
-        this->positionals.emplace_back(this->idx);
+    if (this->classification.double_dash_idx != npos) {
+        // we saw a double-dash
+        // everything remaining is positional
+        this->classification.positionals.emplace_back(this->idx);
         this->idx += 1;
     } else if (is_double_dash(this->arg())) {
         // Literal --. The remaining arguments are positional.
-        this->saw_double_dash = true;
+        this->classification.double_dash_idx = this->idx;
         this->idx += 1;
     } else if (this->arg_has_prefix("--")) {
         // Leading long option
@@ -860,15 +865,15 @@ void argv_separator_t::parse_next_arg(error_list_t *out_errors) {
             // short option with a value. If there is a short option -D, then it is
             // more likely that the error from the short option parsing is what we
             // want. So append our short errors first.
-            move_append(std::move(short_errors), out_errors);
-            move_append(std::move(long_errors), out_errors);
+            append(std::move(short_errors), out_errors);
+            append(std::move(long_errors), out_errors);
             this->idx += 1;
         }
     } else {
         // Positional argument
         // Note this includes just single-dash arguments, which are often a
         // stand-in for stdin
-        this->positionals.emplace_back(this->idx);
+        this->classification.positionals.emplace_back(this->idx);
         this->idx += 1;
     }
 }
@@ -876,22 +881,18 @@ void argv_separator_t::parse_next_arg(error_list_t *out_errors) {
 // The Python implementation calls this "parse_argv"
 // Given an argv list, a set of options, and a set of flags,
 // parse the argv into a set of positionals, options, errors, and optionally a suggestion
-// last_argument_is_partial tracks whether the last argument is being used for suggestions
-void argv_separator_t::extract_options_and_positionals(
-    const string_list_t &argv, const option_list_t &options, const metadata_map_t &md_map, parse_flags_t flags,
-    positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options,
-    error_list_t *out_errors, suggestion_t *out_suggestion) {
+arg_classification_t argv_separator_t::classify_arguments(const string_list_t &argv, const option_list_t &options,
+                                                          const metadata_map_t &md_map, parse_flags_t flags,
+                                                          error_list_t *out_errors, suggestion_t *out_suggestion) {
     argv_separator_t st(argv, options, md_map, flags);
     while (st.idx < argv.size()) {
         st.parse_next_arg(out_errors);
     }
     
-    if (out_positionals)
-        *out_positionals = std::move(st.positionals);
-    if (out_resolved_options)
-        *out_resolved_options = std::move(st.resolved_options);
     if (out_suggestion)
         *out_suggestion = std::move(st.suggestion);
+    
+    return std::move(st.classification);
 }
 
 #pragma mark -
@@ -1027,13 +1028,12 @@ struct match_context_t {
     // Note: these are stored references.
     // Match context objects are expected to be transient and stack-allocated.
     const option_list_t &shortcut_options;
-    const positional_argument_list_t &positionals;
-    const resolved_option_list_t &resolved_options;
+    const arg_classification_t &aclass;
     const string_list_t &argv;
 
     bool has_more_positionals(const match_state_t &state) const {
-        assert(state.next_positional_index <= this->positionals.size());
-        return state.next_positional_index < this->positionals.size();
+        assert(state.next_positional_index <= this->aclass.positionals.size());
+        return state.next_positional_index < this->aclass.positionals.size();
     }
 
     // Returns the indexes in argv of the arguments that were unused
@@ -1049,27 +1049,31 @@ struct match_context_t {
         // As we walk over positionals and options, we will mark the corresponding
         // index as used.
         // At the end, the unset bits are the unused arguments
-        std::vector<bool> used_indexes(this->argv.size(), false);
+        std::vector<bool> used_argv_indexes(this->argv.size(), false);
+        
+        // consumed_options is a vector parallel to resolved_options,
+        // which tracks whether each resolved_option was used
+        const std::vector<bool> &copts = state->consumed_options();
 
-        // Walk over used positionals. next_positional_index is the first unused
-        // one.
+        // Walk over used positionals.
+        // next_positional_index is the first unused one
         for (size_t i = 0; i < state->next_positional_index; i++) {
-            used_indexes.at(this->positionals.at(i).idx_in_argv) = true;
+            used_argv_indexes.at(this->aclass.positionals.at(i).idx_in_argv) = true;
         }
 
         // Walk over options matched during tree descent.
         // We should have one bit per option
-        assert(state->consumed_options().size() == this->resolved_options.size());
-        for (size_t i = 0; i < state->consumed_options().size(); i++) {
-            if (state->consumed_options().at(i)) {
+        assert(copts.size() == this->aclass.resolved_options.size());
+        for (size_t i = 0; i < copts.size(); i++) {
+            if (copts.at(i)) {
                 // This option was used. The name index is definitely used. The value
                 // index is also
                 // used, if it's not npos (note that it may be the same as the name
                 // index)
-                const resolved_option_t &opt = this->resolved_options.at(i);
-                used_indexes.at(opt.name_idx_in_argv) = true;
+                const resolved_option_t &opt = this->aclass.resolved_options.at(i);
+                used_argv_indexes.at(opt.name_idx_in_argv) = true;
                 if (opt.value_idx_in_argv != npos) {
-                    used_indexes.at(opt.value_idx_in_argv) = true;
+                    used_argv_indexes.at(opt.value_idx_in_argv) = true;
                 }
             }
         }
@@ -1078,25 +1082,22 @@ struct match_context_t {
         // An argument may be both matched and unmatched, i.e. if "-vv" is parsed
         // into two short options.
         // In that case, we want to mark it as unmatched.
-        for (size_t i = 0; i < state->consumed_options().size(); i++) {
-            if (!state->consumed_options().at(i)) {
-                const resolved_option_t &opt = this->resolved_options.at(i);
-                used_indexes.at(opt.name_idx_in_argv) = false;
+        for (size_t i = 0; i < copts.size(); i++) {
+            if (!copts.at(i)) {
+                const resolved_option_t &opt = this->aclass.resolved_options.at(i);
+                used_argv_indexes.at(opt.name_idx_in_argv) = false;
             }
         }
 
-        // Don't report the first -- as unused
-        for (size_t i = 0; i < this->argv.size(); i++) {
-            if (is_double_dash(this->argv.at(i))) {
-                used_indexes.at(i) = true;
-                break;
-            }
+        // Don't report the double-dash argument as unused
+        if (this->aclass.double_dash_idx != npos) {
+            used_argv_indexes.at(this->aclass.double_dash_idx) = true;
         }
 
         // Extract the unused indexes from the bitmap of used arguments
         index_list_t unused_argv_idxs;
-        for (size_t i = 0; i < used_indexes.size(); i++) {
-            if (!used_indexes.at(i)) {
+        for (size_t i = 0; i < used_argv_indexes.size(); i++) {
+            if (!used_argv_indexes.at(i)) {
                 unused_argv_idxs.push_back(i);
             }
         }
@@ -1104,22 +1105,21 @@ struct match_context_t {
     }
 
     const positional_argument_t &next_positional(match_state_t *state) const {
-        assert(state->next_positional_index < positionals.size());
-        return positionals.at(state->next_positional_index);
+        assert(state->next_positional_index < this->aclass.positionals.size());
+        return this->aclass.positionals.at(state->next_positional_index);
     }
 
     const positional_argument_t &acquire_next_positional(match_state_t *state) const {
-        assert(state->next_positional_index < positionals.size());
-        return positionals.at(state->next_positional_index++);
+        assert(state->next_positional_index < this->aclass.positionals.size());
+        return this->aclass.positionals.at(state->next_positional_index++);
     }
 
     match_context_t(parse_flags_t f, const option_list_t &shortcut_opts,
-                    const positional_argument_list_t &p, const resolved_option_list_t &r,
+                    const arg_classification_t &classification,
                     const string_list_t &av)
         : flags(f),
           shortcut_options(shortcut_opts),
-          positionals(p),
-          resolved_options(r),
+          aclass(classification),
           argv(av) {}
 
     /* If we want to stop a search and this state has consumed everything, stop
@@ -1395,12 +1395,12 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
     for (const option_t &opt_in_doc : options_in_doc) {
         // Find the matching option from the resolved option list (i.e. argv)
         size_t resolved_opt_idx = npos;
-        for (size_t i = 0; i < ctx->resolved_options.size(); i++) {
+        for (size_t i = 0; i < ctx->aclass.resolved_options.size(); i++) {
             // Skip ones that have already been consumed
             if (!state->consumed_options().at(i)) {
                 // See if the option from argv has the same key range as the option in
                 // the document
-                if (ctx->resolved_options.at(i).option.has_same_name(opt_in_doc)) {
+                if (ctx->aclass.resolved_options.at(i).option.has_same_name(opt_in_doc)) {
                     resolved_opt_idx = i;
                     break;
                 }
@@ -1414,7 +1414,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
             // We have two things to set:
             //  - The option name, like -foo
             //  - The option's argument value (if any)
-            const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
+            const resolved_option_t &resolved_opt = ctx->aclass.resolved_options.at(resolved_opt_idx);
             const rstring_t &name = opt_in_doc.best_name();
 
             // Update the option value, creating it if necessary
@@ -1791,15 +1791,15 @@ class docopt_impl {
     // We are given a list of positionals and options
     // Return by reference the resulting option map, and list of unused arguments
     void match_argv(const string_list_t &argv, parse_flags_t flags,
-                    const positional_argument_list_t &positionals,
-                    const resolved_option_list_t &resolved_options, option_rmap_t *out_option_map,
+                    const arg_classification_t &aclass,
+                    option_rmap_t *out_option_map,
                     index_list_t *out_unused_arguments) const {
         /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
         match_context_t ctx(flags | flag_stop_after_consuming_everything, this->shortcut_options,
-                            positionals, resolved_options, argv);
+                            aclass, argv);
 
         match_state_list_t result;
-        match(this->usages, match_state_t(resolved_options.size()), &ctx, &result);
+        match(this->usages, match_state_t(aclass.resolved_options.size()), &ctx, &result);
 
         // Illustration of some logging to help debug matching
         const bool log_stuff = false;
@@ -1927,14 +1927,9 @@ class docopt_impl {
     void best_assignment_for_argv(const string_list_t &argv, parse_flags_t flags,
                                   error_list_t *out_errors, index_list_t *out_unused_arguments,
                                   option_rmap_t *out_option_map) const {
-        positional_argument_list_t positionals;
-        resolved_option_list_t resolved_options;
-
         // Extract positionals and arguments from argv, then produce an option map
-        argv_separator_t::extract_options_and_positionals(argv, all_options, names_to_metadata, flags, &positionals,
-                                                   &resolved_options, out_errors);
-        this->match_argv(argv, flags, positionals, resolved_options, out_option_map,
-                         out_unused_arguments);
+        arg_classification_t aclass = argv_separator_t::classify_arguments(argv, all_options, names_to_metadata, flags, out_errors);
+        this->match_argv(argv, flags, std::move(aclass), out_option_map, out_unused_arguments);
     }
 
     // Given a list of suggestions and a partial argument, modify the suggestions by combining short options
@@ -2095,11 +2090,8 @@ class docopt_impl {
         }
         
         suggestion_t suggestion;
-        positional_argument_list_t positionals;
-        resolved_option_list_t resolved_options;
-        argv_separator_t::extract_options_and_positionals(argv, all_options, names_to_metadata, flags, &positionals,
-                                                   &resolved_options, nullptr /* errors */,
-                                                   &suggestion);
+        arg_classification_t aclass = argv_separator_t::classify_arguments(argv, all_options, names_to_metadata,
+                                                                           flags, nullptr /* errors */, &suggestion);
 
         // If we got a suggestion, it means that the last argument was of the form
         // --foo, where --foo wants a value. That's all we care about.
@@ -2107,9 +2099,9 @@ class docopt_impl {
             return {std::move(suggestion)};
         }
         
-        match_context_t ctx(flags, shortcut_options, positionals, resolved_options, argv);
+        match_context_t ctx(flags, shortcut_options, aclass, argv);
         match_state_list_t states;
-        match(this->usages, match_state_t(resolved_options.size()), &ctx, &states);
+        match(this->usages, match_state_t(aclass.resolved_options.size()), &ctx, &states);
 
         // Find the state(s) with the fewest unused arguments,
         // and then insert all of their suggestions into a set
