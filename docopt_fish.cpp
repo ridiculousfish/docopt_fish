@@ -996,8 +996,9 @@ struct match_state_t {
         size_t result = this->next_positional_index;
 
         // Add in arguments by counting set bits in the bitmap
-        result +=
-            std::accumulate(this->consumed_options().begin(), this->consumed_options().end(), 0);
+        result += std::accumulate(this->consumed_options().cbegin(),
+                                  this->consumed_options().cend(),
+                                  0);
 
         // Add in number of suggestions
         result += suggested_next_arguments.size();
@@ -1126,8 +1127,8 @@ struct match_context_t {
           aclass(classification),
           argv(av) {}
 
-    /* If we want to stop a search and this state has consumed everything, stop
-     * the search */
+    // If we want to stop a search and this state has consumed everything, stop
+    // the search
     void try_mark_fully_consumed(match_state_t *state) const {
         if ((this->flags & flag_stop_after_consuming_everything) &&
             this->has_consumed_everything(*state)) {
@@ -1158,28 +1159,27 @@ static void match(const variable_clause_t &node, match_state_t state, match_cont
 static bool match_options(const option_list_t &options_in_doc, match_state_t *state,
                           const match_context_t *ctx);
 
-// TODO: comment me
+// Given a node and list of states, match the node for each state in the list
+// Append the results to the resulting_states
+// If require_progress is true, then discard new states that don't make progress
 template <typename T>
-static void match_list(const T &node, match_state_list_t *incoming_state_list, match_context_t *ctx,
+static void match_list(const T &node, match_state_list_t &&incoming_state_list, match_context_t *ctx,
                        match_state_list_t *resulting_states, bool require_progress = false) {
-    for (size_t i = 0; i < incoming_state_list->size(); i++) {
-        match_state_t *state = &incoming_state_list->at(i);
-        /* If we require that this makes progress, then get the current progress so
-         * we can compare
-         */
+    for (match_state_t &state : incoming_state_list) {
+        // If we require that this makes progress, then get the current progress so
+        // we can compare
         size_t init_progress = npos;
         size_t init_size = -1;
         if (require_progress) {
-            init_progress = state->progress();
+            init_progress = state.progress();
             init_size = resulting_states->size();
         }
 
-        match(node, state->move(), ctx, resulting_states);
+        match(node, state.move(), ctx, resulting_states);
 
         if (require_progress) {
             // Keep only those results that have increased in progress. States after
-            // init_size are
-            // new.
+            // init_size are new.
             size_t idx = resulting_states->size();
             assert(idx >= init_size);
             while (idx-- > init_size) {  // last processed idx will be init_size
@@ -1255,16 +1255,16 @@ static void match(const expression_list_t &node, match_state_t state, match_cont
         // Middle expressions
         for (size_t i = 1; i + 1 < count; i++) {
             match_state_list_t new_states;
-            match_list(node.expressions.at(i), &intermed_state_list, ctx, &new_states);
-            intermed_state_list.swap(new_states);
+            match_list(node.expressions.at(i), std::move(intermed_state_list), ctx, &new_states);
+            intermed_state_list = std::move(new_states);
         }
         // Last expression
-        match_list(node.expressions.at(count - 1), &intermed_state_list, ctx, resulting_states);
+        match_list(node.expressions.at(count - 1), std::move(intermed_state_list), ctx, resulting_states);
     }
 }
 
-static void match(const alternation_list_t &node, match_state_t state, match_context_t *ctx,
-                  match_state_list_t *resulting_states) {
+static void match(const alternation_list_t &node, match_state_t state,
+                  match_context_t *ctx, match_state_list_t *resulting_states) {
     size_t count = node.alternations.size();
     if (count == 0) {
         return;
@@ -1277,25 +1277,23 @@ static void match(const alternation_list_t &node, match_state_t state, match_con
 
 // Ellipsis helper
 // Given a node that has ellipsis, the set of resulting states, and an initial
-// prior state count,
-// match the node repeatedly until we stop making progress
+// prior state count, match the node repeatedly until we stop making progress
 template <typename Node>
 static void repeat_matching(const Node &node, size_t init_prior_state_count, match_context_t *ctx,
                             match_state_list_t *resulting_states) {
     assert(resulting_states->size() >= init_prior_state_count);
-    match_state_list_t intermediate_states;
     // Get the number of existing states
     // Keep going until we stop getting new states
     size_t prior_state_count = init_prior_state_count;
     while (prior_state_count < resulting_states->size()) {
         // Get a vector of intermediate states
-        intermediate_states.clear();
+        match_state_list_t intermediate_states;
         intermediate_states.reserve(resulting_states->size() - prior_state_count);
         for (size_t i = prior_state_count; i < resulting_states->size(); i++) {
             intermediate_states.push_back(resulting_states->at(i).copy());
         }
         prior_state_count = resulting_states->size();
-        match_list(node, &intermediate_states, ctx, resulting_states, true /* require progress */);
+        match_list(node, std::move(intermediate_states), ctx, resulting_states, true /* require progress */);
     }
 }
 
@@ -1306,26 +1304,19 @@ static void match(const expression_t &node, match_state_t state, match_context_t
 
     switch (node.production) {
         case 0: {
-            /* This is a simple clause which may have ellipsis, like foo...
-             If we have ellipsis, we match one time, and then construct a sequence of
-             'intermediate
-             state lists'.
-             An intermediate state represents the result of matching N times. Each time
-             we construct
-             a new intermediate state, we append (copy) all of its states into the
-             result; thus we
-             may
-             match one time, two times, three times...
-             We stop when we get no more matches, which usually happens when we run out
-             of
-             positionals.
-             */
+            // This is a simple clause which may have ellipsis, like foo...
+            // If we have ellipsis, we match one time, and then construct a sequence of
+            // 'intermediate state lists'.
+            //  An intermediate state represents the result of matching N times. Each time
+            //  we construct a new intermediate state, we append (copy) all of its states into the
+            //  result; thus we may match one time, two times, three times...
+            //  We stop when we get no more matches, which usually happens when we run out
+            //  of positionals.
             assert(node.simple_clause.get() != nullptr);
             size_t prior_state_count = resulting_states->size();
             match(*node.simple_clause, state.move(), ctx, resulting_states);
-            /* Now we know that all states starting at state_count_before are newly
-             * added. If we
-             * have ellipsis, go until we stop getting new states. */
+            // Now we know that all states starting at state_count_before are newly added.
+            // If we have ellipsis, go until we stop getting new states.
             if (has_ellipsis) {
                 repeat_matching(*node.simple_clause, prior_state_count, ctx, resulting_states);
             }
@@ -1333,11 +1324,8 @@ static void match(const expression_t &node, match_state_t state, match_context_t
         }
 
         case 1: {
-            /* This is a parenthesized clause which may have ellipsis, like (foo)...
-             Same algorithm as the simple clause above.
-             TODO: this may loop forever with states that do not consume any values,
-             e.g. ([foo])...
-             */
+            // This is a parenthesized clause which may have ellipsis, like (foo)...
+            // Same algorithm as the simple clause above.
             size_t prior_state_count = resulting_states->size();
             assert(node.alternation_list.get() != nullptr);
             match(*node.alternation_list, state.move(), ctx, resulting_states);
@@ -1348,11 +1336,9 @@ static void match(const expression_t &node, match_state_t state, match_context_t
         }
 
         case 2: {
-            /* This is a square-bracketed clause which may have ellipsis, like [foo]...
-             Same algorithm as the simple clause above, except that we also append the
-             initial state
-             as a not-taken branch.
-             */
+            // This is a square-bracketed clause which may have ellipsis, like [foo]...
+            // Same algorithm as the simple clause above, except that we also append the
+            // initial state as a not-taken branch.
             assert(node.alternation_list.get() != nullptr);
             resulting_states->push_back(state.copy());  // append the not-taken-branch
             size_t prior_state_count = resulting_states->size();
