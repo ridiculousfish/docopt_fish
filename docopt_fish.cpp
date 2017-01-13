@@ -1051,6 +1051,15 @@ struct match_context_t {
         // At the end, the unset bits are the unused arguments
         std::vector<bool> used_argv_indexes(this->argv.size(), false);
         
+        auto mark_used = [&](size_t idx) {
+            if (idx != npos)
+                used_argv_indexes.at(idx) = true;
+        };
+        auto mark_unused = [&](size_t idx) {
+            if (idx != npos)
+                used_argv_indexes.at(idx) = false;
+        };
+        
         // consumed_options is a vector parallel to resolved_options,
         // which tracks whether each resolved_option was used
         const std::vector<bool> &copts = state->consumed_options();
@@ -1058,7 +1067,7 @@ struct match_context_t {
         // Walk over used positionals.
         // next_positional_index is the first unused one
         for (size_t i = 0; i < state->next_positional_index; i++) {
-            used_argv_indexes.at(this->aclass.positionals.at(i).idx_in_argv) = true;
+            mark_used(this->aclass.positionals.at(i).idx_in_argv);
         }
 
         // Walk over options matched during tree descent.
@@ -1067,14 +1076,11 @@ struct match_context_t {
         for (size_t i = 0; i < copts.size(); i++) {
             if (copts.at(i)) {
                 // This option was used. The name index is definitely used. The value
-                // index is also
-                // used, if it's not npos (note that it may be the same as the name
-                // index)
+                // index is also used, if it's not npos
+                // (note that it may be the same as the name index)
                 const resolved_option_t &opt = this->aclass.resolved_options.at(i);
-                used_argv_indexes.at(opt.name_idx_in_argv) = true;
-                if (opt.value_idx_in_argv != npos) {
-                    used_argv_indexes.at(opt.value_idx_in_argv) = true;
-                }
+                mark_used(opt.name_idx_in_argv);
+                mark_used(opt.value_idx_in_argv);
             }
         }
 
@@ -1085,14 +1091,12 @@ struct match_context_t {
         for (size_t i = 0; i < copts.size(); i++) {
             if (!copts.at(i)) {
                 const resolved_option_t &opt = this->aclass.resolved_options.at(i);
-                used_argv_indexes.at(opt.name_idx_in_argv) = false;
+                mark_unused(opt.name_idx_in_argv);
             }
         }
 
         // Don't report the double-dash argument as unused
-        if (this->aclass.double_dash_idx != npos) {
-            used_argv_indexes.at(this->aclass.double_dash_idx) = true;
-        }
+        mark_used(this->aclass.double_dash_idx);
 
         // Extract the unused indexes from the bitmap of used arguments
         index_list_t unused_argv_idxs;
