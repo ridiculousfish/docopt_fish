@@ -1011,6 +1011,11 @@ typedef std::vector<match_state_t> match_state_list_t;
 
 struct match_context_t {
    private:
+
+    // No copying
+    match_context_t(const match_context_t &) = delete;
+    void operator=(const match_context_t &) = delete;
+
     // Returns true if the state has consumed all positionals and options
     bool has_consumed_everything(const match_state_t &state) const {
         if (has_more_positionals(state)) {
@@ -1137,33 +1142,33 @@ struct match_context_t {
     }
 };
 
-static void match(const vector<usage_t> &usages, match_state_t state, match_context_t *ctx,
+static void match(const vector<usage_t> &usages, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const usage_t &node, match_state_t state, match_context_t *ctx,
+static void match(const usage_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const expression_list_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_list_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const alternation_list_t &node, match_state_t state, match_context_t *ctx,
+static void match(const alternation_list_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const expression_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const simple_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const simple_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const option_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const option_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const fixed_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const fixed_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const variable_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const variable_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
 
 static bool match_options(const option_list_t &options_in_doc, match_state_t *state,
-                          const match_context_t *ctx);
+                          const match_context_t &ctx);
 
 // Given a node and list of states, match the node for each state in the list
 // Append the results to the resulting_states
 // If require_progress is true, then discard new states that don't make progress
 template <typename T>
-static void match_list(const T &node, match_state_list_t &&incoming_state_list, match_context_t *ctx,
+static void match_list(const T &node, match_state_list_t &&incoming_state_list, const match_context_t &ctx,
                        match_state_list_t *resulting_states, bool require_progress = false) {
     for (match_state_t &state : incoming_state_list) {
         // If we require that this makes progress, then get the current progress so
@@ -1194,7 +1199,7 @@ static void match_list(const T &node, match_state_list_t &&incoming_state_list, 
     }
 }
 
-static void match(const vector<usage_t> &usages, match_state_t state, match_context_t *ctx,
+static void match(const vector<usage_t> &usages, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Elide the copy in the last one
     size_t count = usages.size();
@@ -1206,7 +1211,7 @@ static void match(const vector<usage_t> &usages, match_state_t state, match_cont
     for (size_t i = 0; i + 1 < count && !fully_consumed; i++) {
         match(usages.at(i), state.copy(), ctx, resulting_states);
 
-        if (ctx->flags & flag_stop_after_consuming_everything) {
+        if (ctx.flags & flag_stop_after_consuming_everything) {
             for (const match_state_t &ms : *resulting_states) {
                 if (ms.fully_consumed) {
                     fully_consumed = true;
@@ -1220,9 +1225,9 @@ static void match(const vector<usage_t> &usages, match_state_t state, match_cont
     }
 }
 
-static void match(const usage_t &node, match_state_t state, match_context_t *ctx,
+static void match(const usage_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
-    if (!ctx->has_more_positionals(state)) {
+    if (!ctx.has_more_positionals(state)) {
         // todo: error handling
         return;
     }
@@ -1233,13 +1238,13 @@ static void match(const usage_t &node, match_state_t state, match_context_t *ctx
     }
 
     // Program name
-    ctx->acquire_next_positional(&state);
+    ctx.acquire_next_positional(&state);
 
     // Match against our contents
     match(node.alternation_list, state.move(), ctx, resulting_states);
 }
 
-static void match(const expression_list_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_list_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     size_t count = node.expressions.size();
     if (count == 0) {
@@ -1264,7 +1269,7 @@ static void match(const expression_list_t &node, match_state_t state, match_cont
 }
 
 static void match(const alternation_list_t &node, match_state_t state,
-                  match_context_t *ctx, match_state_list_t *resulting_states) {
+                  const match_context_t &ctx, match_state_list_t *resulting_states) {
     size_t count = node.alternations.size();
     if (count == 0) {
         return;
@@ -1279,7 +1284,7 @@ static void match(const alternation_list_t &node, match_state_t state,
 // Given a node that has ellipsis, the set of resulting states, and an initial
 // prior state count, match the node repeatedly until we stop making progress
 template <typename Node>
-static void repeat_matching(const Node &node, size_t init_prior_state_count, match_context_t *ctx,
+static void repeat_matching(const Node &node, size_t init_prior_state_count, const match_context_t &ctx,
                             match_state_list_t *resulting_states) {
     assert(resulting_states->size() >= init_prior_state_count);
     // Get the number of existing states
@@ -1297,7 +1302,7 @@ static void repeat_matching(const Node &node, size_t init_prior_state_count, mat
     }
 }
 
-static void match(const expression_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = node.opt_ellipsis.present;
@@ -1352,10 +1357,10 @@ static void match(const expression_t &node, match_state_t state, match_context_t
         case 3: {
             // This is the [options] clause. It does not have ellipsis.
             assert(node.options_shortcut.present);
-            if (!match_options(ctx->shortcut_options, &state, ctx)) {
+            if (!match_options(ctx.shortcut_options, &state, ctx)) {
                 // No match, but matches are not required
-                if (ctx->flags & flag_generate_suggestions) {
-                    for (const option_t &opt : ctx->shortcut_options) {
+                if (ctx.flags & flag_generate_suggestions) {
+                    for (const option_t &opt : ctx.shortcut_options) {
                         state.suggested_next_arguments.insert(opt.best_name());
                     }
                 }
@@ -1372,7 +1377,7 @@ static void match(const expression_t &node, match_state_t state, match_context_t
 // Match the options in the options list, updating the state
 // This returns true if we match at least one
 static bool match_options(const option_list_t &options_in_doc, match_state_t *state,
-                          const match_context_t *ctx) {
+                          const match_context_t &ctx) {
     bool successful_match = false;
     bool made_suggestion = false;
 
@@ -1385,12 +1390,12 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
     for (const option_t &opt_in_doc : options_in_doc) {
         // Find the matching option from the resolved option list (i.e. argv)
         size_t resolved_opt_idx = npos;
-        for (size_t i = 0; i < ctx->aclass.resolved_options.size(); i++) {
+        for (size_t i = 0; i < ctx.aclass.resolved_options.size(); i++) {
             // Skip ones that have already been consumed
             if (!state->consumed_options().at(i)) {
                 // See if the option from argv has the same key range as the option in
                 // the document
-                if (ctx->aclass.resolved_options.at(i).option.has_same_name(opt_in_doc)) {
+                if (ctx.aclass.resolved_options.at(i).option.has_same_name(opt_in_doc)) {
                     resolved_opt_idx = i;
                     break;
                 }
@@ -1404,7 +1409,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
             // We have two things to set:
             //  - The option name, like -foo
             //  - The option's argument value (if any)
-            const resolved_option_t &resolved_opt = ctx->aclass.resolved_options.at(resolved_opt_idx);
+            const resolved_option_t &resolved_opt = ctx.aclass.resolved_options.at(resolved_opt_idx);
             const rstring_t &name = opt_in_doc.best_name();
 
             // Update the option value, creating it if necessary
@@ -1423,14 +1428,14 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
         } else {
             // This was an option that was not specified in argv
             // It can be a suggestion
-            if (ctx->flags & flag_generate_suggestions) {
+            if (ctx.flags & flag_generate_suggestions) {
                 potential_suggestions.push_back(opt_in_doc);
             }
         }
     }
 
     // Now go through and handle potential suggestions
-    if (ctx->flags & flag_generate_suggestions) {
+    if (ctx.flags & flag_generate_suggestions) {
         for (const option_t &suggestion : potential_suggestions) {
             size_t type_idx = option_t::NAME_TYPE_COUNT;
             while (type_idx--) {
@@ -1445,12 +1450,12 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
 
     bool matched_something = successful_match || made_suggestion;
     if (matched_something) {
-        ctx->try_mark_fully_consumed(state);
+        ctx.try_mark_fully_consumed(state);
     }
     return matched_something;
 }
 
-static void match(const simple_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const simple_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     if (node.option.get()) {
         match(*node.option, state.move(), ctx, resulting_states);
@@ -1463,61 +1468,61 @@ static void match(const simple_clause_t &node, match_state_t state, match_contex
     }
 }
 
-static void match(const option_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const option_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Matching an option like --foo
     const option_list_t options_in_doc(1, node.option);
     bool matched = match_options(options_in_doc, &state, ctx);
-    if (matched || (ctx->flags & flag_match_allow_incomplete)) {
+    if (matched || (ctx.flags & flag_match_allow_incomplete)) {
         resulting_states->push_back(state.move());
     }
 }
 
-static void match(const fixed_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const fixed_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Fixed argument
     // Compare the next positional to this static argument
-    if (ctx->has_more_positionals(state)) {
-        const positional_argument_t &positional = ctx->next_positional(&state);
-        rstring_t name = rstring_t(ctx->argv.at(positional.idx_in_argv));
+    if (ctx.has_more_positionals(state)) {
+        const positional_argument_t &positional = ctx.next_positional(&state);
+        rstring_t name = rstring_t(ctx.argv.at(positional.idx_in_argv));
         if (node.word == name) {
             // The static argument matches
             state.mut_argument_values()[name].count += 1;
-            ctx->acquire_next_positional(&state);
-            ctx->try_mark_fully_consumed(&state);
+            ctx.acquire_next_positional(&state);
+            ctx.try_mark_fully_consumed(&state);
             resulting_states->push_back(state.move());
         }
     } else {
         // No more positionals. Maybe suggest one.
-        if (ctx->flags & flag_generate_suggestions) {
+        if (ctx.flags & flag_generate_suggestions) {
             state.suggested_next_arguments.insert(node.word);
         }
         // Append the state if we are allowing incomplete
-        if (ctx->flags & flag_match_allow_incomplete) {
+        if (ctx.flags & flag_match_allow_incomplete) {
             resulting_states->push_back(state.move());
         }
     }
 }
 
-static void match(const variable_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const variable_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Variable argument
     const rstring_t &name = node.word;
-    if (ctx->has_more_positionals(state)) {
+    if (ctx.has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
         // Note also that 'arg' points into an entry in the state argument value map
-        const positional_argument_t &positional = ctx->acquire_next_positional(&state);
-        const string_t &positional_value = ctx->argv.at(positional.idx_in_argv);
+        const positional_argument_t &positional = ctx.acquire_next_positional(&state);
+        const string_t &positional_value = ctx.argv.at(positional.idx_in_argv);
         option_rmap_t &args = state.mut_argument_values();
         args[name].values.push_back(positional_value);
-        ctx->try_mark_fully_consumed(&state);
+        ctx.try_mark_fully_consumed(&state);
         resulting_states->push_back(state.move());
     } else {
         // No more positionals. Suggest one.
-        if (ctx->flags & flag_generate_suggestions) {
+        if (ctx.flags & flag_generate_suggestions) {
             state.suggested_next_arguments.insert(name);
         }
-        if (ctx->flags & flag_match_allow_incomplete) {
+        if (ctx.flags & flag_match_allow_incomplete) {
             resulting_states->push_back(state.move());
         }
     }
@@ -1789,7 +1794,7 @@ class docopt_impl {
                             aclass, argv);
 
         match_state_list_t result;
-        match(this->usages, match_state_t(aclass.resolved_options.size()), &ctx, &result);
+        match(this->usages, match_state_t(aclass.resolved_options.size()), ctx, &result);
 
         // Illustration of some logging to help debug matching
         const bool log_stuff = false;
@@ -2091,7 +2096,7 @@ class docopt_impl {
         
         match_context_t ctx(flags, shortcut_options, aclass, argv);
         match_state_list_t states;
-        match(this->usages, match_state_t(aclass.resolved_options.size()), &ctx, &states);
+        match(this->usages, match_state_t(aclass.resolved_options.size()), ctx, &states);
 
         // Find the state(s) with the fewest unused arguments,
         // and then insert all of their suggestions into a set
