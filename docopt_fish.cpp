@@ -588,10 +588,6 @@ class argv_separator_t {
         return arg.size() >= len && std::equal(p, p + len, arg.begin());
     }
 
-    bool has_double_dash_at(size_t idx) const {
-        return idx < this->argv.size() && is_double_dash(this->argv.at(idx));
-    }
-
     // Returns the list of options satisfying some predicate
     template <typename UnaryFunc>
     std::vector<option_t> filter_options(const UnaryFunc &pred) const {
@@ -671,13 +667,6 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
                 value = arg_as_option.value;
                 arg_index = this->idx;
             } else if (! (match.flags & value_is_optional)) {
-                // The arg was (hopefully) specified as --foo bar
-                // The index is of the next argument, and the range is the entire argument
-                // Maybe do double-dash
-                if (this->has_double_dash_at(this->idx + 1)) {
-                    this->saw_double_dash = true;
-                    this->idx += 1;
-                }
                 if (this->idx + 1 < this->argv.size()) {
                     this->idx += 1;
                     arg_index = this->idx;
@@ -792,15 +781,8 @@ bool argv_separator_t::parse_unseparated_short_options(error_list_t *out_errors)
     const size_t name_idx = this->idx;
     size_t val_idx_for_last_option = npos;
     if (!errored && last_option_has_argument) {
-        // We don't support -f=bar style. I don't know of any commands that use
-        // this.
+        // We don't support -f=bar style for short options.
         // TODO: support delimiter-free style (gcc -Dmacro=something)
-        // Handle possible double-dash
-        if (this->has_double_dash_at(this->idx + 1)) {
-            this->saw_double_dash = true;
-            this->idx += 1;
-        }
-
         if (this->idx + 1 < this->argv.size()) {
             val_idx_for_last_option = this->idx + 1;
             value_for_last_option = rstring_t(this->argv.at(this->idx + 1));
@@ -842,7 +824,7 @@ void argv_separator_t::parse_next_arg(error_list_t *out_errors) {
         // double-dash means everything remaining is positional
         this->positionals.emplace_back(this->idx);
         this->idx += 1;
-    } else if (this->has_double_dash_at(this->idx)) {
+    } else if (is_double_dash(this->arg())) {
         // Literal --. The remaining arguments are positional.
         this->saw_double_dash = true;
         this->idx += 1;
@@ -1056,15 +1038,13 @@ struct match_context_t {
 
     // Returns the indexes in argv of the arguments that were unused
     index_list_t unused_arguments(const match_state_t *state) const {
-        /* To find the unused arguments, we walk over the used arguments and take
-         what's left
-         Arguments may be unused for any of three reasons:
-         1. It is an unconsumed positional
-         2. It is an option that we found in the tree, but was not matched during
-         tree descent
-         3. It is an option that was not found in the tree at all
-         */
-
+        // To find the unused arguments, we walk over the used arguments and take
+        // what's left
+        // Arguments may be unused for any of three reasons:
+        // 1. It is an unconsumed positional
+        // 2. It is an option that we found in the tree, but was not matched during
+        //    tree descent
+        // 3. It is an option that was not found in the tree at all
         // Make a vector the same size as argv.
         // As we walk over positionals and options, we will mark the corresponding
         // index as used.
@@ -1096,8 +1076,7 @@ struct match_context_t {
 
         // Walk over options NOT matched during tree descent and clear their bits.
         // An argument may be both matched and unmatched, i.e. if "-vv" is parsed
-        // into two short
-        // options.
+        // into two short options.
         // In that case, we want to mark it as unmatched.
         for (size_t i = 0; i < state->consumed_options().size(); i++) {
             if (!state->consumed_options().at(i)) {

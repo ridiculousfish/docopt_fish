@@ -233,6 +233,7 @@ static void run_1_correctness_test(const char *usage, const char *joined_argv, c
         err("Correctness test %lu.%lu was expected to fail, but did not", test_idx, arg_idx);
     } else if (did_error && ! expects_error) {
         err("Correctness test %lu.%lu was expected to succeed, but instead errored", test_idx, arg_idx);
+        parser.parse_arguments(argv, flags_default, &error_list, &unused_args);
         for (size_t i=0; i < error_list.size(); i++) {
             fprintf(stderr, "\t%ls\n", wide(error_list.at(i).text));
         }
@@ -1907,7 +1908,7 @@ static void test_correctness()
         {   "bind --add <file>\n"
             "bind <name>",
             {
-                {   "--add -- --test", // argv
+                {   "--add --test", // argv
                     "--add:%1\n"
                     "<file>:--test\n"
                 },
@@ -1961,6 +1962,45 @@ static void test_correctness()
                 {   "--add1 --test", // argv
                     ERROR_EXPECTED
                 }
+            },
+        },
+        
+        /* Case 98, more -- handling */
+        {   "bind [--flag <oarg>] <val>...",
+            {
+                {   "v1 --flag ov", // argv
+                    "--flag:%1\n"
+                    "<oarg>:ov\n"
+                    "<val>:v1\n"
+                },
+                {   "--flag ov v1 v2", // argv
+                    "--flag:%1\n"
+                    "<oarg>:ov\n"
+                    "<val>:v1, v2\n"
+                },
+                {   "-- --flag ov v1 v2", // argv
+                    "<val>:--flag, ov, v1, v2\n"
+                },
+                {   "--flag -- ov v1 v2", // argv
+                    "--flag:%1\n"
+                    "<oarg>:--\n"
+                    "<val>:ov, v1, v2\n"
+                },
+                {   "--flag ov -- v1 v2", // argv
+                    "--flag:%1\n"
+                    "<oarg>:ov\n"
+                    "<val>:v1, v2\n"
+                },
+                {   "--flag ov v1 -- v2", // argv
+                    "--flag:%1\n"
+                    "<oarg>:ov\n"
+                    "<val>:v1, v2\n"
+                },
+                {   "--flag ov v1 v2 --", // argv
+                    "--flag:%1\n"
+                    "<oarg>:ov\n"
+                    "<val>:v1, v2\n"
+                },
             },
         },
 
