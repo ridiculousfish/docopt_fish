@@ -504,7 +504,7 @@ static void run_1_argv_err_test(const char *usage, const char *joined_argv, int 
     argument_parser_t parser(usage_str, &error_list);
     
     /* Check arguments */
-    parser.parse_arguments(argv, flag_short_options_strict_separators, &error_list);
+    parser.parse_arguments(argv, 0, &error_list);
     
     /* Check errors */
     if (error_list.empty()) {
@@ -580,7 +580,7 @@ struct args_t {
 
 struct testcase_t {
     const char *usage;
-    args_t args[8];
+    args_t args[16];
 };
 
 
@@ -1921,6 +1921,48 @@ static void test_correctness()
                 
             },
         },
+        
+        /* Case 97, separator correctness */
+        {   "bind -add1 <file1>\n"
+            "bind --add2 <file2>\n"
+            "bind -add1eq=<file1eq>\n"
+            "bind --add2eq <file2eq>\n",
+            {
+                {   "--add2 test", // argv
+                    "--add2:%1\n"
+                    "<file2>:test\n"
+                },
+                {   "--add2 --test", // argv
+                    "--add2:%1\n"
+                    "<file2>:--test\n"
+                },
+                {   "--add2=test", // argv
+                    "--add2:%1\n"
+                    "<file2>:test\n"
+                },
+                {   "--add1=test", // argv
+                    ERROR_EXPECTED
+                },
+                {   "--add2eq test", // argv
+                    "--add2eq:%1\n"
+                    "<file2eq>:test\n"
+                },
+                {   "--add2eq --test", // argv
+                    "--add2eq:%1\n"
+                    "<file2eq>:--test\n"
+                },
+                {   "-add1eq=--test", // argv
+                    "-add1eq:%1\n"
+                    "<file1eq>:--test\n"
+                },
+                {   "-add1eq --test", // argv
+                    ERROR_EXPECTED
+                },
+                {   "--add1 --test", // argv
+                    ERROR_EXPECTED
+                }
+            },
+        },
 
         {nullptr, {}}
     }
@@ -1953,7 +1995,7 @@ static void test_annotated_options()
     
     const string_t empty;
     
-    const annotated_option_flags_t default_flags = 0;
+    const option_flags_t default_flags = 0;
     
     /* Case 0 */
     doption_t d11 = {
@@ -2555,11 +2597,6 @@ static void test_errors_in_argv()
         {   "Usage: prog -D<val>\n",
             "-D", // argv
             error_option_has_missing_argument
-        },
-        /* Case 6. This uses strict separators so we require the = sign */
-        {   "Usage: prog --line=<val>\n",
-            "--line val", // argv
-            error_wrong_separator
         },
 
         {nullptr, nullptr, 0}

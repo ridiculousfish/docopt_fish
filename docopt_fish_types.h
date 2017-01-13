@@ -109,9 +109,21 @@ class rstring_t {
         return this->length_ == 0;
     }
 
+    // note: we don't return references, since rstring_ts
+    // are immutable
     char_t at(size_t idx) const {
         assert(idx <= this->length_);
         return this->base_[this->start_ + idx];
+    }
+    
+    char_t front() const {
+        assert(! this->empty());
+        return this->at(0);
+    }
+    
+    char_t back() const {
+        assert(! this->empty());
+        return this->at(this->length() - 1);
     }
 
     rstring_t substr(size_t offset, size_t length) const {
@@ -326,7 +338,25 @@ public:
     explicit rstring_t(const char_t *s, size_t len) : start_(0), length_(len), base_(s) {}
 };
 
-/* An option represents something like '--foo=bar' */
+// SEPARATOR-NOTE
+// See IEEE Std 1003.1-2008 Utility Argument Syntax
+// http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html
+// Each option_t stores a separator, which describes how the option
+// is separated from its option-argument (what we call value)
+// Each may be space, =, or none
+// Following the conventions, we allow the following rules:
+//  - Short option-arguments may be space-separated or unseparated,
+//    but not = separated
+//  - Long (single or double) options may be space separated or = separated,
+//    but not unseparated
+//
+//  There seems to be disagremeent in how single-long options take their
+//  option-arguments. For example, `gcc -std=c89` requires an = separator,
+//  while Go's flags parser is relaxed. For now we require strict separator
+//  agreement for single-long options (e.g. -std c89 is disallowed).
+
+// An option represents something like '--foo=bar'
+// A single option may have multiple names, e.g. -f --foo
 struct option_t {
     // The types of names
     // This is also used indexes into an array
@@ -348,20 +378,14 @@ struct option_t {
 
     // special flags
     // these can only be set via annotated options today
-    annotated_option_flags_t flags = 0;
-
-    // How we separate the name from the value
-    enum separator_t {
-        sep_space,   // curl -o file
-        sep_equals,  // -std=c++98
-        sep_none     // -DNDEBUG. Must be a single_short option.
-    } separator = sep_space;
+    option_flags_t flags;
+    
+public:
 
     option_t() {}
 
-    option_t(name_type_t type, const rstring_t &name, const rstring_t &v,
-             separator_t sep = sep_space)
-        : value(v), separator(sep) {
+    option_t(name_type_t type, const rstring_t &name, const rstring_t &v, option_flags_t f)
+        : value(v), flags(f) {
         assert(type < NAME_TYPE_COUNT);
         assert(name.length() >= 2);
         assert(name[0] == '-');
@@ -438,26 +462,25 @@ struct option_t {
             result.push_back(' ');
             result.append(value.std_string());
         }
+        if (this->flags & value_is_optional) {
+            result.push_back('?');
+        }
+
         result.push_back(' ');
 
-        if (this->separator == sep_none) {
-            result += STRCONSTANT(" (no sep)");
-        } else if (this->separator == sep_equals) {
+        if (this->flags & single_long_strict_eqsep) {
             result += STRCONSTANT(" (= sep)");
         }
 
         return result;
     }
 
-    /* Acquire "guts" from another option wherever we have blanks */
+    // Acquire "guts" from another option wherever we have blanks
     void merge_from(const option_t &rhs) {
         for (size_t i = 0; i < NAME_TYPE_COUNT; i++) {
             this->names[i].replace_if_empty(rhs.names[i]);
         }
-        // Ensure we copy over the separator type
-        if (this->value.empty()) {
-            this->separator = rhs.separator;
-        }
+        this->flags |= rhs.flags;
         this->value.replace_if_empty(rhs.value);
         this->default_value.replace_if_empty(rhs.default_value);
     }

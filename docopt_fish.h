@@ -17,11 +17,7 @@ enum {
     flags_default = 0U,
 
     // If set, specifies that we should permit incomplete matching
-    flag_match_allow_incomplete = 1U << 0,
-
-    // If set, short options that accept values must have the separator as specified in the usage,
-    // that is, -DNDEBUG and -D NDEBUG are not both allowed.
-    flag_short_options_strict_separators = 1U << 1
+    flag_match_allow_incomplete = 1U << 0
 };
 typedef unsigned int parse_flags_t;
 
@@ -84,9 +80,13 @@ enum {
     // the --backup option to cp, which may be specified alone
     // or may take an option.
     // Options with optional values may only use the = separator.
-    value_is_optional = 1 << 0
+    value_is_optional = 1 << 0,
+    
+    // Indicates that, if the type is single_long, that we should
+    // only allow the = separator (e.g. -std=c99 but not -std c99)
+    single_long_strict_eqsep = 1 << 1
 };
-typedef uint32_t annotated_option_flags_t;
+typedef uint32_t option_flags_t;
 
 // A "direct" option for constructing arguments parsers programatically.
 struct annotated_option_t {
@@ -105,8 +105,7 @@ struct annotated_option_t {
     string_t value_name;
 
     // Flags controlling how the option is interpreted
-    // These are mostly fish-specific
-    annotated_option_flags_t flags;
+    option_flags_t flags;
 
     // Metadata associated with the option
     // Note for historic reasons, this applies equally to both the option and

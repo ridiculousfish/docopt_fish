@@ -87,7 +87,7 @@ bool char_is_space(rstring_t::char_t c) {
 bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_list_t *out_errors) {
     assert(!remaining->empty());
     error_list_t errors;
-
+    
     // An option is one or more dashes, the option name, maybe space and/or equals
     rstring_t leading_dashes, name, space_separator, equals;
     std::tie(leading_dashes, name, space_separator, equals, std::ignore) =
@@ -138,33 +138,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
                                 "Extra stuff after closing '>'");
         }
     }
-
-    // Determine the separator type
-    // If we got an equals range, it's something like 'foo = <bar>' or
-    // 'foo=<bar>'. The separator is
-    // equals and the space is ignored.
-    // Otherwise, the space matters: 'foo <bar>' is space-separated, and
-    // 'foo<bar>' has no separator
-    // Hackish: store sep_space for options without a variable
-    option_t::separator_t separator = option_t::sep_space;
-    if (has_variable) {
-        if (!equals.empty()) {
-            separator = option_t::sep_equals;
-        } else if (!space_separator.empty()) {
-            separator = option_t::sep_space;
-        } else {
-            separator = option_t::sep_none;
-        }
-    }
-
-    // Generate an error on long options with no separators (--foo<bar>). Only
-    // short options support
-    // these.
-    if (separator == option_t::sep_none && (dash_count > 1 || name.length() > 1)) {
-        append_token_error(&errors, name, error_bad_option_separator,
-                            "Long options must use a space or equals separator");
-    }
-
+    
     // Determine the type
     name_type_t type;
     if (dash_count > 1) {
@@ -175,35 +149,53 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         type = single_short;
     }
 
+    // Generate an error on long options with no separators (--foo<bar>). Only
+    // short options support these.
+    if (type != single_short && has_variable &&
+        space_separator.empty() && equals.empty()) {
+        append_token_error(&errors, name, error_bad_option_separator,
+                           "Long options must use a space or equals separator");
+    }
+    
     bool success = errors.empty();
     if (success) {
         // Build the variable like '<foo>'
         // If we don't have one, this will be empty
         const rstring_t variable = open_sign.merge(variable_name).merge(close_sign);
-        *result = option_t(type, leading_dashes.merge(name), variable, separator);
+        
+        // Build flags
+        option_flags_t flags = 0;
+        if (type == single_long && ! equals.empty()) {
+            // see SEPARATOR-NOTE
+            flags |= single_long_strict_eqsep;
+        }
+        
+        *result = option_t(type, leading_dashes.merge(name), variable, flags);
     }
-    std::move(errors.begin(), errors.end(), std::back_inserter(*out_errors));
+    if (out_errors) {
+        std::move(errors.begin(), errors.end(), std::back_inserter(*out_errors));
+    }
     return success;
 }
 
+// Given an argument (from argv) string, parse out an "option" of the given type
 option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_t type) {
     assert(!str.empty());
     assert(str.at(0) == '-');
 
+    option_flags_t flags = 0;
     rstring_t remaining(str);
 
     // Get the name part
     const rstring_t dashes = remaining.scan_while<it_equals<'-'>>();
     rstring_t name, value;
-    option_t::separator_t separator = option_t::sep_space;
     if (type == single_short) {
         // Short option, perhaps with unseparated value
         // here the name is just the next character (if any)
-        // and the value is anything after it
+        // and the value is anything after it, including an = sign
         if (!remaining.empty()) {
             name = remaining.substr(0, 1);
             value = remaining.substr_from(1);
-            separator = option_t::sep_none;
         }
     } else {
         // Long option
@@ -216,12 +208,14 @@ option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_
         const rstring_t equals = remaining.scan_1_char('=');
         if (!equals.empty()) {
             value = remaining;
-            separator = option_t::sep_equals;
+            if (type == single_long) {
+                flags |= single_long_strict_eqsep;
+            }
         }
     }
 
     // Return the option
-    return option_t(type, dashes.merge(name), value, separator);
+    return option_t(type, dashes.merge(name), value, flags);
 }
 
 /* Helper class for pretty-printing */
@@ -642,10 +636,6 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
     const string_t &arg = this->arg();
     assert(this->arg_has_prefix(type == option_t::double_long ? "--" : "-"));
 
-    // If strict_separators is set, then we require that the option have sep_none
-    // If not set, then we don't care if the separators match
-    const bool relaxed_separators = !(this->flags & flag_short_options_strict_separators);
-
     // Parse the argument into an 'option'. Note that this option does not appear
     // in the options list because its range reflects the string in the argument.
     // TODO: Need to distinguish between equivalent ways of specifying parameters
@@ -656,29 +646,19 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
 
     // Get list of matching options.
     // Short options must have a value to match, else we handle them in parse_unseparated_short_options
-    // TODO: can eliminate matches array entirely, just use a single index
-    const option_list_t matches = this->filter_options([&](const option_t &opt) {
-        bool does_match = opt.names[type] == arg_name;
-        if (does_match && type == option_t::single_short) {
-            does_match = opt.has_value() &&
-                         (relaxed_separators || opt.separator == option_t::sep_none);
-        }
+    auto match_iter = std::find_if(this->options.cbegin(), this->options.cend(), [&](const option_t &opt) {
+        bool does_match = opt.names[type] == arg_name &&
+            (type != option_t::single_short || opt.has_value());
         return does_match;
     });
-
-    size_t match_count = matches.size();
+    
     bool errored = false;
     // Our option de-duplication ensures we should never have more than one match
-    assert(match_count <= 1);
-    if (match_count < 1) {
+    if (match_iter == this->options.cend()) {
         this->error(out_errors, error_unknown_option, "Unknown option");
         errored = true;
     } else {
-        assert(match_count == 1);
-        const option_t &match = matches.at(0);
-        
-#warning Handle match.flags & value_is_optional
-        
+        const option_t &match = *match_iter;
         // Ensure the option and argument agree on having a value
         rstring_t value;
         const size_t name_idx = this->idx;
@@ -690,7 +670,7 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
                 // argument.
                 value = arg_as_option.value;
                 arg_index = this->idx;
-            } else if (! match.flags & value_is_optional) {
+            } else if (! (match.flags & value_is_optional)) {
                 // The arg was (hopefully) specified as --foo bar
                 // The index is of the next argument, and the range is the entire argument
                 // Maybe do double-dash
@@ -710,6 +690,9 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
                                       "Option expects an argument");
                     errored = true;
                 }
+            } else {
+                // There was no value match, but it was optional
+                assert(match.flags & value_is_optional);
             }
         } else if (arg_as_option.has_value()) {
             // A value was specified as --foo=bar, but none was expected
@@ -717,13 +700,19 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
                               "Option does not expect an argument");
             errored = true;
         }
-
-        // If we want strict separators, check for separator agreement
-        if (!errored && (this->flags & flag_short_options_strict_separators)) {
-            if (arg_as_option.separator != match.separator) {
-                // TODO: improve this error
-                this->error(out_errors, error_wrong_separator,
-                                  "Option expects a different separator");
+        
+        // Apply our SEPARATOR-NOTE
+        // Be strict about = separators
+        // Note that we use the single_long_strict_eqsep flag in arg_as_option
+        // to indicate that we got an = separator
+        if (! errored && type == option_t::single_long) {
+            bool requires_eq = match.flags & single_long_strict_eqsep;
+            bool has_eq = arg_as_option.flags & single_long_strict_eqsep;
+            if (requires_eq != has_eq) {
+                const char *msg = has_eq ?
+                                   "Option requires a space to separate its argument" :
+                                   "Option requires '=' to separate its argument";
+                this->error(out_errors, error_wrong_separator, msg);
                 errored = true;
             }
         }
@@ -1762,12 +1751,8 @@ class docopt_impl {
                 // Create an option
                 assert(! dopt.option.empty());
                 auto name_type = static_cast<option_t::name_type_t>(dopt.type - 1);
-                option_t option(name_type, option_name, value_name);
-                option.flags = dopt.flags;
-                if (dopt.flags & value_is_optional) {
-                    option.separator = option_t::sep_equals;
-                }
-                this->shortcut_options.push_back(option);
+                this->shortcut_options.emplace_back(name_type, option_name,
+                                                    value_name, dopt.flags);
             }
 
             // Save metadata
@@ -2122,15 +2107,13 @@ class docopt_impl {
         }
         
         // Try completing a value for the last partial argument
-        // This includes both --foo=bar... and -DND...
+        // This includes both --foo=bar... and -DNDEB...
         if (! partial_last_arg.empty()) {
             suggestion_list_t value_suggestions = this->suggest_value_completion(partial_last_arg, flags);
             if (! value_suggestions.empty()) {
                 return value_suggestions;
             }
         }
-        
-#warning Rationalize option separators
         
         suggestion_t suggestion;
         positional_argument_list_t positionals;

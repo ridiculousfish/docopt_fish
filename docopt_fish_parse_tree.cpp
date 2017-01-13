@@ -204,7 +204,8 @@ struct parse_context_t {
             return false;
         }
 
-        // TODO: handle --
+        // TODO: handle -- ?
+        // What should happen if options are specified after the -- in the usage spec?
 
         /* Hack to support specifying parameter names inline.
 
@@ -261,22 +262,19 @@ struct parse_context_t {
                 }
             }
 
-            // We may have to parse a variable
-            if (opt_from_usage_section.separator == option_t::sep_space) {
-                // Looks like an option without a separator. See if the next token is a
-                // variable
-                rstring_t next = this->peek_word();
-                if (next.length() > 2 && next[0] == '<' && next[next.length() - 1] == '>') {
-                    // It's a variable. See if we have a presence in options.
-                    bool options_section_implies_no_value =
-                        (opt_from_options_section && opt_from_options_section->value.empty());
-                    if (!options_section_implies_no_value) {
-                        rstring_t variable;
-                        bool scanned = this->scan_word(&variable);
-                        assert(scanned);  // Should always succeed, since we peeked at the word
-                        word = word.merge(variable);
-                        opt_from_usage_section.value = variable;
-                    }
+            // Looks like an option without a separator. See if the next token is a
+            // variable
+            rstring_t next = this->peek_word();
+            if (next.length() > 2 && next.front() == '<' && next.back() == '>') {
+                // It's a variable. See if we have a presence in options.
+                bool options_section_implies_no_value =
+                    (opt_from_options_section && opt_from_options_section->value.empty());
+                if (!options_section_implies_no_value) {
+                    rstring_t variable;
+                    bool scanned = this->scan_word(&variable);
+                    assert(scanned);  // Should always succeed, since we peeked at the word
+                    word = word.merge(variable);
+                    opt_from_usage_section.value = variable;
                 }
             }
 
