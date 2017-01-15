@@ -17,11 +17,7 @@ enum {
     flags_default = 0U,
 
     // If set, specifies that we should permit incomplete matching
-    flag_match_allow_incomplete = 1U << 0,
-
-    // If set, short options that accept values must have the separator as specified in the usage,
-    // that is, -DNDEBUG and -D NDEBUG are not both allowed.
-    flag_short_options_strict_separators = 1U << 1
+    flag_match_allow_incomplete = 1U << 0
 };
 typedef unsigned int parse_flags_t;
 
@@ -34,17 +30,17 @@ enum argument_status_t {
 // Represents an error in either the usage spec, or during argument parsing
 struct error_t {
     // Location of the token where the error occurred, in either the docopt doc or the argument
-    size_t location = size_t(-1);
+    size_t location;
 
     // If the error occurred in an argument (i.e. argv), the index of the argument; otherwise -1
-    size_t argument_index = size_t(-1);
+    size_t argument_index;
 
     // Internal code, for use in the tests
-    int code = 0;
+    int code;
 
     // Text of the error. This is an immortal string literal, but may someday need to be a
     // std::string.
-    const char *text = nullptr;
+    const char *text;
 };
 
 // Represents an argument in the result
@@ -70,34 +66,81 @@ struct base_metadata_t {
     STR command;
     STR condition;
     STR description;
-    long tag;  // arbitrary application use
+    int tag;  // arbitrary application use
 
     base_metadata_t() : tag(0) {}
 };
 
 typedef base_metadata_t<string_t> metadata_t;
+    
+// Flags set for annotated options
+enum {
+    // Indicates that any value is optional
+    // It is rare for values to be optional. An example is
+    // the --backup option to cp, which may be specified alone
+    // or may take an option.
+    // Options with optional values may only use the = separator.
+    value_is_optional = 1 << 0,
+    
+    // Indicates that, if the type is single_long, that we should
+    // only allow the = separator (e.g. -std=c99 but not -std c99)
+    single_long_strict_eqsep = 1 << 1
+};
+typedef uint32_t option_flags_t;
 
 // A "direct" option for constructing arguments parsers programatically.
 struct annotated_option_t {
-    enum {
+    enum type_t {
+        value_only,    // no option, like ls <file>
         single_short,  // like -f
         single_long,   // like -foo
         double_long,   // like --foo
     } type;
 
     // The name of the option, including any dashes.
-    // If empty, the type is ignored.
     string_t option;
 
     // Name of a variable representing the value, or empty
     // Separators are assumed to be flexible
     string_t value_name;
 
+    // Flags controlling how the option is interpreted
+    option_flags_t flags;
+
     // Metadata associated with the option
     // Note for historic reasons, this applies equally to both the option and
     // variable
     metadata_t metadata;
 };
+
+// Suggestions are returned from suggest_next_argument and suggest_option_completion
+struct suggestion_t {
+    // The token to be inserted
+    string_t token;
+    
+    // Metadata about the token
+    metadata_t md;
+    
+    // Position of the token to be inserted
+    // This is only used for partial arg
+    size_t offset;
+    
+    suggestion_t() : offset(0) {}
+    
+    suggestion_t(string_t t, metadata_t m, size_t off = 0):
+        token(std::move(t)), md(std::move(m)), offset(off) {}
+    
+    // Helpers for sorting
+    bool operator==(const suggestion_t &rhs) const {
+        return token == rhs.token;
+    }
+    
+    bool operator<(const suggestion_t &rhs) const {
+        return token < rhs.token;
+    }
+
+};
+typedef std::vector<suggestion_t> suggestion_list_t;
 
 class docopt_impl;
 
@@ -130,7 +173,7 @@ class argument_parser_t {
     // Given a list of arguments, returns an array of potential next values. A value may be either a
     // literal flag -foo, or a variable; these may be distinguished by the <> surrounding the
     // variable.
-    string_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const;
+    suggestion_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const;
 
     // Given a name (either an option or a variable), returns any metadata for that name
     metadata_t metadata_for_name(const string_t &name) const;

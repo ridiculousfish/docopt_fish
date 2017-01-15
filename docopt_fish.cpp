@@ -44,21 +44,20 @@ bool is_double_dash(const string_t &str) {
     return str.size() == 2 && str[0] == '-' && str[1] == '-';
 }
 
-// This represents an error in argv, i.e. the docopt description was OK but a
-// parameter contained an
-// error
-static void append_argv_error(error_list_t *errors, size_t arg_idx, int code, const char *txt,
-                              size_t pos_in_arg = 0) {
-    append_error(errors, pos_in_arg, code, txt, arg_idx);
-}
-
 // This represents an error in the docopt specification itself
 // The token is a substring of the docopt spec, and its location is used to
 // determine the error
 // position
-static void append_docopt_error(error_list_t *errors, const rstring_t &token, int code,
+static void append_token_error(error_list_t *errors, const rstring_t &token, int code,
                                 const char *txt) {
-    append_error(errors, token.start(), code, txt, -1);
+    append_error(errors, token.offset(), code, txt, -1);
+}
+
+// Annoying helper unction to move-append one vector to a receiver
+template<typename T>
+void append(std::vector<T> &&victim, std::vector<T> *receiver) {
+    if (receiver)
+        std::move(victim.begin(), victim.end(), std::back_inserter(*receiver));
 }
 
 /* Parsing helpers */
@@ -88,7 +87,7 @@ bool char_is_space(rstring_t::char_t c) {
 bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_list_t *out_errors) {
     assert(!remaining->empty());
     error_list_t errors;
-
+    
     // An option is one or more dashes, the option name, maybe space and/or equals
     rstring_t leading_dashes, name, space_separator, equals;
     std::tie(leading_dashes, name, space_separator, equals, std::ignore) =
@@ -108,64 +107,38 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     const size_t dash_count = leading_dashes.length();
     assert(dash_count > 0);
     if (dash_count > 2) {
-        append_docopt_error(&errors, leading_dashes, error_excessive_dashes, "Too many dashes");
+        append_token_error(&errors, leading_dashes, error_excessive_dashes, "Too many dashes");
     }
 
     if (name.empty()) {
-        append_docopt_error(&errors, name, error_invalid_option_name, "Missing option name");
+        append_token_error(&errors, name, error_invalid_option_name, "Missing option name");
     }
 
     if (equals.length() > 1) {
-        append_docopt_error(&errors, equals, error_excessive_equal_signs, "Too many equal signs");
+        append_token_error(&errors, equals, error_excessive_equal_signs, "Too many equal signs");
     }
 
     // Report an error for cases like '--foo='
     if (!has_variable && !equals.empty()) {
-        append_docopt_error(&errors, equals, error_invalid_variable_name,
+        append_token_error(&errors, equals, error_invalid_variable_name,
                             "Missing variable for this assignment");
     }
 
     // Validate variable
     if (has_variable) {
         if (variable_name.empty()) {
-            append_docopt_error(&errors, variable_name, error_invalid_variable_name,
+            append_token_error(&errors, variable_name, error_invalid_variable_name,
                                 "Missing variable name");
         } else if (close_sign.empty()) {
-            append_docopt_error(&errors, open_sign, error_invalid_variable_name,
+            append_token_error(&errors, open_sign, error_invalid_variable_name,
                                 "Missing '>' to match this '<'");
         } else if (!remaining->empty() && char_is_valid_in_parameter(remaining->at(0))) {
             // Next character is not whitespace and not the end of the string
-            append_docopt_error(&errors, *remaining, error_invalid_variable_name,
+            append_token_error(&errors, *remaining, error_invalid_variable_name,
                                 "Extra stuff after closing '>'");
         }
     }
-
-    // Determine the separator type
-    // If we got an equals range, it's something like 'foo = <bar>' or
-    // 'foo=<bar>'. The separator is
-    // equals and the space is ignored.
-    // Otherwise, the space matters: 'foo <bar>' is space-separated, and
-    // 'foo<bar>' has no separator
-    // Hackish: store sep_space for options without a variable
-    option_t::separator_t separator = option_t::sep_space;
-    if (has_variable) {
-        if (!equals.empty()) {
-            separator = option_t::sep_equals;
-        } else if (!space_separator.empty()) {
-            separator = option_t::sep_space;
-        } else {
-            separator = option_t::sep_none;
-        }
-    }
-
-    // Generate an error on long options with no separators (--foo<bar>). Only
-    // short options support
-    // these.
-    if (separator == option_t::sep_none && (dash_count > 1 || name.length() > 1)) {
-        append_docopt_error(&errors, name, error_bad_option_separator,
-                            "Long options must use a space or equals separator");
-    }
-
+    
     // Determine the type
     name_type_t type;
     if (dash_count > 1) {
@@ -176,35 +149,53 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         type = single_short;
     }
 
+    // Generate an error on long options with no separators (--foo<bar>). Only
+    // short options support these.
+    if (type != single_short && has_variable &&
+        space_separator.empty() && equals.empty()) {
+        append_token_error(&errors, name, error_bad_option_separator,
+                           "Long options must use a space or equals separator");
+    }
+    
     bool success = errors.empty();
     if (success) {
         // Build the variable like '<foo>'
         // If we don't have one, this will be empty
         const rstring_t variable = open_sign.merge(variable_name).merge(close_sign);
-        *result = option_t(type, leading_dashes.merge(name), variable, separator);
+        
+        // Build flags
+        option_flags_t flags = 0;
+        if (type == single_long && ! equals.empty()) {
+            // see SEPARATOR-NOTE
+            flags |= single_long_strict_eqsep;
+        }
+        
+        *result = option_t(type, leading_dashes.merge(name), variable, flags);
     }
-    std::move(errors.begin(), errors.end(), std::back_inserter(*out_errors));
+    if (out_errors) {
+        std::move(errors.begin(), errors.end(), std::back_inserter(*out_errors));
+    }
     return success;
 }
 
+// Given an argument (from argv) string, parse out an "option" of the given type
 option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_t type) {
     assert(!str.empty());
     assert(str.at(0) == '-');
 
+    option_flags_t flags = 0;
     rstring_t remaining(str);
 
     // Get the name part
     const rstring_t dashes = remaining.scan_while<it_equals<'-'>>();
     rstring_t name, value;
-    option_t::separator_t separator = option_t::sep_space;
     if (type == single_short) {
         // Short option, perhaps with unseparated value
         // here the name is just the next character (if any)
-        // and the value is anything after it
+        // and the value is anything after it, including an = sign
         if (!remaining.empty()) {
             name = remaining.substr(0, 1);
             value = remaining.substr_from(1);
-            separator = option_t::sep_none;
         }
     } else {
         // Long option
@@ -213,17 +204,18 @@ option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_
         // Check to see if there's an = sign
         // If we got an equals sign, the rest is the value
         // It can have any character at all, since it's coming from the argument,
-        // not from the usage
-        // spec
+        // not from the usage spec
         const rstring_t equals = remaining.scan_1_char('=');
         if (!equals.empty()) {
             value = remaining;
-            separator = option_t::sep_equals;
+            if (type == single_long) {
+                flags |= single_long_strict_eqsep;
+            }
         }
     }
 
     // Return the option
-    return option_t(type, dashes.merge(name), value, separator);
+    return option_t(type, dashes.merge(name), value, flags);
 }
 
 /* Helper class for pretty-printing */
@@ -259,9 +251,9 @@ class node_dumper_t : public node_visitor_t<node_dumper_t> {
 
             char buff[32];
             if (t1.length() == 1) {
-                snprintf(buff, sizeof buff, "{%lu}", t1.start());
+                snprintf(buff, sizeof buff, "{%lu}", t1.offset());
             } else {
-                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.start(), t1.length());
+                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.offset(), t1.length());
             }
             result.append(to_string(buff));
             lines.push_back(result);
@@ -305,7 +297,7 @@ struct option_collector_t : public node_visitor_t<option_collector_t> {
 static bool get_next_line(const string_t &base, rstring_t *inout_line) {
     assert(inout_line != nullptr);
     // Start at the end of the last line, or 0 if this is the first
-    const size_t line_start = inout_line->end();
+    const size_t line_start = inout_line->end_offset();
     assert(line_start <= base.size());
     if (line_start == base.size()) {
         // Line exhausted
@@ -401,7 +393,7 @@ static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *met
             // Find the closing ']'
             size_t default_value_end = default_value.find("]");
             if (default_value_end == rstring_t::npos) {
-                append_docopt_error(errors, default_value, error_missing_close_bracket_in_default,
+                append_token_error(errors, default_value, error_missing_close_bracket_in_default,
                                     "Missing ']' to match opening '['");
             } else {
                 result.default_value = default_value.substr(0, default_value_end);
@@ -414,7 +406,7 @@ static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *met
     remaining.scan_while<char_is_space>();
     while (!remaining.empty()) {
         if (remaining[0] != '-') {
-            append_docopt_error(errors, remaining, error_invalid_option_name, "Not an option");
+            append_token_error(errors, remaining, error_invalid_option_name, "Not an option");
             break;
         }
 
@@ -468,9 +460,9 @@ static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *ou
                                             rstring_t *out_command, error_list_t *out_errors) {
     bool result = false;
     assert(!spec.empty() && spec[0] == '<');
-    const size_t close_bracket = spec.find('>');
+    const size_t close_bracket = spec.find(">");
     if (close_bracket == rstring_t::npos) {
-        append_docopt_error(out_errors, spec, error_missing_close_variable,
+        append_token_error(out_errors, spec, error_missing_close_variable,
                             "No > to balance this <");
     } else {
         assert(close_bracket < spec.length());
@@ -486,10 +478,11 @@ static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *ou
 // is indented. Tabs are treated as 4 spaces. newlines are unexpected, and
 // treated as one space.
 static size_t compute_indent(const rstring_t &src, const rstring_t &trimmed_src) {
-    assert(trimmed_src.start() >= src.start() && trimmed_src.end() <= src.end());
+    assert(trimmed_src.offset() >= src.offset() && trimmed_src.end_offset() <= src.end_offset());
     const size_t tabstop = 4;
     // Walk over the prefix of src, up to trimmed_src
-    size_t result = 0, length = trimmed_src.start() - src.start();
+    size_t result = 0;
+    size_t length = trimmed_src.offset() - src.offset();
     for (size_t i = 0; i < length; i++) {
         if (src.at(i) != '\t') {
             // not a tab
@@ -536,7 +529,7 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates,
             // That will cause us to skip over it later
             if (error_on_duplicates) {
                 // Generate an error, and then continue on
-                append_docopt_error(errors, candidate->best_name(),
+                append_token_error(errors, candidate->best_name(),
                                     error_option_duplicated_in_options_section,
                                     "Option specified more than once");
             }
@@ -551,18 +544,44 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates,
     }
 }
 
-/* Transient stack-allocated data associated with separating argv */
-struct argv_separation_state_t {
+// Helper function to derive a suggestion from a key and its metadata
+// Returns "empty" metadata if no metadata is stored for the given name
+static suggestion_t suggestion_for(const rstring_t &name, const metadata_map_t &md_map, size_t offset = 0) {
+    metadata_t md;
+    auto suggestion_iter = md_map.find(name);
+    if (suggestion_iter != md_map.end()) {
+        // rmd contains rstring_t, convert to string_t
+        const auto &rmd = suggestion_iter->second;
+        md.command = rmd.command.std_string();
+        md.condition = rmd.condition.std_string();
+        md.description = rmd.description.std_string();
+        md.tag = rmd.tag;
+    }
+    return suggestion_t(name.std_string(), std::move(md), offset);
+}
+
+struct arg_classification_t {
+    positional_argument_list_t positionals;
+    resolved_option_list_t resolved_options;
+    size_t double_dash_idx = -1;
+};
+
+// Object that knows how to separate argv into options and positionals
+// This is stack-allocated and transient
+class argv_separator_t {
+    // inputs to our separator
     const string_list_t &argv;
     const option_list_t &options;
-    parse_flags_t flags;
+    const metadata_map_t &names_to_metadata;
+    const parse_flags_t flags;
+
+    // separator internal state
     size_t idx = 0;
-    bool saw_double_dash = false;
-
-    argv_separation_state_t(const string_list_t &argv_, const option_list_t &options_,
-                            parse_flags_t flags_)
-        : argv(argv_), options(options_), flags(flags_) {}
-
+    
+    // output of our separator
+    arg_classification_t classification;
+    suggestion_t suggestion;
+    
     const string_t &arg() const {
         return this->argv.at(this->idx);
     }
@@ -573,10 +592,6 @@ struct argv_separation_state_t {
         return arg.size() >= len && std::equal(p, p + len, arg.begin());
     }
 
-    bool has_double_dash_at(size_t idx) const {
-        return idx < this->argv.size() && is_double_dash(this->argv.at(idx));
-    }
-
     // Returns the list of options satisfying some predicate
     template <typename UnaryFunc>
     std::vector<option_t> filter_options(const UnaryFunc &pred) const {
@@ -584,127 +599,131 @@ struct argv_separation_state_t {
         copy_if(this->options.begin(), this->options.end(), std::back_inserter(result), pred);
         return result;
     }
+
+    bool parse_separated_option(option_t::name_type_t type, error_list_t *out_errors);
+    bool parse_unseparated_short_options(error_list_t *out_errors);
+
+    void suggest(const rstring_t &key) {
+        if (this->flags & flag_generate_suggestions) {
+            this->suggestion = suggestion_for(key, this->names_to_metadata);
+        }
+    }
+    
+    void error(error_list_t *out_errors, int code, const char *text, size_t pos_in_arg = 0) {
+        append_error(out_errors, pos_in_arg, code, text, this->idx);
+    }
+
+    void parse_next_arg(error_list_t *out_errors);
+
+    argv_separator_t(const string_list_t &av, const option_list_t &opts,
+                     const metadata_map_t &md_map, parse_flags_t fls)
+    : argv(av), options(opts), names_to_metadata(md_map), flags(fls)
+    {}
+    
+public:
+    
+    static arg_classification_t classify_arguments(const string_list_t &argv, const option_list_t &options,
+                                                     const metadata_map_t &md_map, parse_flags_t flags,
+                                                     error_list_t *out_errors, suggestion_t *out_suggestion = nullptr);
+
 };
 
 // Parse either a long value (type is single_long or double_long),
 // or an unseparated short value like -DNDEBUG (type is single_short)
 // We do NOT handle separated short values (-D NDEBUG) here;
-// those are handled in parse_short
-static bool parse_long_or_unseparated_short(argv_separation_state_t *st, option_t::name_type_t type,
-                                            resolved_option_list_t *out_result,
-                                            error_list_t *out_errors, rstring_t *out_suggestion) {
-    const string_t &arg = st->arg();
-    assert(st->arg_has_prefix(type == option_t::double_long ? "--" : "-"));
-
-    // If strict_separators is set, then we require that the option have sep_none
-    // If not set, then we don't care if the separators match
-    const bool relaxed_separators = !(st->flags & flag_short_options_strict_separators);
+// those are handled in parse_unseparated_short_options
+bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_list_t *out_errors) {
+    const string_t &arg = this->arg();
+    assert(this->arg_has_prefix(type == option_t::double_long ? "--" : "-"));
 
     // Parse the argument into an 'option'. Note that this option does not appear
-    // in the options
-    // list
-    // because its range reflects the string in the argument.
+    // in the options list because its range reflects the string in the argument.
     // TODO: Need to distinguish between equivalent ways of specifying parameters
-    // (--foo=bar and
-    // --foo bar)
+    // (--foo=bar and --foo bar)
     option_t arg_as_option = option_t::parse_from_argument(arg, type);
     const rstring_t arg_name = arg_as_option.names[type];
     assert(!arg_name.empty());
 
     // Get list of matching options.
-    // Short options must have a value to match, else we handle them in
-    // parse_short
-    // TODO: can eliminate matches array entirely, just use a single index
-    const option_list_t matches = st->filter_options([&](const option_t &opt) {
-        bool does_match = opt.names[type] == arg_name;
-        if (type == option_t::single_short) {
-            does_match = does_match && opt.has_value() &&
-                         (relaxed_separators || opt.separator == option_t::sep_none);
-        }
+    // Short options must have a value to match, else we handle them in parse_unseparated_short_options
+    auto match_iter = std::find_if(this->options.cbegin(), this->options.cend(), [&](const option_t &opt) {
+        bool does_match = opt.names[type] == arg_name &&
+            (type != option_t::single_short || opt.has_value());
         return does_match;
     });
-
-    bool success = false;
-    size_t match_count = matches.size();
+    
+    bool errored = false;
     // Our option de-duplication ensures we should never have more than one match
-    assert(match_count <= 1);
-    if (match_count < 1) {
-        append_argv_error(out_errors, st->idx, error_unknown_option, "Unknown option");
+    if (match_iter == this->options.cend()) {
+        this->error(out_errors, error_unknown_option, "Unknown option");
+        errored = true;
     } else {
-        bool errored = false;
-        assert(match_count == 1);
-        const option_t &match = matches.at(0);
-
+        const option_t &match = *match_iter;
         // Ensure the option and argument agree on having a value
         rstring_t value;
-        const size_t name_idx = st->idx;
+        const size_t name_idx = this->idx;
         size_t arg_index = npos;
         if (match.has_value()) {
             if (arg_as_option.has_value()) {
                 // The arg was specified as --foo=bar (long) or -DNDEBUG (short)
                 // The range is the value portion; the index is the same as our
                 // argument.
-                // TODO: suggestions
                 value = arg_as_option.value;
-                arg_index = st->idx;
-            } else {
-                // The arg was (hopefully) specified as --foo bar
-                // The index is of the next argument, and the range is the entire
-                // argument
-                // Maybe do double-dash
-                if (st->has_double_dash_at(st->idx + 1)) {
-                    st->saw_double_dash = true;
-                    st->idx += 1;
-                }
-                if (st->idx + 1 < st->argv.size()) {
-                    st->idx += 1;
-                    arg_index = st->idx;
-                    value = rstring_t(st->argv.at(arg_index));
-                } else if ((st->flags & flag_generate_suggestions) && out_suggestion != nullptr) {
-                    // We are at the last argument, and we expect a value. Return the
-                    // value as a
-                    // suggestion.
-                    *out_suggestion = match.value;
-                    errored = true;
+                arg_index = this->idx;
+            } else if (! (match.flags & value_is_optional)) {
+                if (this->idx + 1 < this->argv.size()) {
+                    this->idx += 1;
+                    arg_index = this->idx;
+                    value = rstring_t(this->argv.at(arg_index));
                 } else {
-                    append_argv_error(out_errors, st->idx, error_option_has_missing_argument,
+                    // We are at the last argument, and we expect a value. Return the
+                    // value as a suggestion.
+                    this->suggest(match.value);
+                    this->error(out_errors, error_option_has_missing_argument,
                                       "Option expects an argument");
                     errored = true;
                 }
+            } else {
+                // There was no value match, but it was optional
+                assert(match.flags & value_is_optional);
             }
         } else if (arg_as_option.has_value()) {
             // A value was specified as --foo=bar, but none was expected
-            append_argv_error(out_errors, st->idx, error_option_unexpected_argument,
+            this->error(out_errors, error_option_unexpected_argument,
                               "Option does not expect an argument");
             errored = true;
         }
-
-        // If we want strict separators, check for separator agreement
-        if (!errored && (st->flags & flag_short_options_strict_separators)) {
-            if (arg_as_option.separator != match.separator) {
-                // TODO: improve this error
-                append_argv_error(out_errors, st->idx, error_wrong_separator,
-                                  "Option expects a different separator");
+        
+        // Apply our SEPARATOR-NOTE
+        // Be strict about = separators
+        // Note that we use the single_long_strict_eqsep flag in arg_as_option
+        // to indicate that we got an = separator
+        if (! errored && type == option_t::single_long) {
+            bool requires_eq = match.flags & single_long_strict_eqsep;
+            bool has_eq = arg_as_option.flags & single_long_strict_eqsep;
+            if (requires_eq != has_eq) {
+                const char *msg = has_eq ?
+                                   "Option requires a space to separate its argument" :
+                                   "Option requires '=' to separate its argument";
+                this->error(out_errors, error_wrong_separator, msg);
                 errored = true;
             }
         }
 
         if (!errored) {
-            out_result->emplace_back(match, name_idx, arg_index, value);
-            st->idx += 1;
-            success = true;
+            this->classification.resolved_options.emplace_back(match, name_idx, arg_index, value);
+            this->idx += 1;
         }
     }
-    return success;
+    return ! errored;
 }
 
 // Given a list of short options, parse out arguments
 // There may be multiple arguments, e.g. 'tar -xc'
 // Only the last option may have an argument, e.g. 'tar -xcf somefile'
-static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out_result,
-                        error_list_t *out_errors, rstring_t *out_suggestion) {
-    const string_t &arg = st->arg();
-    assert(st->arg_has_prefix("-"));
+bool argv_separator_t::parse_unseparated_short_options(error_list_t *out_errors) {
+    const string_t &arg = this->arg();
+    assert(this->arg_has_prefix("-"));
     assert(arg.length() > 1);  // must not be just a single dash
     bool errored = false;
     bool last_option_has_argument = false;
@@ -712,25 +731,21 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
     // Construct the list of options in-order, corresponding to this argument
     std::vector<option_t> options_for_argument;
 
-    std::vector<option_t> matches;
     // walk over the characters in the argument, skipping the leading dash
     for (size_t idx_in_arg = 1; idx_in_arg < arg.length() && !errored; idx_in_arg++) {
         // Get list of short options matching this resolved option.
         const rstring_t::char_t short_char = arg.at(idx_in_arg);
-        matches.clear();
-        for (const option_t &opt : st->options) {
-            const rstring_t &name = opt.names[option_t::single_short];
+        const option_list_t matches = this->filter_options([&](const option_t &opt) {
             // This is a short option (-D) so we check the second character (idx 1)
-            if (name.length() > 1 && name[1] == short_char) {
-                matches.push_back(opt);
-            }
-        }
-
+            const rstring_t &name = opt.names[option_t::single_short];
+            return name.length() > 1 && name[1] == short_char;
+        });
+        
         size_t match_count = matches.size();
         // We should catch all duplicates during the preflight phase
         assert(match_count <= 1);
         if (match_count < 1) {
-            append_argv_error(out_errors, st->idx, error_unknown_option, "Unknown short option",
+            this->error(out_errors, error_unknown_option, "Unknown short option",
                               idx_in_arg);
             errored = true;
         } else {
@@ -741,8 +756,7 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
 
     if (!errored) {
         // Now we have all of the short options that this argument represents. No
-        // option is allowed
-        // to have a value, except possibly last one.
+        // option is allowed to have a value, except possibly the last one.
         for (size_t i = 0; i < options_for_argument.size(); i++) {
             const option_t &opt = options_for_argument.at(i);
             if (opt.has_value()) {
@@ -752,48 +766,35 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
                 } else {
                     // This is not the last option
                     // This i+1 is the position in the argument and needs some
-                    // explanation. Since we
-                    // have a leading dash and then an argument, which is parsed into
-                    // short options
-                    // - one per character, including the dash. Hence we can map from
-                    // index-in-option to index-in-argument, unless there was an unknown
-                    // option
-                    // error above. In that case this will be wrong (but we typically only
-                    // show the
-                    // first error anyways).
-                    append_argv_error(out_errors, st->idx, error_option_unexpected_argument,
+                    // explanation. We have a leading dash and then an argument,
+                    // which is parsed into short options - one per character, including
+                    // the dash. Hence we can map from index-in-option to index-in-argument,
+                    // unless there was an unknown option error above. In that case this
+                    // will be wrong (but we typically only show the first error anyways)
+                    this->error(out_errors, error_option_unexpected_argument,
                                       "Option may not have a value unless it is the last option",
                                       i + 1);
+                    errored = true;
                 }
             }
         }
     }
 
-    // If we have an argument, determine its index
+    // If we have an argument, determine the index of its name and its value
     rstring_t value_for_last_option;
-    const size_t name_idx = st->idx;
+    const size_t name_idx = this->idx;
     size_t val_idx_for_last_option = npos;
     if (!errored && last_option_has_argument) {
-        // We don't support -f=bar style. I don't know of any commands that use
-        // this.
+        // We don't support -f=bar style for short options.
         // TODO: support delimiter-free style (gcc -Dmacro=something)
-        // Handle possible double-dash
-        if (st->has_double_dash_at(st->idx + 1)) {
-            st->saw_double_dash = true;
-            st->idx += 1;
-        }
-
-        if (st->idx + 1 < st->argv.size()) {
-            val_idx_for_last_option = st->idx + 1;
-            value_for_last_option = rstring_t(st->argv.at(st->idx + 1));
-        } else if ((st->flags & flag_generate_suggestions) && out_suggestion != nullptr) {
+        if (this->idx + 1 < this->argv.size()) {
+            val_idx_for_last_option = this->idx + 1;
+            value_for_last_option = rstring_t(this->argv.at(this->idx + 1));
+        } else {
             // We are at the last argument, and we expect a value. Return the value as
             // a suggestion.
-            const option_t &match = options_for_argument.back();
-            *out_suggestion = match.value;
-            errored = true;
-        } else {
-            append_argv_error(out_errors, st->idx, error_option_has_missing_argument,
+            this->suggest(options_for_argument.back().value);
+            this->error(out_errors, error_option_has_missing_argument,
                               "Option expects an argument");
             errored = true;
         }
@@ -811,92 +812,87 @@ static bool parse_short(argv_separation_state_t *st, resolved_option_list_t *out
                 val_idx = val_idx_for_last_option;
             }
             const option_t &opt = options_for_argument.at(i);
-            out_result->emplace_back(opt, name_idx, val_idx, value);
+            this->classification.resolved_options.emplace_back(opt, name_idx, val_idx, value);
         }
 
         // Update the index
-        st->idx += (last_option_has_argument ? 2 : 1);
+        this->idx += (last_option_has_argument ? 2 : 1);
     }
     return !errored;
 }
 
-/* The Python implementation calls this "parse_argv" */
-static void separate_argv_into_options_and_positionals(
-    const string_list_t &argv, const option_list_t &options, parse_flags_t flags,
-    positional_argument_list_t *out_positionals, resolved_option_list_t *out_resolved_options,
-    error_list_t *out_errors, rstring_t *out_suggestion = nullptr) {
-    // double_dash means that all remaining values are arguments
-    argv_separation_state_t st(argv, options, flags);
-    while (st.idx < argv.size()) {
-        if (st.saw_double_dash) {
-            // double-dash means everything remaining is positional
-            out_positionals->emplace_back(st.idx);
-            st.idx += 1;
-        } else if (st.has_double_dash_at(st.idx)) {
-            // Literal --. The remaining arguments are positional.
-            st.saw_double_dash = true;
-            st.idx += 1;
-        } else if (st.arg_has_prefix("--")) {
-            // Leading long option
-            if (parse_long_or_unseparated_short(&st, option_t::double_long, out_resolved_options,
-                                                out_errors, out_suggestion)) {
-                // parse_long will have updated st.idx and out_resolved_options
-            } else {
-                // This argument is unused
-                // We have to update idx
-                st.idx += 1;
-            }
-        } else if (st.arg_has_prefix("-") && st.arg().length() > 1) {
-            /* An option with a leading dash, like -foo
-             This can be a lot of different things:
-             1. A combined short option: tar -cf ...
-             2. A long option with a single dash: -std=c++
-             3. A short option with a value: -DNDEBUG
-             Try to parse it as a long option; if that fails try to parse it as a
-             short option.
-             We cache the errors locally so that failing to parse it as a long option
-             doesn't report
-             an error if it parses successfully as a short option. This may result in
-             duplicate
-             error messages.
-             */
-            error_list_t local_long_errors, local_short_errors;
-            if (parse_long_or_unseparated_short(&st, option_t::single_long, out_resolved_options,
-                                                &local_long_errors, out_suggestion)) {
-                // parse_long succeeded
-            } else if (parse_long_or_unseparated_short(&st, option_t::single_short,
-                                                       out_resolved_options, &local_short_errors,
-                                                       out_suggestion)) {
-                // parse_unseparated_short will have updated idx and
-                // out_resolved_options
-            } else if (parse_short(&st, out_resolved_options, &local_short_errors,
-                                   out_suggestion)) {
-                // parse_short succeeded.
-            } else {
-                /* Unparseable argument.
-                 Say the user enters -Dfoo. This may be an unknown long option, or a
-                 short option
-                 with a value. If there is a short option -D, then it is more likely
-                 that the error
-                 from the short option parsing is what we want. So ensure the short
-                 erorrs appear at
-                 the front of the list. */
-                if (out_errors) {
-                    out_errors->insert(out_errors->begin(), local_long_errors.begin(),
-                                       local_long_errors.end());
-                    out_errors->insert(out_errors->begin(), local_short_errors.begin(),
-                                       local_short_errors.end());
-                }
-                st.idx += 1;
-            }
+void argv_separator_t::parse_next_arg(error_list_t *out_errors) {
+    assert(this->idx < argv.size());
+    
+    if (this->classification.double_dash_idx != npos) {
+        // we saw a double-dash
+        // everything remaining is positional
+        this->classification.positionals.emplace_back(this->idx);
+        this->idx += 1;
+    } else if (is_double_dash(this->arg())) {
+        // Literal --. The remaining arguments are positional.
+        this->classification.double_dash_idx = this->idx;
+        this->idx += 1;
+    } else if (this->arg_has_prefix("--")) {
+        // Leading long option
+        if (this->parse_separated_option(option_t::double_long, out_errors)) {
+            // this will have updated this->idx
         } else {
-            // Positional argument
-            // Note this includes just single-dash arguments, which are often a
-            // stand-in for stdin
-            out_positionals->emplace_back(st.idx);
-            st.idx += 1;
+            // This argument is unused
+            // We have to update idx
+            this->idx += 1;
         }
+    } else if (this->arg_has_prefix("-") && this->arg().length() > 1) {
+        // An option with a leading dash, like -foo
+        // This can be a lot of different things:
+        // 1. A combined short option: tar -cf ...
+        // 2. A long option with a single dash: -std=c++
+        // 3. A short option with a value: -DNDEBUG
+        // Try to parse it as a long option; if that fails try to parse it as a
+        // short option. We cache the errors locally so that failing to parse it
+        // as a long option doesn't report an error if it parses successfully
+        // as a short option. This may result in duplicate error messages.
+        error_list_t long_errors, short_errors;
+        if (this->parse_separated_option(option_t::single_long, &long_errors)) {
+            // successfully parsed as long option
+        } else if (this->parse_separated_option(option_t::single_short, &short_errors)) {
+            // parse_unseparated_short will have updated idx
+        } else if (this->parse_unseparated_short_options(&short_errors)) {
+            // parse_unseparated_short_options succeeded.
+        } else {
+            // Unparseable argument.
+            // Say the user enters -Dfoo. This may be an unknown long option, or a
+            // short option with a value. If there is a short option -D, then it is
+            // more likely that the error from the short option parsing is what we
+            // want. So append our short errors first.
+            append(std::move(short_errors), out_errors);
+            append(std::move(long_errors), out_errors);
+            this->idx += 1;
+        }
+    } else {
+        // Positional argument
+        // Note this includes just single-dash arguments, which are often a
+        // stand-in for stdin
+        this->classification.positionals.emplace_back(this->idx);
+        this->idx += 1;
     }
+}
+
+// The Python implementation calls this "parse_argv"
+// Given an argv list, a set of options, and a set of flags,
+// parse the argv into a set of positionals, options, errors, and optionally a suggestion
+arg_classification_t argv_separator_t::classify_arguments(const string_list_t &argv, const option_list_t &options,
+                                                          const metadata_map_t &md_map, parse_flags_t flags,
+                                                          error_list_t *out_errors, suggestion_t *out_suggestion) {
+    argv_separator_t st(argv, options, md_map, flags);
+    while (st.idx < argv.size()) {
+        st.parse_next_arg(out_errors);
+    }
+    
+    if (out_suggestion)
+        *out_suggestion = std::move(st.suggestion);
+    
+    return std::move(st.classification);
 }
 
 #pragma mark -
@@ -1000,8 +996,9 @@ struct match_state_t {
         size_t result = this->next_positional_index;
 
         // Add in arguments by counting set bits in the bitmap
-        result +=
-            std::accumulate(this->consumed_options().begin(), this->consumed_options().end(), 0);
+        result += std::accumulate(this->consumed_options().cbegin(),
+                                  this->consumed_options().cend(),
+                                  0);
 
         // Add in number of suggestions
         result += suggested_next_arguments.size();
@@ -1014,6 +1011,11 @@ typedef std::vector<match_state_t> match_state_list_t;
 
 struct match_context_t {
    private:
+
+    // No copying
+    match_context_t(const match_context_t &) = delete;
+    void operator=(const match_context_t &) = delete;
+
     // Returns true if the state has consumed all positionals and options
     bool has_consumed_everything(const match_state_t &state) const {
         if (has_more_positionals(state)) {
@@ -1032,79 +1034,80 @@ struct match_context_t {
     // Note: these are stored references.
     // Match context objects are expected to be transient and stack-allocated.
     const option_list_t &shortcut_options;
-    const positional_argument_list_t &positionals;
-    const resolved_option_list_t &resolved_options;
+    const arg_classification_t &aclass;
     const string_list_t &argv;
 
     bool has_more_positionals(const match_state_t &state) const {
-        assert(state.next_positional_index <= this->positionals.size());
-        return state.next_positional_index < this->positionals.size();
+        assert(state.next_positional_index <= this->aclass.positionals.size());
+        return state.next_positional_index < this->aclass.positionals.size();
     }
 
     // Returns the indexes in argv of the arguments that were unused
     index_list_t unused_arguments(const match_state_t *state) const {
-        /* To find the unused arguments, we walk over the used arguments and take
-         what's left
-         Arguments may be unused for any of three reasons:
-         1. It is an unconsumed positional
-         2. It is an option that we found in the tree, but was not matched during
-         tree descent
-         3. It is an option that was not found in the tree at all
-         */
-
+        // To find the unused arguments, we walk over the used arguments and take
+        // what's left
+        // Arguments may be unused for any of three reasons:
+        // 1. It is an unconsumed positional
+        // 2. It is an option that we found in the tree, but was not matched during
+        //    tree descent
+        // 3. It is an option that was not found in the tree at all
         // Make a vector the same size as argv.
         // As we walk over positionals and options, we will mark the corresponding
         // index as used.
         // At the end, the unset bits are the unused arguments
-        std::vector<bool> used_indexes(this->argv.size(), false);
+        std::vector<bool> used_argv_indexes(this->argv.size(), false);
+        
+        auto mark_used = [&](size_t idx) {
+            if (idx != npos)
+                used_argv_indexes.at(idx) = true;
+        };
+        auto mark_unused = [&](size_t idx) {
+            if (idx != npos)
+                used_argv_indexes.at(idx) = false;
+        };
+        
+        // consumed_options is a vector parallel to resolved_options,
+        // which tracks whether each resolved_option was used
+        const std::vector<bool> &copts = state->consumed_options();
 
-        // Walk over used positionals. next_positional_index is the first unused
-        // one.
+        // Walk over used positionals.
+        // next_positional_index is the first unused one
         for (size_t i = 0; i < state->next_positional_index; i++) {
-            used_indexes.at(this->positionals.at(i).idx_in_argv) = true;
+            mark_used(this->aclass.positionals.at(i).idx_in_argv);
         }
 
         // Walk over options matched during tree descent.
         // We should have one bit per option
-        assert(state->consumed_options().size() == this->resolved_options.size());
-        for (size_t i = 0; i < state->consumed_options().size(); i++) {
-            if (state->consumed_options().at(i)) {
+        assert(copts.size() == this->aclass.resolved_options.size());
+        for (size_t i = 0; i < copts.size(); i++) {
+            if (copts.at(i)) {
                 // This option was used. The name index is definitely used. The value
-                // index is also
-                // used, if it's not npos (note that it may be the same as the name
-                // index)
-                const resolved_option_t &opt = this->resolved_options.at(i);
-                used_indexes.at(opt.name_idx_in_argv) = true;
-                if (opt.value_idx_in_argv != npos) {
-                    used_indexes.at(opt.value_idx_in_argv) = true;
-                }
+                // index is also used, if it's not npos
+                // (note that it may be the same as the name index)
+                const resolved_option_t &opt = this->aclass.resolved_options.at(i);
+                mark_used(opt.name_idx_in_argv);
+                mark_used(opt.value_idx_in_argv);
             }
         }
 
         // Walk over options NOT matched during tree descent and clear their bits.
         // An argument may be both matched and unmatched, i.e. if "-vv" is parsed
-        // into two short
-        // options.
+        // into two short options.
         // In that case, we want to mark it as unmatched.
-        for (size_t i = 0; i < state->consumed_options().size(); i++) {
-            if (!state->consumed_options().at(i)) {
-                const resolved_option_t &opt = this->resolved_options.at(i);
-                used_indexes.at(opt.name_idx_in_argv) = false;
+        for (size_t i = 0; i < copts.size(); i++) {
+            if (!copts.at(i)) {
+                const resolved_option_t &opt = this->aclass.resolved_options.at(i);
+                mark_unused(opt.name_idx_in_argv);
             }
         }
 
-        // Don't report the first -- as unused
-        for (size_t i = 0; i < this->argv.size(); i++) {
-            if (is_double_dash(this->argv.at(i))) {
-                used_indexes.at(i) = true;
-                break;
-            }
-        }
+        // Don't report the double-dash argument as unused
+        mark_used(this->aclass.double_dash_idx);
 
         // Extract the unused indexes from the bitmap of used arguments
         index_list_t unused_argv_idxs;
-        for (size_t i = 0; i < used_indexes.size(); i++) {
-            if (!used_indexes.at(i)) {
+        for (size_t i = 0; i < used_argv_indexes.size(); i++) {
+            if (!used_argv_indexes.at(i)) {
                 unused_argv_idxs.push_back(i);
             }
         }
@@ -1112,26 +1115,25 @@ struct match_context_t {
     }
 
     const positional_argument_t &next_positional(match_state_t *state) const {
-        assert(state->next_positional_index < positionals.size());
-        return positionals.at(state->next_positional_index);
+        assert(state->next_positional_index < this->aclass.positionals.size());
+        return this->aclass.positionals.at(state->next_positional_index);
     }
 
     const positional_argument_t &acquire_next_positional(match_state_t *state) const {
-        assert(state->next_positional_index < positionals.size());
-        return positionals.at(state->next_positional_index++);
+        assert(state->next_positional_index < this->aclass.positionals.size());
+        return this->aclass.positionals.at(state->next_positional_index++);
     }
 
     match_context_t(parse_flags_t f, const option_list_t &shortcut_opts,
-                    const positional_argument_list_t &p, const resolved_option_list_t &r,
+                    const arg_classification_t &classification,
                     const string_list_t &av)
         : flags(f),
           shortcut_options(shortcut_opts),
-          positionals(p),
-          resolved_options(r),
+          aclass(classification),
           argv(av) {}
 
-    /* If we want to stop a search and this state has consumed everything, stop
-     * the search */
+    // If we want to stop a search and this state has consumed everything, stop
+    // the search
     void try_mark_fully_consumed(match_state_t *state) const {
         if ((this->flags & flag_stop_after_consuming_everything) &&
             this->has_consumed_everything(*state)) {
@@ -1140,50 +1142,49 @@ struct match_context_t {
     }
 };
 
-static void match(const vector<usage_t> &usages, match_state_t state, match_context_t *ctx,
+static void match(const vector<usage_t> &usages, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const usage_t &node, match_state_t state, match_context_t *ctx,
+static void match(const usage_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const expression_list_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_list_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const alternation_list_t &node, match_state_t state, match_context_t *ctx,
+static void match(const alternation_list_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const expression_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const simple_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const simple_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const option_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const option_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const fixed_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const fixed_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
-static void match(const variable_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const variable_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states);
 
 static bool match_options(const option_list_t &options_in_doc, match_state_t *state,
-                          const match_context_t *ctx);
+                          const match_context_t &ctx);
 
-// TODO: comment me
+// Given a node and list of states, match the node for each state in the list
+// Append the results to the resulting_states
+// If require_progress is true, then discard new states that don't make progress
 template <typename T>
-static void match_list(const T &node, match_state_list_t *incoming_state_list, match_context_t *ctx,
+static void match_list(const T &node, match_state_list_t &&incoming_state_list, const match_context_t &ctx,
                        match_state_list_t *resulting_states, bool require_progress = false) {
-    for (size_t i = 0; i < incoming_state_list->size(); i++) {
-        match_state_t *state = &incoming_state_list->at(i);
-        /* If we require that this makes progress, then get the current progress so
-         * we can compare
-         */
+    for (match_state_t &state : incoming_state_list) {
+        // If we require that this makes progress, then get the current progress so
+        // we can compare
         size_t init_progress = npos;
         size_t init_size = -1;
         if (require_progress) {
-            init_progress = state->progress();
+            init_progress = state.progress();
             init_size = resulting_states->size();
         }
 
-        match(node, state->move(), ctx, resulting_states);
+        match(node, state.move(), ctx, resulting_states);
 
         if (require_progress) {
             // Keep only those results that have increased in progress. States after
-            // init_size are
-            // new.
+            // init_size are new.
             size_t idx = resulting_states->size();
             assert(idx >= init_size);
             while (idx-- > init_size) {  // last processed idx will be init_size
@@ -1198,7 +1199,7 @@ static void match_list(const T &node, match_state_list_t *incoming_state_list, m
     }
 }
 
-static void match(const vector<usage_t> &usages, match_state_t state, match_context_t *ctx,
+static void match(const vector<usage_t> &usages, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Elide the copy in the last one
     size_t count = usages.size();
@@ -1210,7 +1211,7 @@ static void match(const vector<usage_t> &usages, match_state_t state, match_cont
     for (size_t i = 0; i + 1 < count && !fully_consumed; i++) {
         match(usages.at(i), state.copy(), ctx, resulting_states);
 
-        if (ctx->flags & flag_stop_after_consuming_everything) {
+        if (ctx.flags & flag_stop_after_consuming_everything) {
             for (const match_state_t &ms : *resulting_states) {
                 if (ms.fully_consumed) {
                     fully_consumed = true;
@@ -1224,9 +1225,9 @@ static void match(const vector<usage_t> &usages, match_state_t state, match_cont
     }
 }
 
-static void match(const usage_t &node, match_state_t state, match_context_t *ctx,
+static void match(const usage_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
-    if (!ctx->has_more_positionals(state)) {
+    if (!ctx.has_more_positionals(state)) {
         // todo: error handling
         return;
     }
@@ -1237,13 +1238,13 @@ static void match(const usage_t &node, match_state_t state, match_context_t *ctx
     }
 
     // Program name
-    ctx->acquire_next_positional(&state);
+    ctx.acquire_next_positional(&state);
 
     // Match against our contents
     match(node.alternation_list, state.move(), ctx, resulting_states);
 }
 
-static void match(const expression_list_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_list_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     size_t count = node.expressions.size();
     if (count == 0) {
@@ -1259,16 +1260,16 @@ static void match(const expression_list_t &node, match_state_t state, match_cont
         // Middle expressions
         for (size_t i = 1; i + 1 < count; i++) {
             match_state_list_t new_states;
-            match_list(node.expressions.at(i), &intermed_state_list, ctx, &new_states);
-            intermed_state_list.swap(new_states);
+            match_list(node.expressions.at(i), std::move(intermed_state_list), ctx, &new_states);
+            intermed_state_list = std::move(new_states);
         }
         // Last expression
-        match_list(node.expressions.at(count - 1), &intermed_state_list, ctx, resulting_states);
+        match_list(node.expressions.at(count - 1), std::move(intermed_state_list), ctx, resulting_states);
     }
 }
 
-static void match(const alternation_list_t &node, match_state_t state, match_context_t *ctx,
-                  match_state_list_t *resulting_states) {
+static void match(const alternation_list_t &node, match_state_t state,
+                  const match_context_t &ctx, match_state_list_t *resulting_states) {
     size_t count = node.alternations.size();
     if (count == 0) {
         return;
@@ -1281,55 +1282,46 @@ static void match(const alternation_list_t &node, match_state_t state, match_con
 
 // Ellipsis helper
 // Given a node that has ellipsis, the set of resulting states, and an initial
-// prior state count,
-// match the node repeatedly until we stop making progress
+// prior state count, match the node repeatedly until we stop making progress
 template <typename Node>
-static void repeat_matching(const Node &node, size_t init_prior_state_count, match_context_t *ctx,
+static void repeat_matching(const Node &node, size_t init_prior_state_count, const match_context_t &ctx,
                             match_state_list_t *resulting_states) {
     assert(resulting_states->size() >= init_prior_state_count);
-    match_state_list_t intermediate_states;
     // Get the number of existing states
     // Keep going until we stop getting new states
     size_t prior_state_count = init_prior_state_count;
     while (prior_state_count < resulting_states->size()) {
         // Get a vector of intermediate states
-        intermediate_states.clear();
+        match_state_list_t intermediate_states;
         intermediate_states.reserve(resulting_states->size() - prior_state_count);
         for (size_t i = prior_state_count; i < resulting_states->size(); i++) {
             intermediate_states.push_back(resulting_states->at(i).copy());
         }
         prior_state_count = resulting_states->size();
-        match_list(node, &intermediate_states, ctx, resulting_states, true /* require progress */);
+        match_list(node, std::move(intermediate_states), ctx, resulting_states, true /* require progress */);
     }
 }
 
-static void match(const expression_t &node, match_state_t state, match_context_t *ctx,
+static void match(const expression_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Check to see if we have ellipsis. If so, we keep going as long as we can.
     bool has_ellipsis = node.opt_ellipsis.present;
 
     switch (node.production) {
         case 0: {
-            /* This is a simple clause which may have ellipsis, like foo...
-             If we have ellipsis, we match one time, and then construct a sequence of
-             'intermediate
-             state lists'.
-             An intermediate state represents the result of matching N times. Each time
-             we construct
-             a new intermediate state, we append (copy) all of its states into the
-             result; thus we
-             may
-             match one time, two times, three times...
-             We stop when we get no more matches, which usually happens when we run out
-             of
-             positionals.
-             */
+            // This is a simple clause which may have ellipsis, like foo...
+            // If we have ellipsis, we match one time, and then construct a sequence of
+            // 'intermediate state lists'.
+            //  An intermediate state represents the result of matching N times. Each time
+            //  we construct a new intermediate state, we append (copy) all of its states into the
+            //  result; thus we may match one time, two times, three times...
+            //  We stop when we get no more matches, which usually happens when we run out
+            //  of positionals.
             assert(node.simple_clause.get() != nullptr);
             size_t prior_state_count = resulting_states->size();
             match(*node.simple_clause, state.move(), ctx, resulting_states);
-            /* Now we know that all states starting at state_count_before are newly
-             * added. If we
-             * have ellipsis, go until we stop getting new states. */
+            // Now we know that all states starting at state_count_before are newly added.
+            // If we have ellipsis, go until we stop getting new states.
             if (has_ellipsis) {
                 repeat_matching(*node.simple_clause, prior_state_count, ctx, resulting_states);
             }
@@ -1337,11 +1329,8 @@ static void match(const expression_t &node, match_state_t state, match_context_t
         }
 
         case 1: {
-            /* This is a parenthesized clause which may have ellipsis, like (foo)...
-             Same algorithm as the simple clause above.
-             TODO: this may loop forever with states that do not consume any values,
-             e.g. ([foo])...
-             */
+            // This is a parenthesized clause which may have ellipsis, like (foo)...
+            // Same algorithm as the simple clause above.
             size_t prior_state_count = resulting_states->size();
             assert(node.alternation_list.get() != nullptr);
             match(*node.alternation_list, state.move(), ctx, resulting_states);
@@ -1352,11 +1341,9 @@ static void match(const expression_t &node, match_state_t state, match_context_t
         }
 
         case 2: {
-            /* This is a square-bracketed clause which may have ellipsis, like [foo]...
-             Same algorithm as the simple clause above, except that we also append the
-             initial state
-             as a not-taken branch.
-             */
+            // This is a square-bracketed clause which may have ellipsis, like [foo]...
+            // Same algorithm as the simple clause above, except that we also append the
+            // initial state as a not-taken branch.
             assert(node.alternation_list.get() != nullptr);
             resulting_states->push_back(state.copy());  // append the not-taken-branch
             size_t prior_state_count = resulting_states->size();
@@ -1370,10 +1357,10 @@ static void match(const expression_t &node, match_state_t state, match_context_t
         case 3: {
             // This is the [options] clause. It does not have ellipsis.
             assert(node.options_shortcut.present);
-            if (!match_options(ctx->shortcut_options, &state, ctx)) {
+            if (!match_options(ctx.shortcut_options, &state, ctx)) {
                 // No match, but matches are not required
-                if (ctx->flags & flag_generate_suggestions) {
-                    for (const option_t &opt : ctx->shortcut_options) {
+                if (ctx.flags & flag_generate_suggestions) {
+                    for (const option_t &opt : ctx.shortcut_options) {
                         state.suggested_next_arguments.insert(opt.best_name());
                     }
                 }
@@ -1390,7 +1377,7 @@ static void match(const expression_t &node, match_state_t state, match_context_t
 // Match the options in the options list, updating the state
 // This returns true if we match at least one
 static bool match_options(const option_list_t &options_in_doc, match_state_t *state,
-                          const match_context_t *ctx) {
+                          const match_context_t &ctx) {
     bool successful_match = false;
     bool made_suggestion = false;
 
@@ -1403,12 +1390,12 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
     for (const option_t &opt_in_doc : options_in_doc) {
         // Find the matching option from the resolved option list (i.e. argv)
         size_t resolved_opt_idx = npos;
-        for (size_t i = 0; i < ctx->resolved_options.size(); i++) {
+        for (size_t i = 0; i < ctx.aclass.resolved_options.size(); i++) {
             // Skip ones that have already been consumed
             if (!state->consumed_options().at(i)) {
                 // See if the option from argv has the same key range as the option in
                 // the document
-                if (ctx->resolved_options.at(i).option.has_same_name(opt_in_doc)) {
+                if (ctx.aclass.resolved_options.at(i).option.has_same_name(opt_in_doc)) {
                     resolved_opt_idx = i;
                     break;
                 }
@@ -1422,7 +1409,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
             // We have two things to set:
             //  - The option name, like -foo
             //  - The option's argument value (if any)
-            const resolved_option_t &resolved_opt = ctx->resolved_options.at(resolved_opt_idx);
+            const resolved_option_t &resolved_opt = ctx.aclass.resolved_options.at(resolved_opt_idx);
             const rstring_t &name = opt_in_doc.best_name();
 
             // Update the option value, creating it if necessary
@@ -1441,14 +1428,14 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
         } else {
             // This was an option that was not specified in argv
             // It can be a suggestion
-            if (ctx->flags & flag_generate_suggestions) {
+            if (ctx.flags & flag_generate_suggestions) {
                 potential_suggestions.push_back(opt_in_doc);
             }
         }
     }
 
     // Now go through and handle potential suggestions
-    if (ctx->flags & flag_generate_suggestions) {
+    if (ctx.flags & flag_generate_suggestions) {
         for (const option_t &suggestion : potential_suggestions) {
             size_t type_idx = option_t::NAME_TYPE_COUNT;
             while (type_idx--) {
@@ -1463,12 +1450,12 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
 
     bool matched_something = successful_match || made_suggestion;
     if (matched_something) {
-        ctx->try_mark_fully_consumed(state);
+        ctx.try_mark_fully_consumed(state);
     }
     return matched_something;
 }
 
-static void match(const simple_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const simple_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     if (node.option.get()) {
         match(*node.option, state.move(), ctx, resulting_states);
@@ -1481,60 +1468,61 @@ static void match(const simple_clause_t &node, match_state_t state, match_contex
     }
 }
 
-static void match(const option_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const option_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Matching an option like --foo
     const option_list_t options_in_doc(1, node.option);
     bool matched = match_options(options_in_doc, &state, ctx);
-    if (matched || (ctx->flags & flag_match_allow_incomplete)) {
+    if (matched || (ctx.flags & flag_match_allow_incomplete)) {
         resulting_states->push_back(state.move());
     }
 }
 
-static void match(const fixed_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const fixed_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Fixed argument
     // Compare the next positional to this static argument
-    if (ctx->has_more_positionals(state)) {
-        const positional_argument_t &positional = ctx->next_positional(&state);
-        rstring_t name = rstring_t(ctx->argv.at(positional.idx_in_argv));
+    if (ctx.has_more_positionals(state)) {
+        const positional_argument_t &positional = ctx.next_positional(&state);
+        rstring_t name = rstring_t(ctx.argv.at(positional.idx_in_argv));
         if (node.word == name) {
             // The static argument matches
             state.mut_argument_values()[name].count += 1;
-            ctx->acquire_next_positional(&state);
-            ctx->try_mark_fully_consumed(&state);
+            ctx.acquire_next_positional(&state);
+            ctx.try_mark_fully_consumed(&state);
             resulting_states->push_back(state.move());
         }
     } else {
         // No more positionals. Maybe suggest one.
-        if (ctx->flags & flag_generate_suggestions) {
+        if (ctx.flags & flag_generate_suggestions) {
             state.suggested_next_arguments.insert(node.word);
         }
         // Append the state if we are allowing incomplete
-        if (ctx->flags & flag_match_allow_incomplete) {
+        if (ctx.flags & flag_match_allow_incomplete) {
             resulting_states->push_back(state.move());
         }
     }
 }
 
-static void match(const variable_clause_t &node, match_state_t state, match_context_t *ctx,
+static void match(const variable_clause_t &node, match_state_t state, const match_context_t &ctx,
                   match_state_list_t *resulting_states) {
     // Variable argument
     const rstring_t &name = node.word;
-    if (ctx->has_more_positionals(state)) {
+    if (ctx.has_more_positionals(state)) {
         // Note we retain the brackets <> in the variable name
-        argument_t *arg = &state.mut_argument_values()[name];
-        const positional_argument_t &positional = ctx->acquire_next_positional(&state);
-        const string_t &positional_value = ctx->argv.at(positional.idx_in_argv);
-        arg->values.push_back(positional_value);
-        ctx->try_mark_fully_consumed(&state);
+        // Note also that 'arg' points into an entry in the state argument value map
+        const positional_argument_t &positional = ctx.acquire_next_positional(&state);
+        const string_t &positional_value = ctx.argv.at(positional.idx_in_argv);
+        option_rmap_t &args = state.mut_argument_values();
+        args[name].values.push_back(positional_value);
+        ctx.try_mark_fully_consumed(&state);
         resulting_states->push_back(state.move());
     } else {
         // No more positionals. Suggest one.
-        if (ctx->flags & flag_generate_suggestions) {
+        if (ctx.flags & flag_generate_suggestions) {
             state.suggested_next_arguments.insert(name);
         }
-        if (ctx->flags & flag_match_allow_incomplete) {
+        if (ctx.flags & flag_match_allow_incomplete) {
             resulting_states->push_back(state.move());
         }
     }
@@ -1686,7 +1674,7 @@ class docopt_impl {
                                                     out_errors)) {
                     base_metadata_t<rstring_t> *md = &this->names_to_metadata[variable_name];
                     if (!md->command.empty()) {
-                        append_docopt_error(out_errors, line_group,
+                        append_token_error(out_errors, line_group,
                                             error_one_variable_multiple_commands,
                                             "Duplicate command for variable");
                     }
@@ -1698,7 +1686,7 @@ class docopt_impl {
 
             } else {
                 // It's an error
-                append_docopt_error(out_errors, trimmed_line, error_unknown_leader,
+                append_token_error(out_errors, trimmed_line, error_unknown_leader,
                                     "Lines must start with a normal character, "
                                     "less-than sign, or dash.");
                 break;
@@ -1719,27 +1707,26 @@ class docopt_impl {
         }
     }
 
-    /* Populate ourselves from our annotated options */
+    // Populate ourselves from our annotated options
     void populate_from_annotated_options() {
         // We're going to construct a list of variable arguments, that are not
-        // associated with an
-        // option
+        // associated with an option
         // Populate impl->shortcut_options and free_variables.
         rstring_list_t free_variables;
-        for (const auto &dopt : this->annotated_options) {
-            // Note the order here must match that of the loop above
+        for (const annotated_option_t &dopt : this->annotated_options) {
             const rstring_t option_name(dopt.option);
             const rstring_t value_name(dopt.value_name);
-
-            if (!option_name.empty()) {
-                // Create an option
-                assert(dopt.type < option_t::NAME_TYPE_COUNT);
-                auto name_type = static_cast<option_t::name_type_t>(dopt.type);
-                option_t option(name_type, option_name, value_name);
-                this->shortcut_options.push_back(option);
-            } else if (!value_name.empty()) {
-                // option_name is empty, create a static
+            
+            if (dopt.type == annotated_option_t::value_only) {
+                // No option, just a free variable
+                assert(! dopt.value_name.empty());
                 free_variables.push_back(value_name);
+            } else {
+                // Create an option
+                assert(! dopt.option.empty());
+                auto name_type = static_cast<option_t::name_type_t>(dopt.type - 1);
+                this->shortcut_options.emplace_back(name_type, option_name,
+                                                    value_name, dopt.flags);
             }
 
             // Save metadata
@@ -1763,9 +1750,8 @@ class docopt_impl {
         this->usages.push_back(usage_t::build_from_variables(free_variables, has_option));
     }
 
-    /* Given an option map (using rstring), convert it to an option map using the
-     * given
-     * std::basic_string type. */
+    // Given an option map (using rstring), convert it to an option map using the
+    // given std::basic_string type
     argument_parser_t::argument_map_t finalize_option_map(const option_rmap_t &map) const {
         argument_parser_t::argument_map_t result;
 
@@ -1796,17 +1782,19 @@ class docopt_impl {
         return result;
     }
 
-    /* Matches argv */
+    // Attempts to match argv against our usages
+    // We are given a list of positionals and options
+    // Return by reference the resulting option map, and list of unused arguments
     void match_argv(const string_list_t &argv, parse_flags_t flags,
-                    const positional_argument_list_t &positionals,
-                    const resolved_option_list_t &resolved_options, option_rmap_t *out_option_map,
+                    const arg_classification_t &aclass,
+                    option_rmap_t *out_option_map,
                     index_list_t *out_unused_arguments) const {
         /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
         match_context_t ctx(flags | flag_stop_after_consuming_everything, this->shortcut_options,
-                            positionals, resolved_options, argv);
+                            aclass, argv);
 
         match_state_list_t result;
-        match(this->usages, match_state_t(resolved_options.size()), &ctx, &result);
+        match(this->usages, match_state_t(aclass.resolved_options.size()), ctx, &result);
 
         // Illustration of some logging to help debug matching
         const bool log_stuff = false;
@@ -1830,44 +1818,40 @@ class docopt_impl {
                 }
             }
         }
-
-        // Determine the index of the one with the fewest unused arguments
-        size_t best_state_idx = npos;
-        index_list_t best_unused_args;
-        for (size_t i = 0; i < result.size(); i++) {
-            const match_state_t &state = result.at(i);
-            index_list_t unused_args = ctx.unused_arguments(&state);
-            size_t unused_arg_count = unused_args.size();
-            if (i == 0 || unused_arg_count < best_unused_args.size()) {
-                best_state_idx = i;
-                best_unused_args = std::move(unused_args);
-                // If we got zero, we're done
-                if (unused_arg_count == 0) {
-                    break;
-                }
-            }
-        }
-
-        // Now return the winning state and its unused arguments
-        if (best_state_idx != npos) {
-            // We got a best state
-            if (out_unused_arguments != nullptr) {
-                *out_unused_arguments = std::move(best_unused_args);
-            }
-            if (out_option_map != nullptr) {
-                *out_option_map = std::move(result.at(best_state_idx).mut_argument_values());
+        
+        index_list_t unused_arguments;
+        option_rmap_t option_map;
+        if (result.empty()) {
+            // We had no states
+            // Every arg is unused
+            for (size_t i = 0; i < argv.size(); i++) {
+                unused_arguments.push_back(i);
             }
         } else {
-            // No states. Every argument is unused.
-            if (out_unused_arguments != nullptr) {
-                out_unused_arguments->clear();
-                for (size_t i = 0; i < argv.size(); i++) {
-                    out_unused_arguments->push_back(i);
+            // We got at least one state
+            // Find the one with the fewest unused arguments
+            const match_state_t *best_state = nullptr;
+            for (const match_state_t &st : result) {
+                index_list_t st_unused_args = ctx.unused_arguments(&st);
+                if (best_state == nullptr || st_unused_args.size() < unused_arguments.size()) {
+                    best_state = &st;
+                    unused_arguments = std::move(st_unused_args);
+                    // If there's no unused arguments, we're done
+                    if (unused_arguments.empty()) {
+                        break;
+                    }
                 }
             }
-            if (out_option_map != nullptr) {
-                out_option_map->clear();
-            }
+            assert(best_state != nullptr);
+            option_map = best_state->argument_values();
+        }
+        
+        // We got a best state
+        if (out_unused_arguments != nullptr) {
+            *out_unused_arguments = std::move(unused_arguments);
+        }
+        if (out_option_map != nullptr) {
+            *out_option_map = std::move(option_map);
         }
     }
 
@@ -1896,22 +1880,17 @@ class docopt_impl {
          invoked as: prog -a -a
 
          Naively we would expect options to match the first -a arg, and the -a from
-         usage to match
-         the second. But we don't. Instead, if an option appears explicitly in a
-         usage pattern, we
-         excise it from the shortcuts.
+         usage to match the second. But we don't. Instead, if an option appears explicitly
+         in a usage pattern, we excise it from the shortcuts.
 
          What Python docopt does is assert, if an option appears anywhere in any
-         usage, it may not
-         be matched by [options]. This seems reasonable, because it means that that
-         option has more
-         particular use cases. So remove all items from shortcut_options() that
-         appear in
-         usage_options.
+         usage, it may not be matched by [options]. This seems reasonable, because
+         it means that that option has more particular use cases. So remove all items
+         from shortcut_options() that appear in usage_options.
 
-         TODO: this currently only removes the matched variant. For example, prog -a
-         --alpha would
-         still be allowed.
+         TODO: this currently only removes the matched variant. For example,
+           prog -a --alpha
+         would still be allowed.
          */
 
         auto opt_is_in_usage = [&](const option_t &shortcut_opt) {
@@ -1936,49 +1915,193 @@ class docopt_impl {
             errstream() << dumped << "\n";
         }
 
-        /* Successfully preflighted */
+        // Successfully preflighted
         return true;
     }
 
     void best_assignment_for_argv(const string_list_t &argv, parse_flags_t flags,
                                   error_list_t *out_errors, index_list_t *out_unused_arguments,
                                   option_rmap_t *out_option_map) const {
-        positional_argument_list_t positionals;
-        resolved_option_list_t resolved_options;
-
-        // Extract positionals and arguments from argv
-        separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals,
-                                                   &resolved_options, out_errors);
-
-        // Produce an option map
-        this->match_argv(argv, flags, positionals, resolved_options, out_option_map,
-                         out_unused_arguments);
+        // Extract positionals and arguments from argv, then produce an option map
+        arg_classification_t aclass = argv_separator_t::classify_arguments(argv, all_options, names_to_metadata, flags, out_errors);
+        this->match_argv(argv, flags, std::move(aclass), out_option_map, out_unused_arguments);
     }
 
-    rstring_list_t suggest_next_argument(const string_list_t &argv, parse_flags_t flags) const {
-        /* Set internal flags to generate suggestions */
-        flags |= flag_generate_suggestions;
+    // Given a list of suggestions and a partial argument, modify the suggestions by combining short options
+    // with the partial argument
+    // Example:
+    //   Combinable short options -a, -b, -c
+    //   Suggestions -a -b
+    //   Partial argument -a
+    //   Replaces with suggestion -ab
+    // Note that we use the same metadata as the short option we're suggesting
+    // Note that short options that take a value may only be combined as the last one (tar -cf <file>)
+    void combine_short_suggestions(suggestion_list_t *suggestions, const string_t &partial_str) const {
+        // Verify it starts with a - and at least one other character
+        // Verify that every character in partial is a combinable short option in our suggestions
+        // If so, append as a suggestion every combinable short option that doesn't appear in partial
+        if (partial_str.length() <= 1 || partial_str.at(0) != '-') {
+            return; // EARLY OUT
+        }
 
-        positional_argument_list_t positionals;
-        resolved_option_list_t resolved_options;
-        rstring_t suggestion;
-        separate_argv_into_options_and_positionals(argv, all_options, flags, &positionals,
-                                                   &resolved_options, nullptr /* errors */,
-                                                   &suggestion);
+        constexpr size_t short_option_name_length = 2;
+        
+        // Helper to return an option with the given short name
+        auto short_option_named = [&](const string_t &name){
+            const option_t *result = nullptr;
+            if (name.length() == short_option_name_length) {
+                const rstring_t rname(name);
+                for (const option_t &opt : this->all_options) {
+                    if (opt.names[option_t::single_short] == rname) {
+                        result = &opt;
+                        break;
+                    }
+                }
+            }
+            return result;
+        };
+        
+        // Helper to indicate if the suggestion corresponds to a short option
+        auto is_short_option_suggestion = [&](const suggestion_t &s) {
+            return short_option_named(s.token) != nullptr;
+        };
+        
+        
+        // Generate map from character to suggestion for each short suggestion
+        // e.g. an option '-e' would have an entry 'e' -> suggestion
+        std::map<string_t::value_type, suggestion_t> char_to_suggestion;
+        for (const suggestion_t &s : *suggestions) {
+            if (is_short_option_suggestion(s)) {
+                assert(s.token.length() == short_option_name_length);
+                char_to_suggestion[s.token.at(1)] = s;
+            }
+        }
+        
+        // Verify that every character in the partial arg is in our suggestions,
+        // and that the corresponding option does not require a value
+        // If so, remove the corresponding suggestion (so that we only pick it up once)
+        // Start at 1 to skip the leading dash
+        // TODO: handle options with multiplicities (-vvv)
+        bool partial_arg_is_valid_combined_shorts = true;
+        for (rstring_t::char_t c : rstring_t(partial_str, 1)) {
+            if (! char_to_suggestion.erase(c)) {
+                // Not found in the map
+                // So some character in the partial is not a suggestion
+                partial_arg_is_valid_combined_shorts = false;
+                break;
+            }
+            
+            // Check for a value; short options with values must be last in a combined option,
+            // and therefore cannot appear in partial strings
+            // We should always have a short option, else it would not have been found
+            // in char_to_suggestion
+            const option_t *opt = short_option_named({'-', c});
+            assert(opt != nullptr);
+            if (opt->has_value()) {
+                partial_arg_is_valid_combined_shorts = false;
+                break;
+            }
+        }
+        
+        if (partial_arg_is_valid_combined_shorts) {
+            // Whatever's left are our new suggestions
+            // Erase all short suggestions, and append our new ones
+            // New suggestions are the partial string, with each short option appended,
+            // along with that short option's metadata
+            suggestions->erase(std::remove_if(suggestions->begin(), suggestions->end(),
+                                              is_short_option_suggestion),
+                               suggestions->end());
+            for (const auto &p : char_to_suggestion) {
+                suggestions->emplace_back(partial_str + p.first, p.second.md);
+            }
+        }
+    }
+    
+    // Given the partial last argument, suggest something to complete it
+    // If the last argument is --foo=, where foo wants a value, we will suggest the variable
+    // corresponding to the value
+    suggestion_list_t suggest_value_completion(const string_t &partial_arg,
+                                                parse_flags_t flags) const {
+        (void)flags;
+        
+        if (partial_arg.size() < 2 || partial_arg.front() != '-')
+            return {};
+        
+        suggestion_list_t suggestions;
+
+        rstring_t long_name, short_name;
+        const size_t short_name_len = 2; // like -D
+        const size_t equals_pos = partial_arg.find('=');
+        if (equals_pos != string_t::npos) {
+            assert(equals_pos < partial_arg.size());
+            // For example, we look like --foo=bar
+            // Look for a value-carrying option with this long name (--foo)
+            long_name = rstring_t(partial_arg, 0, equals_pos);
+        } else {
+            // We will try matching as an unseparated short option, like -D<Value>
+            short_name = rstring_t(partial_arg, 0, short_name_len);
+        }
+        
+        for (const option_t &opt : this->all_options) {
+            if (! opt.has_value())
+                continue;
+            
+            if (! long_name.empty()) {
+                if (long_name == opt.names[option_t::single_long] ||
+                    long_name == opt.names[option_t::double_long]) {
+                    suggestions.push_back(suggestion_for(opt.value, this->names_to_metadata, equals_pos + 1));
+                    break;
+                }
+            }
+            
+            if (! short_name.empty() && short_name == opt.names[option_t::single_short]) {
+                suggestions.push_back(suggestion_for(opt.value, this->names_to_metadata, short_name_len));
+                break;
+            }
+        }
+        return suggestions;
+    }
+    
+    suggestion_list_t suggest_next_argument(const string_list_t &argv_with_partial, parse_flags_t flags) const {
+        // Set internal flags to generate suggestions
+        flags |= flag_generate_suggestions;
+        
+        // The last argument is partial
+        // Remove it and store it separately
+        string_list_t argv = argv_with_partial;
+        string_t partial_last_arg;
+        if (! argv.empty()) {
+            partial_last_arg = argv.back();
+            argv.pop_back();
+        }
+        
+        // Try completing a value for the last partial argument
+        // This includes both --foo=bar... and -DNDEB...
+        if (! partial_last_arg.empty()) {
+            suggestion_list_t value_suggestions = this->suggest_value_completion(partial_last_arg, flags);
+            if (! value_suggestions.empty()) {
+                return value_suggestions;
+            }
+        }
+        
+        suggestion_t suggestion;
+        arg_classification_t aclass = argv_separator_t::classify_arguments(argv, all_options, names_to_metadata,
+                                                                           flags, nullptr /* errors */, &suggestion);
 
         // If we got a suggestion, it means that the last argument was of the form
         // --foo, where --foo wants a value. That's all we care about.
-        if (!suggestion.empty()) {
-            return rstring_list_t(1, suggestion);
+        if (!suggestion.token.empty()) {
+            return {std::move(suggestion)};
         }
-
-        match_context_t ctx(flags, shortcut_options, positionals, resolved_options, argv);
+        
+        match_context_t ctx(flags, shortcut_options, aclass, argv);
         match_state_list_t states;
-        match(this->usages, match_state_t(resolved_options.size()), &ctx, &states);
+        match(this->usages, match_state_t(aclass.resolved_options.size()), ctx, &states);
 
         // Find the state(s) with the fewest unused arguments,
-        // and then insert all of their suggestions into a list
-        rstring_list_t all_suggestions;
+        // and then insert all of their suggestions into a set
+        // Here we want std::set's ordering and uniquing behavior
+        std::set<rstring_t> suggestion_toks;
         size_t best_unused_arg_count = (size_t)-1;
         for (const match_state_t &state : states) {
             size_t count = ctx.unused_arguments(&state).size();
@@ -1988,16 +2111,24 @@ class docopt_impl {
         }
         for (const match_state_t &state : states) {
             if (ctx.unused_arguments(&state).size() == best_unused_arg_count) {
-                all_suggestions.insert(all_suggestions.end(),
-                                       state.suggested_next_arguments.begin(),
+                suggestion_toks.insert(state.suggested_next_arguments.begin(),
                                        state.suggested_next_arguments.end());
             }
         }
-        // Eliminate duplicates
-        std::sort(all_suggestions.begin(), all_suggestions.end());
-        all_suggestions.erase(std::unique(all_suggestions.begin(), all_suggestions.end()),
-                              all_suggestions.end());
-        return all_suggestions;
+        
+        // Turn these into suggestions
+        suggestion_list_t result;
+        result.reserve(suggestion_toks.size());
+        for (const rstring_t &tok : suggestion_toks) {
+            result.push_back(suggestion_for(tok, this->names_to_metadata));
+        }
+        
+        // Handle combined shorts with the partial argument
+        if (! partial_last_arg.empty()) {
+            combine_short_suggestions(&result, partial_last_arg);
+        }
+        
+        return result;
     }
 
     base_metadata_t<rstring_t> metadata_for_name(const rstring_t &name) const {
@@ -2040,16 +2171,9 @@ std::vector<argument_status_t> argument_parser_t::validate_arguments(
     return result;
 }
 
-string_list_t argument_parser_t::suggest_next_argument(const string_list_t &argv,
-                                                       parse_flags_t flags) const {
-    rstring_list_t suggestions = impl->suggest_next_argument(argv, flags);
-
-    string_list_t result;
-    result.reserve(suggestions.size());
-    for (const rstring_t &suggestion : suggestions) {
-        result.push_back(suggestion.std_string());
-    }
-    return result;
+suggestion_list_t argument_parser_t::suggest_next_argument(const string_list_t &argv,
+                                                           parse_flags_t flags) const {
+    return impl->suggest_next_argument(argv, flags);
 }
 
 metadata_t argument_parser_t::metadata_for_name(const string_t &var) const {

@@ -4,9 +4,9 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <tuple>
 #include <cstring>
 #include <vector>
+#include <array>
 
 // Hide open and close brackets to avoid an annoying leading indent inside our class
 #define OPEN_DOCOPT_IMPL namespace docopt_fish {
@@ -38,84 +38,53 @@ class rstring_t {
 
     explicit rstring_t(const char_t *b, size_t start, size_t length)
         : start_(start), length_(length), base_(b) {}
+    
 
-    const char_t *ptr_begin() const {
-        return this->base_ + this->start_;
-    }
-
-    inline size_t find_internal(const char *needle, bool case_insensitive) const {
+    template<bool case_insensitive>
+    inline size_t find_internal(const char *needle) const {
         // Empty string always found first
         if (needle[0] == '\0') {
             return 0;
         }
-        const char_t his_first_low = (case_insensitive ? tolower(needle[0]) : needle[0]);
-        const char_t his_first_up = (case_insensitive ? toupper(needle[0]) : needle[0]);
-
-        const char_t *haystack = this->ptr_begin();
-        size_t haystack_count = this->length();
-        for (size_t outer = 0; outer < haystack_count; outer++) {
-            // Quick check for first character
-            if (haystack[outer] != his_first_low && haystack[outer] != his_first_up) {
-                continue;
+        
+        auto does_match = [](char_t a, char b){
+            if (static_cast<long>(a) >= CHAR_MAX) {
+                // Outside of ASCII, no match possible
+                return false;
             }
-
-            // Ok, we know the first character matches
-            // See if there's a match at 'outer'
-            for (size_t inner = 1;; inner++) {
-                if (needle[inner] == '\0') {
-                    // we exhausted the needle, so we have a match at 'outer'
-                    return outer;
-                } else if (outer + inner >= haystack_count) {
-                    // ran off our end
-                    // this means that whatever's left is shorter than needle,
-                    // so we're done
-                    return npos;
-                } else {
-                    char_t mine = haystack[outer + inner];
-                    if (static_cast<long>(mine) >= 256) {
-                        // outside of ASCII, no match possible
-                        break;
-                    }
-                    char_t his = needle[inner];
-                    bool matches =
-                        (mine == his || (case_insensitive && tolower(mine) == tolower(his)));
-                    if (!matches) {
-                        // no match at 'outer'
-                        break;
-                    }
-                }
-            }
-        }
-        return npos;
+            return a == b || (case_insensitive && tolower(a) == tolower(b));
+        };
+        
+        const char_t *result = std::search(this->begin(), this->end(),
+                                           needle, needle + strlen(needle),
+                                           does_match);
+        return result == this->end() ? npos : result - this->begin();
     }
 
     static int compare_internal(const rstring_t &lhs, const rstring_t &rhs) {
         size_t len1 = lhs.length(), len2 = rhs.length();
         size_t amt = std::min(len1, len2);
-        const char_t *p1 = lhs.ptr_begin();
-        const char_t *p2 = rhs.ptr_begin();
-        for (size_t i = 0; i < amt; i++) {
-            char_t c1 = p1[i], c2 = p2[i];
-            if (c1 != c2) {
-                return c1 < c2 ? -1 : 1;
-            }
-        }
-        if (len1 != len2) {
+        const char_t *lhs_end = lhs.begin() + amt;
+        auto diffs = std::mismatch(lhs.begin(), lhs_end, rhs.begin());
+        if (diffs.first != lhs_end) {
+            // Some character differed
+            return *diffs.first < *diffs.second ? -1 : 1;
+        } else if (len1 != len2) {
+            // No character differed, but lengths are different
             return len1 < len2 ? -1 : 1;
+        } else {
+            return 0;
         }
-        return 0;
     }
-
-    size_t find_1_internal(char_t needle) const {
-        const char_t *haystack = this->ptr_begin();
-        size_t len = this->length();
-
-        for (size_t i = 0; i < len; i++) {
-            if (haystack[i] == needle) {
-                return i;
-            }
-        }
-        return npos;
+    
+    // Returns a substring of self up to length,
+    // adjusting self to the remainder
+    rstring_t chop_length(size_t len) {
+        assert(len <= this->length());
+        rstring_t result = this->substr(0, len);
+        this->start_ += len;
+        this->length_ -= len;
+        return result;
     }
 
     typedef bool (*scan_predicate_t)(char_t);
@@ -123,11 +92,11 @@ class rstring_t {
    public:
     static const size_t npos = size_t(-1);
 
-    size_t start() const {
+    size_t offset() const {
         return this->start_;
     }
-
-    size_t end() const {
+    
+    size_t end_offset() const {
         assert(this->start_ + this->length_ >= this->start_);
         return this->start_ + this->length_;
     }
@@ -140,9 +109,21 @@ class rstring_t {
         return this->length_ == 0;
     }
 
+    // note: we don't return references, since rstring_ts
+    // are immutable
     char_t at(size_t idx) const {
         assert(idx <= this->length_);
         return this->base_[this->start_ + idx];
+    }
+    
+    char_t front() const {
+        assert(! this->empty());
+        return this->at(0);
+    }
+    
+    char_t back() const {
+        assert(! this->empty());
+        return this->at(this->length() - 1);
     }
 
     rstring_t substr(size_t offset, size_t length) const {
@@ -152,15 +133,11 @@ class rstring_t {
 
     // Finds needle in self, and returns the location or npos
     size_t find(const char *needle) const {
-        return this->find_internal(needle, false);
+        return this->find_internal<false>(needle);
     }
 
     size_t find_case_insensitive(const char *needle) const {
-        return this->find_internal(needle, true);
-    }
-
-    size_t find(char_t needle) const {
-        return this->find_1_internal(needle);
+        return this->find_internal<true>(needle);
     }
 
     rstring_t substr_from(size_t offset) const {
@@ -183,8 +160,8 @@ class rstring_t {
         } else {
             assert(this->base_ == rhs.base_);
             size_t start = std::min(this->start_, rhs.start_);
-            size_t length = std::max(this->end(), rhs.end()) - start;
-            return rstring_t(this->base_, start, length);
+            size_t end = std::max(this->start_ + this->length_, rhs.start_ + rhs.length_);
+            return rstring_t(this->base_, start, end - start);
         }
     }
 
@@ -223,19 +200,13 @@ class rstring_t {
     }
 
     // Can compare against const char *
-    // These are always statically known, so the strlen is free
+    // These are often statically known, so the strlen is free
     inline bool has_prefix(const char *s) const {
         size_t len = strlen(s);
         if (len > this->length()) {
             return false;
         }
-        for (size_t i = 0; i < len; i++) {
-            char_t si = s[i];
-            if (this->at(i) != si) {
-                return false;
-            }
-        }
-        return true;
+        return std::equal(s, s + len, this->begin());
     }
 
     bool is_double_dash() const {
@@ -246,9 +217,7 @@ class rstring_t {
     void copy_to(string_t *outstr) const {
         const size_t length = this->length();
         outstr->resize(length);
-        for (size_t i = 0; i < length; i++) {
-            (*outstr)[i] = this->at(i);
-        }
+        std::copy(this->begin(), this->end(), outstr->begin());
     }
 
     string_t std_string() const {
@@ -263,16 +232,8 @@ class rstring_t {
     // Adjusts self to be the remainder after the prefix.
     template <scan_predicate_t F>
     rstring_t scan_while() {
-        const size_t length = this->length();
-        const char_t *haystack = this->ptr_begin();
-        size_t amt = 0;
-        while (amt < length && F(haystack[amt])) {
-            amt++;
-        }
-        rstring_t result = this->substr(0, amt);
-        this->start_ += amt;
-        this->length_ -= amt;
-        return result;
+        const char_t *prefix_end = std::find_if_not(this->begin(), this->end(), F);
+        return this->chop_length(prefix_end - this->begin());
     }
 
 private:
@@ -286,8 +247,9 @@ private:
     template<int, scan_predicate_t F, scan_predicate_t... Fs>
     std::tuple<rstring_t, typename rstring_return_t<Fs>::type...>
     scan_multiple_helper() {
-        auto fst = std::make_tuple(this->scan_while<F>());
-        return std::tuple_cat(fst, scan_multiple_helper<0, Fs...>());
+        rstring_t fst = this->scan_while<F>();
+        return std::tuple_cat(std::make_tuple(fst),
+                              scan_multiple_helper<0, Fs...>());
     }
 
 public:
@@ -307,22 +269,11 @@ public:
     // and adjusts self to the remainder. Otherwise returns
     // an empty string.
     rstring_t scan_string(const char *c) {
+        // Here we hope the compiler can effectively optimize strlen(),
+        // since it will be called again within has_prefix
         rstring_t result;
-        size_t len = strlen(c);
-        if (len <= this->length()) {
-            size_t i = 0;
-            for (i = 0; i < len; i++) {
-                char_t ci = c[i];
-                if (this->at(i) != ci) {
-                    break;
-                }
-            }
-            if (i == len) {
-                // Prefix matches prefix
-                result = this->substr(0, len);
-                this->start_ += len;
-                this->length_ -= len;
-            }
+        if (this->has_prefix(c)) {
+            result = this->chop_length(strlen(c));
         }
         return result;
     }
@@ -333,9 +284,7 @@ public:
     rstring_t scan_1_char(char c) {
         rstring_t result;
         if (this->length() > 0 && this->at(0) == c) {
-            result = this->substr(0, 1);
-            this->start_ += 1;
-            this->length_ -= 1;
+            result = this->chop_length(1);
         }
         return result;
     }
@@ -366,6 +315,18 @@ public:
     }
 
     explicit rstring_t() : start_(0), length_(0), base_(NULL) {}
+    
+    // Iterator junk
+    // Note rstring_ts do not allow mutating their contents
+    // Our iterators are always constant
+    const char_t *begin() const {
+        return this->base_ + this->start_;
+    }
+    
+    const char_t *end() const {
+        return this->begin() + this->length();
+    }
+
 
     // Constructor from std::string. Note this borrows the storage so we must not
     // outlive it.
@@ -377,7 +338,25 @@ public:
     explicit rstring_t(const char_t *s, size_t len) : start_(0), length_(len), base_(s) {}
 };
 
-/* An option represents something like '--foo=bar' */
+// SEPARATOR-NOTE
+// See IEEE Std 1003.1-2008 Utility Argument Syntax
+// http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html
+// Each option_t stores a separator, which describes how the option
+// is separated from its option-argument (what we call value)
+// Each may be space, =, or none
+// Following the conventions, we allow the following rules:
+//  - Short option-arguments may be space-separated or unseparated,
+//    but not = separated
+//  - Long (single or double) options may be space separated or = separated,
+//    but not unseparated
+//
+//  There seems to be disagremeent in how single-long options take their
+//  option-arguments. For example, `gcc -std=c89` requires an = separator,
+//  while Go's flags parser is relaxed. For now we require strict separator
+//  agreement for single-long options (e.g. -std c89 is disallowed).
+
+// An option represents something like '--foo=bar'
+// A single option may have multiple names, e.g. -f --foo
 struct option_t {
     // The types of names
     // This is also used indexes into an array
@@ -389,7 +368,7 @@ struct option_t {
         NAME_TYPE_COUNT
     };
 
-    rstring_t names[NAME_TYPE_COUNT];
+    std::array<rstring_t, NAME_TYPE_COUNT> names;
 
     // value of the option, i.e. variable name. Empty for no value.
     rstring_t value;
@@ -397,18 +376,16 @@ struct option_t {
     // Default value. Empty for none.
     rstring_t default_value;
 
-    // How we separate the name from the value
-    enum separator_t {
-        sep_space,   // curl -o file
-        sep_equals,  // -std=c++98
-        sep_none     // -DNDEBUG. Must be a single_short option.
-    } separator;
+    // special flags
+    // these can only be set via annotated options today
+    option_flags_t flags;
+    
+public:
 
-    option_t() : separator(sep_space) {}
+    option_t() {}
 
-    option_t(name_type_t type, const rstring_t &name, const rstring_t &v,
-             separator_t sep = sep_space)
-        : value(v), separator(sep) {
+    option_t(name_type_t type, const rstring_t &name, const rstring_t &v, option_flags_t f)
+        : value(v), flags(f) {
         assert(type < NAME_TYPE_COUNT);
         assert(name.length() >= 2);
         assert(name[0] == '-');
@@ -436,12 +413,19 @@ struct option_t {
         return this->names[single_short];  // is empty
     }
 
-    /* We want a value if we have a non-empty value range */
+    // Indicates where this option takes a value
     bool has_value() const {
-        return !value.empty();
+        return ! value.empty();
+    }
+    
+    // Returns whether any of our names matches
+    bool has_name(const rstring_t &name) const {
+        assert(! name.empty());
+        const auto where = std::find(this->names.cbegin(), this->names.cend(), name);
+        return where != this->names.end();
     }
 
-    /* Hackish? Returns true if we share a name type */
+    // Hackish? Returns true if we share a name type
     bool name_types_overlap(const option_t &rhs) const {
         bool result = false;
         size_t idx = NAME_TYPE_COUNT;
@@ -466,8 +450,8 @@ struct option_t {
         }
         return result;
     }
-
-    /* Helper function for dumping */
+    
+    // Helper function for dumping
     string_t describe() const {
         string_t result;
         rstring_t name = this->best_name();
@@ -478,26 +462,25 @@ struct option_t {
             result.push_back(' ');
             result.append(value.std_string());
         }
+        if (this->flags & value_is_optional) {
+            result.push_back('?');
+        }
+
         result.push_back(' ');
 
-        if (this->separator == sep_none) {
-            result += STRCONSTANT(" (no sep)");
-        } else if (this->separator == sep_equals) {
+        if (this->flags & single_long_strict_eqsep) {
             result += STRCONSTANT(" (= sep)");
         }
 
         return result;
     }
 
-    /* Acquire "guts" from another option wherever we have blanks */
+    // Acquire "guts" from another option wherever we have blanks
     void merge_from(const option_t &rhs) {
         for (size_t i = 0; i < NAME_TYPE_COUNT; i++) {
             this->names[i].replace_if_empty(rhs.names[i]);
         }
-        // Ensure we copy over the separator type
-        if (this->value.empty()) {
-            this->separator = rhs.separator;
-        }
+        this->flags |= rhs.flags;
         this->value.replace_if_empty(rhs.value);
         this->default_value.replace_if_empty(rhs.default_value);
     }
@@ -519,15 +502,10 @@ struct option_t {
 };
 typedef std::vector<option_t> option_list_t;
 
-inline void append_error(std::vector<error_t> *errors, size_t where, int code, const char *txt,
+inline void append_error(std::vector<error_t> *errors, size_t location, int code, const char *text,
                          size_t arg_idx = -1) {
-    if (errors != NULL) {
-        errors->resize(errors->size() + 1);
-        error_t *error = &errors->back();
-        error->location = where;
-        error->code = code;
-        error->argument_index = arg_idx;
-        error->text = txt;
+    if (errors != nullptr) {
+        errors->push_back(error_t{location, arg_idx, code, text});
     }
 }
 
