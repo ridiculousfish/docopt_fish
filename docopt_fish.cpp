@@ -962,7 +962,7 @@ struct match_state_t {
         return copy_if_shared(&consumed_options_ref);
     }
 
-    match_state_t(size_t option_count)
+    explicit match_state_t(size_t option_count)
         : argument_values_ref(std::make_shared<option_rmap_t>()),
           consumed_options_ref(std::make_shared<std::vector<bool>>(option_count, false)),
           next_positional_index(0),
