@@ -539,22 +539,28 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates,
     }
 }
 
+// Helper function to transform metadata from rstring_t to string_t
+static metadata_t copyout_metadata(const base_metadata_t<rstring_t> &md) {
+    metadata_t result;
+    result.command = md.command.std_string();
+    result.condition = md.condition.std_string();
+    result.description = md.description.std_string();
+    result.tag = md.tag;
+    return result;
+}
+
 // Helper function to derive a suggestion from a key and its metadata
 // Returns "empty" metadata if no metadata is stored for the given name
 static suggestion_t suggestion_for(const rstring_t &name, const metadata_map_t &md_map, size_t offset = 0) {
     metadata_t md;
     auto suggestion_iter = md_map.find(name);
     if (suggestion_iter != md_map.end()) {
-        // rmd contains rstring_t, convert to string_t
-        const auto &rmd = suggestion_iter->second;
-        md.command = rmd.command.std_string();
-        md.condition = rmd.condition.std_string();
-        md.description = rmd.description.std_string();
-        md.tag = rmd.tag;
+        md = copyout_metadata(suggestion_iter->second);
     }
     return suggestion_t(name.std_string(), std::move(md), offset);
 }
 
+// Type that tracks how we classify arguments into positionals, options, and --
 struct arg_classification_t {
     positional_argument_list_t positionals;
     resolved_option_list_t resolved_options;
@@ -2173,12 +2179,7 @@ suggestion_list_t argument_parser_t::suggest_next_argument(const string_list_t &
 
 metadata_t argument_parser_t::metadata_for_name(const string_t &var) const {
     const base_metadata_t<rstring_t> md = impl->metadata_for_name(rstring_t(var));
-    metadata_t result;
-    result.command = md.command.std_string();
-    result.condition = md.condition.std_string();
-    result.description = md.description.std_string();
-    result.tag = md.tag;
-    return result;
+    return copyout_metadata(md);
 }
 
 string_list_t argument_parser_t::get_command_names() const {
