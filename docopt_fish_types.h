@@ -1,10 +1,12 @@
 #ifndef DOCOPT_FISH_TYPES_H
 #define DOCOPT_FISH_TYPES_H
 
+#include <algorithm>
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <cstring>
+#include <climits>
 #include <vector>
 #include <array>
 
