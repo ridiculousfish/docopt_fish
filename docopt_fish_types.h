@@ -1,10 +1,12 @@
 #ifndef DOCOPT_FISH_TYPES_H
 #define DOCOPT_FISH_TYPES_H
 
+#include <algorithm>
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <cstring>
+#include <climits>
 #include <vector>
 #include <array>
 
@@ -378,7 +380,7 @@ struct option_t {
 
     // special flags
     // these can only be set via annotated options today
-    option_flags_t flags;
+    option_flags_t flags = 0;
     
 public:
 
