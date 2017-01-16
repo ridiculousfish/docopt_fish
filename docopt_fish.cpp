@@ -25,12 +25,6 @@ typedef std::vector<size_t> index_list_t;
 typedef base_metadata_t<rstring_t> rmetadata_t;
 typedef std::map<rstring_t, rmetadata_t> metadata_map_t;
 
-// String helper
-// Handles both wide and narrow string_t
-static inline string_t to_string(const char *s) {
-    return string_t(s, s + strlen(s));
-}
-
 static inline std::basic_ostream<string_t::value_type> &errstream() {
 #if DOCOPT_USE_WCHAR
     return std::wcerr;
@@ -218,7 +212,7 @@ option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_
     return option_t(type, dashes.merge(name), value, flags);
 }
 
-/* Helper class for pretty-printing */
+// Helper class for pretty-printing
 class node_dumper_t : public node_visitor_t<node_dumper_t> {
     unsigned int depth;
 
@@ -230,7 +224,8 @@ class node_dumper_t : public node_visitor_t<node_dumper_t> {
     template <typename NODE_TYPE>
     void accept(const NODE_TYPE &node) {
         string_t result(2 * depth, ' ');
-        result.append(to_string(node.name().c_str()));
+        const std::string name = node.name();
+        result.append(name.begin(), name.end());
         lines.push_back(result);
     }
 
@@ -255,7 +250,7 @@ class node_dumper_t : public node_visitor_t<node_dumper_t> {
             } else {
                 snprintf(buff, sizeof buff, "{%lu-%lu}", t1.offset(), t1.length());
             }
-            result.append(to_string(buff));
+            result.append(buff, buff + strlen(buff));
             lines.push_back(result);
         }
     }
