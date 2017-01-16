@@ -904,19 +904,41 @@ arg_classification_t argv_separator_t::classify_arguments(const string_list_t &a
 typedef std::map<rstring_t, argument_t> option_rmap_t;
 
 // COW helper
-// Given a shared_ptr, if the pointer is not the unique owner
-// of the object, copy the object and create a new pointer to it
-template <typename T>
-static T &copy_if_shared(shared_ptr<T> *ptr) {
-    if (!ptr->unique()) {
-        *ptr = std::make_shared<T>(**ptr);
+// Wraps a shared_ptr and only provides const access to it,
+// except for the mut() function
+// This can never hold NULL, except after being moved from
+template<typename T>
+class cow_ref_t {
+    shared_ptr<T> ptr;
+
+public:
+    cow_ref_t(const cow_ref_t &) = default;
+    cow_ref_t(cow_ref_t &&rhs) = default;
+    cow_ref_t &operator=(cow_ref_t &&rhs) = default;
+
+    cow_ref_t(T &&val) : ptr(std::make_shared<T>(val))
+    {}
+
+    T& mut() {
+        // perform the copy-on-write if there is no unique owner
+        if (! ptr.unique()) {
+            ptr = std::make_shared<T>(*ptr);
+        }
+        return *ptr;
     }
-    return **ptr;
-}
+
+    const T& operator*() const {
+        return *ptr;
+    }
+
+    const T* operator->() const {
+        return &**this;
+    }
+};
 
 // Match state objects
 // Match states represent the state of matching argv against our docopt usage tree
-// THese are passed around and may be copied, etc.
+// These are passed around and may be copied, etc.
 // Matching is very performance sensitive, so this uses a few optimization tricks
 // Implicit copying and moving (via constructors, std::move, etc.) is not allowed
 // Instead use copy() and move()
@@ -926,18 +948,18 @@ struct match_state_t {
     friend struct match_context_t;
 
    private:
-    // Map from option names to arguments
-    shared_ptr<option_rmap_t> argument_values_ref;
-
-    // Bitset of options we've consumed
-    shared_ptr<std::vector<bool>> consumed_options_ref;
-
     // Copying must be explicit via copy()
     // Or use move()
     match_state_t(const match_state_t &) = default;
     match_state_t &operator=(const match_state_t &) = delete;
 
-   public:
+public:
+    // Map from option names to arguments
+    cow_ref_t<option_rmap_t> argument_values;
+
+    // Bitset of options we've consumed
+    cow_ref_t<std::vector<bool>> consumed_options;
+
     // Next positional to dequeue
     size_t next_positional_index;
 
@@ -947,25 +969,9 @@ struct match_state_t {
     // Whether this match has fully consumed all positionals and options
     bool fully_consumed;
 
-    const option_rmap_t &argument_values() const {
-        return *argument_values_ref;
-    }
-
-    option_rmap_t &mut_argument_values() {
-        return copy_if_shared(&argument_values_ref);
-    }
-
-    const std::vector<bool> &consumed_options() const {
-        return *consumed_options_ref;
-    }
-
-    std::vector<bool> &mut_consumed_options() {
-        return copy_if_shared(&consumed_options_ref);
-    }
-
     explicit match_state_t(size_t option_count)
-        : argument_values_ref(std::make_shared<option_rmap_t>()),
-          consumed_options_ref(std::make_shared<std::vector<bool>>(option_count, false)),
+        : argument_values(option_rmap_t()),
+          consumed_options(std::vector<bool>(option_count, false)),
           next_positional_index(0),
           fully_consumed(false) {}
 
@@ -997,8 +1003,8 @@ struct match_state_t {
         size_t result = this->next_positional_index;
 
         // Add in arguments by counting set bits in the bitmap
-        result += std::accumulate(this->consumed_options().cbegin(),
-                                  this->consumed_options().cend(),
+        result += std::accumulate(this->consumed_options->cbegin(),
+                                  this->consumed_options->cend(),
                                   0);
 
         // Add in number of suggestions
@@ -1025,7 +1031,7 @@ struct match_context_t {
         }
 
         // Now return whether all of our consumed options are true
-        const std::vector<bool> &ops = state.consumed_options();
+        const std::vector<bool> &ops = *state.consumed_options;
         return std::all_of(ops.begin(), ops.end(), [](bool v) { return v; });
     }
 
@@ -1069,7 +1075,7 @@ struct match_context_t {
         
         // consumed_options is a vector parallel to resolved_options,
         // which tracks whether each resolved_option was used
-        const std::vector<bool> &copts = state->consumed_options();
+        const std::vector<bool> &copts = *state->consumed_options;
 
         // Walk over used positionals.
         // next_positional_index is the first unused one
@@ -1393,7 +1399,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
         size_t resolved_opt_idx = npos;
         for (size_t i = 0; i < ctx.aclass.resolved_options.size(); i++) {
             // Skip ones that have already been consumed
-            if (!state->consumed_options().at(i)) {
+            if (! state->consumed_options->at(i)) {
                 // See if the option from argv has the same key range as the option in
                 // the document
                 if (ctx.aclass.resolved_options.at(i).option.has_same_name(opt_in_doc)) {
@@ -1405,8 +1411,7 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
 
         if (resolved_opt_idx != npos) {
             // We found a matching option in argv. Set it in the argument_values for
-            // this state and
-            // mark its index as used
+            // this state and mark its index as used
             // We have two things to set:
             //  - The option name, like -foo
             //  - The option's argument value (if any)
@@ -1414,18 +1419,18 @@ static bool match_options(const option_list_t &options_in_doc, match_state_t *st
             const rstring_t &name = opt_in_doc.best_name();
 
             // Update the option value, creating it if necessary
-            state->mut_argument_values()[name].count += 1;
+            state->argument_values.mut()[name].count += 1;
 
             // Update the option argument vlaue
             if (opt_in_doc.has_value() && resolved_opt.value_idx_in_argv != npos) {
                 const rstring_t &variable_name = opt_in_doc.value;
 
                 const rstring_t &value = resolved_opt.value_in_arg;
-                state->mut_argument_values()[variable_name].values.push_back(value.std_string());
+                state->argument_values.mut()[variable_name].values.push_back(value.std_string());
             }
 
             successful_match = true;
-            state->mut_consumed_options().at(resolved_opt_idx) = true;
+            state->consumed_options.mut()[resolved_opt_idx] = true;
         } else {
             // This was an option that was not specified in argv
             // It can be a suggestion
@@ -1488,7 +1493,7 @@ static void match(const fixed_clause_t &node, match_state_t state, const match_c
         rstring_t name = rstring_t(ctx.argv.at(positional.idx_in_argv));
         if (node.word == name) {
             // The static argument matches
-            state.mut_argument_values()[name].count += 1;
+            state.argument_values.mut()[name].count += 1;
             ctx.acquire_next_positional(&state);
             ctx.try_mark_fully_consumed(&state);
             resulting_states->push_back(state.move());
@@ -1514,7 +1519,7 @@ static void match(const variable_clause_t &node, match_state_t state, const matc
         // Note also that 'arg' points into an entry in the state argument value map
         const positional_argument_t &positional = ctx.acquire_next_positional(&state);
         const string_t &positional_value = ctx.argv.at(positional.idx_in_argv);
-        option_rmap_t &args = state.mut_argument_values();
+        option_rmap_t &args = state.argument_values.mut();
         args[name].values.push_back(positional_value);
         ctx.try_mark_fully_consumed(&state);
         resulting_states->push_back(state.move());
@@ -1805,7 +1810,7 @@ class docopt_impl {
                 const match_state_t &state = result.at(i);
                 bool is_incomplete = !ctx.unused_arguments(&state).empty();
                 errstream() << "Result " << i << (is_incomplete ? " (INCOMPLETE)" : "") << ":\n";
-                for (const auto &kv : state.argument_values()) {
+                for (const auto &kv : *state.argument_values) {
                     const rstring_t &name = kv.first;
                     const argument_t &arg = kv.second;
                     errstream() << "\t" << name.std_string() << ": ";
@@ -1844,7 +1849,7 @@ class docopt_impl {
                 }
             }
             assert(best_state != nullptr);
-            option_map = best_state->argument_values();
+            option_map = *best_state->argument_values;
         }
         
         // We got a best state
