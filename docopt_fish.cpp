@@ -561,7 +561,7 @@ struct arg_classification_t {
 
 // Object that knows how to separate argv into options and positionals
 // This is stack-allocated and transient
-class argv_separator_t {
+class argv_classifier_t {
     // inputs to our separator
     const string_list_t &argv;
     const option_list_t &options;
@@ -608,7 +608,7 @@ class argv_separator_t {
 
     void parse_next_arg(error_list_t *out_errors);
 
-    argv_separator_t(const string_list_t &av, const option_list_t &opts,
+    argv_classifier_t(const string_list_t &av, const option_list_t &opts,
                      const metadata_map_t &md_map, parse_flags_t fls)
     : argv(av), options(opts), names_to_metadata(md_map), flags(fls)
     {}
@@ -625,7 +625,7 @@ public:
 // or an unseparated short value like -DNDEBUG (type is single_short)
 // We do NOT handle separated short values (-D NDEBUG) here;
 // those are handled in parse_unseparated_short_options
-bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_list_t *out_errors) {
+bool argv_classifier_t::parse_separated_option(option_t::name_type_t type, error_list_t *out_errors) {
     const string_t &arg = this->arg();
     assert(this->arg_has_prefix(type == option_t::double_long ? "--" : "-"));
 
@@ -714,7 +714,7 @@ bool argv_separator_t::parse_separated_option(option_t::name_type_t type, error_
 // Given a list of short options, parse out arguments
 // There may be multiple arguments, e.g. 'tar -xc'
 // Only the last option may have an argument, e.g. 'tar -xcf somefile'
-bool argv_separator_t::parse_unseparated_short_options(error_list_t *out_errors) {
+bool argv_classifier_t::parse_unseparated_short_options(error_list_t *out_errors) {
     const string_t &arg = this->arg();
     assert(this->arg_has_prefix("-"));
     assert(arg.length() > 1);  // must not be just a single dash
@@ -814,7 +814,7 @@ bool argv_separator_t::parse_unseparated_short_options(error_list_t *out_errors)
     return !errored;
 }
 
-void argv_separator_t::parse_next_arg(error_list_t *out_errors) {
+void argv_classifier_t::parse_next_arg(error_list_t *out_errors) {
     assert(this->idx < argv.size());
     
     if (this->classification.double_dash_idx != npos) {
@@ -874,10 +874,10 @@ void argv_separator_t::parse_next_arg(error_list_t *out_errors) {
 // The Python implementation calls this "parse_argv"
 // Given an argv list, a set of options, and a set of flags,
 // parse the argv into a set of positionals, options, errors, and optionally a suggestion
-arg_classification_t argv_separator_t::classify_arguments(const string_list_t &argv, const option_list_t &options,
+arg_classification_t argv_classifier_t::classify_arguments(const string_list_t &argv, const option_list_t &options,
                                                           const metadata_map_t &md_map, parse_flags_t flags,
                                                           error_list_t *out_errors, suggestion_t *out_suggestion) {
-    argv_separator_t st(argv, options, md_map, flags);
+    argv_classifier_t st(argv, options, md_map, flags);
     while (st.idx < argv.size()) {
         st.parse_next_arg(out_errors);
     }
@@ -1906,7 +1906,7 @@ class docopt_impl {
                                   error_list_t *out_errors, index_list_t *out_unused_arguments,
                                   option_rmap_t *out_option_map) const {
         // Extract positionals and arguments from argv, then produce an option map
-        arg_classification_t aclass = argv_separator_t::classify_arguments(argv, all_options, names_to_metadata, flags, out_errors);
+        arg_classification_t aclass = argv_classifier_t::classify_arguments(argv, all_options, names_to_metadata, flags, out_errors);
         this->match_argv(argv, flags, std::move(aclass), out_option_map, out_unused_arguments);
     }
 
@@ -2068,7 +2068,7 @@ class docopt_impl {
         }
         
         suggestion_t suggestion;
-        arg_classification_t aclass = argv_separator_t::classify_arguments(argv, all_options, names_to_metadata,
+        arg_classification_t aclass = argv_classifier_t::classify_arguments(argv, all_options, names_to_metadata,
                                                                            flags, nullptr /* errors */, &suggestion);
 
         // If we got a suggestion, it means that the last argument was of the form
