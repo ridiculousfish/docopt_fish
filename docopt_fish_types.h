@@ -380,7 +380,7 @@ struct option_t {
 
     // special flags
     // these can only be set via annotated options today
-    option_flags_t flags;
+    option_flags_t flags = 0;
     
 public:
 
