@@ -498,13 +498,13 @@ static void uniqueize_options(option_list_t *options, bool error_on_duplicates,
     // decrementing the length
     size_t options_count = options->size();  // note this changes as we go
     for (size_t outer = 0; outer < options_count; outer++) {
-        option_t *representative = &options->at(outer);
+        const option_t representative = options->at(outer);
 
         // Find all options that share a name with this representative
         // Determine which one is best
         for (size_t match_cursor = outer + 1; match_cursor < options_count; match_cursor++) {
             option_t *candidate = &options->at(match_cursor);
-            if (!representative->has_same_name(*candidate)) {
+            if (!representative.has_same_name(*candidate)) {
                 continue;
             }
 
