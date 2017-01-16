@@ -54,7 +54,7 @@ void append(std::vector<T> &&victim, std::vector<T> *receiver) {
         std::move(victim.begin(), victim.end(), std::back_inserter(*receiver));
 }
 
-/* Parsing helpers */
+// Parsing helpers
 template <char T>
 bool it_equals(rstring_t::char_t c) {
     return c == T;
@@ -229,7 +229,7 @@ class node_dumper_t : public node_visitor_t<node_dumper_t> {
         lines.push_back(result);
     }
 
-    /* Override of visit() to bump the depth */
+    // Override of visit() to bump the depth
     template <typename NODE_TYPE>
     void visit(const NODE_TYPE &t) {
         depth += 1;
@@ -268,7 +268,7 @@ class node_dumper_t : public node_visitor_t<node_dumper_t> {
     }
 };
 
-/* Helper class for collecting clauses from a tree */
+// Helper class for collecting clauses from a tree
 struct option_collector_t : public node_visitor_t<option_collector_t> {
     option_list_t options;
 
@@ -282,13 +282,10 @@ struct option_collector_t : public node_visitor_t<option_collector_t> {
     void accept(const IGNORED_TYPE &t UNUSED) {}
 };
 
-/* Helper to efficiently iterate over lines of a string 'base'. inout_line
- * should be initially
- * empty. On return, it will contain the line, with its end pointing just after
- * the trailing
- * newline, or possibly at the end. Returns true if a line was returned, false
- * if we reached the
- * end. */
+// Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty.
+// On return, it will contain the line, with its end pointing just after the trailing newline, or
+// possibly at the end.
+// Returns true if a line was returned, false if we reached the end.
 static bool get_next_line(const string_t &base, rstring_t *inout_line) {
     assert(inout_line != nullptr);
     // Start at the end of the last line, or 0 if this is the first
@@ -309,12 +306,12 @@ static bool get_next_line(const string_t &base, rstring_t *inout_line) {
     return true;
 }
 
-/* A resolved option references an option in argv */
+// A resolved option references an option in argv
 struct resolved_option_t {
-    // The option referenced by this
+    // The option from the usage referenced by this
     option_t option;
 
-    // The index of the name portion of the option, in argv
+    // The index (in argv) of the name portion of the option
     size_t name_idx_in_argv;
 
     // The index of the argument where the value was found. npos for none.
@@ -335,11 +332,8 @@ struct resolved_option_t {
 };
 typedef std::vector<resolved_option_t> resolved_option_list_t;
 
-/* List of usages */
-typedef std::vector<usage_t> usage_list_t;
-
-/* Collects options, i.e. tokens of the form --foo */
-static option_list_t collect_options(const usage_list_t &usages) {
+// Collects options, i.e. tokens of the form --foo
+static option_list_t collect_options(const std::vector<usage_t> &usages) {
     option_collector_t collector;
     for (const usage_t &usage : usages) {
         collector.begin(usage);
@@ -347,18 +341,17 @@ static option_list_t collect_options(const usage_list_t &usages) {
     return std::move(collector.options);
 }
 
-/* A positional argument */
+// A positional argument like 'checkout'
+// This tracks its index in argv
 struct positional_argument_t {
     size_t idx_in_argv;
-
     explicit positional_argument_t(size_t idx) : idx_in_argv(idx) {}
 };
 typedef std::vector<positional_argument_t> positional_argument_list_t;
 
-/* Given an option spec, that extends from the initial - to the end of the
- * description, parse out an
- * option. Store descriptions in the given metadata. It may have multiple names.
- */
+// Given an option spec, that extends from the initial - to the end of the
+// description, parse out an option. Store descriptions in the given metadata.
+// Note an option may have multiple names.
 static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *metadata,
                                       error_list_t *errors) {
     assert(!spec.empty() && spec[0] == '-');
@@ -429,9 +422,8 @@ static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *met
     return result;
 }
 
-/* Returns a header in the given string, or an empty string if none. We are
- * considered a header if
- * we contain a colon, and only space / alpha text before it. */
+// Returns a header in the given string, or an empty string if none. We are
+// considered a header if we contain a colon, and only space / alpha text before it.
 static rstring_t find_header(const rstring_t &src) {
     rstring_t result;
     for (size_t i = 0; i < src.length(); i++) {
@@ -1244,10 +1236,8 @@ static void match(const usage_t &node, match_state_t state, const match_context_
         return;
     }
 
-    // Program name
+    // Program name, then match against our contents
     ctx.acquire_next_positional(&state);
-
-    // Match against our contents
     match(node.alternation_list, state.move(), ctx, resulting_states);
 }
 
@@ -1255,10 +1245,10 @@ static void match(const expression_list_t &node, match_state_t state, const matc
                   match_state_list_t *resulting_states) {
     size_t count = node.expressions.size();
     if (count == 0) {
-        // Merely append this state
+        // Empty expression list, append the state
         resulting_states->push_back(state.move());
     } else if (count == 1) {
-        // Just one expression, trivial
+        // Common case of just one expression, trivial
         match(node.expressions.at(0), state.move(), ctx, resulting_states);
     } else {
         // First expression
@@ -1534,7 +1524,7 @@ static void match(const variable_clause_t &node, match_state_t state, const matc
     }
 }
 
-/* Wrapper class that takes either a string or wstring as string_t */
+// This is the private implementation class of argument_parser_t
 class docopt_impl {
 #pragma mark -
 #pragma mark Scanning
@@ -1557,29 +1547,27 @@ class docopt_impl {
 #pragma mark Instance Variables
 #pragma mark -
 
-    /* The usage parse tree. */
-    usage_list_t usages;
+    // The usage parse tree.
+    std::vector<usage_t> usages;
 
-    /* When initialized via a usage spec (as a string), we acquire the string. Our
-     * rstring_t point
-     * into this. */
+    // When initialized via a usage spec (as a string), we acquire the string. Our
+    // rstring_ts point into this.
     const string_t usage_storage;
 
-    /* List of direct options. Some of our rstrings point to strings inside of
-     * these. */
+    // List of direct options. Some of our rstrings point to strings inside of
+    // these.
     const std::vector<annotated_option_t> annotated_options;
 
-    /* The list of options parsed from the "Options:" section. Referred to as
-     * "shortcut options"
-     * because the "[options]" directive can be used as a shortcut to reference
-     * them. */
+    // The list of options parsed from the "Options:" section. Referred to as
+    // "shortcut options" because the "[options]" directive can be used as a shortcut
+    // to reference them.
     option_list_t shortcut_options;
 
-    /* The list of options parsed from the "Options:" section and "Usage:"
-     * sections.  */
+    // The list of options parsed from the "Options:" section and "Usage:"
+    // sections.
     option_list_t all_options;
 
-    /* Map from variable/option names to their metadata */
+    // Map from variable/option names to their metadata
     metadata_map_t names_to_metadata;
 
    public:
@@ -1594,42 +1582,34 @@ class docopt_impl {
 
         rstring_t line;
         while (get_next_line(this->usage_storage, &line)) {
-            /* There are a couple of possibilitise for each line:
-
-             1. It may have a header like "Usage:". If so, we want to strip that
-             header, and
-             optionally
-             use it to determine the mode.
-             2. It may be a usage spec. We can tell because the first word is plain
-             text.
-             3. It may be an option spec. We can tell because the first character is a
-             dash.
-             4. It may be a variable spec. We can tell because the first character is
-             a <.
-             5. It may be just whitespace or empty, and is ignored.
-
-             Also note that a (nonempty) line indented more than the previous line is
-             considered a
-             continuation of that line.
-             */
+            // There are a couple of possibilitise for each line
+            //
+            // 1. It may have a header like "Usage:". If so, we want to strip that
+            //    header, and optionally use it to determine the mode.
+            // 2. It may be a usage spec. We can tell because the first word is plain text.
+            // 3. It may be an option spec. We can tell because the first character is a dash.
+            // 4. It may be a variable spec. We can tell because the first character is a <.
+            // 5. It may be just whitespace or empty, and is ignored.
+            //
+            // Also note that a (nonempty) line indented more than the previous line is
+            // considered a continuation of that line.
             rstring_t trimmed_line = line.trim_whitespace();
-
             const rstring_t header = find_header(trimmed_line);
             if (!header.empty()) {
                 // It's a header
                 // Set mode based on header, and remove header from line
-                // The headers we know about are Usage, Synopsis, Options, and Arguments
-                // (case
-                // insensitive)
-                // Everything else is considered exposition
+                // The headers we know about are Usage, Synopsis, Options, and Arguments,
+                // all case insensitive
+                // Everything else is considered exposition and is ignored
+                mode = mode_exposition;
                 const char *const keywords[] = {"Usage", "Synopsis", "Options", "Arguments"};
                 size_t keyword_count = sizeof keywords / sizeof *keywords;
-                bool found_keyword = false;
-                for (size_t i = 0; i < keyword_count && !found_keyword; i++) {
-                    found_keyword = header.find_case_insensitive(keywords[i]) != rstring_t::npos;
+                for (size_t i = 0; i < keyword_count; i++) {
+                    if (header.find_case_insensitive(keywords[i]) != rstring_t::npos) {
+                        mode = mode_normal;
+                        break;
+                    }
                 }
-                mode = found_keyword ? mode_normal : mode_exposition;
-
                 // Remove the header range from the trimmed line
                 assert(header.length() <= trimmed_line.length());
                 trimmed_line = trimmed_line.substr_from(header.length()).trim_whitespace();
@@ -1640,15 +1620,13 @@ class docopt_impl {
                 continue;
             }
 
-            /*
-              Compute the indent. Note that the header is considered part of the
-              indent, so that:
-
-              Usage: foo
-              bar
-
-              Here 'foo' is indented more than 'bar'.
-             */
+            // Compute the indent. Note that the header is considered part of the indent, so that:
+            //
+            //
+            // Usage: foo
+            // bar
+            //
+            // Here 'foo' is indented more than 'bar'.
             const size_t line_indent = compute_indent(line, trimmed_line);
 
             // Determine the "line group." That is, this line plus all subsequent
@@ -1795,7 +1773,7 @@ class docopt_impl {
                     const arg_classification_t &aclass,
                     option_rmap_t *out_option_map,
                     index_list_t *out_unused_arguments) const {
-        /* Set flag_stop_after_consuming_everything. This allows us to early-out. */
+        // The flag_stop_after_consuming_everything allows us to early-out.
         match_context_t ctx(flags | flag_stop_after_consuming_everything, this->shortcut_options,
                             aclass, argv);
 
@@ -1861,7 +1839,8 @@ class docopt_impl {
         }
     }
 
-    /* Parses the docopt, etc. Returns true on success, false on error */
+    // Parses the docopt usage spec and sets up internal state.
+    // Returns true on success, false on error
     bool preflight(error_list_t *out_errors) {
         /* If we have no usage, apply the default one */
         if (this->usages.empty()) {
@@ -1879,26 +1858,24 @@ class docopt_impl {
                                  this->shortcut_options.end());
         uniqueize_options(&this->all_options, false /* do not error on duplicates */, out_errors);
 
-        /* Hackish. Consider the following usage:
-         usage: prog [options] [-a]
-         options: -a
-
-         invoked as: prog -a -a
-
-         Naively we would expect options to match the first -a arg, and the -a from
-         usage to match the second. But we don't. Instead, if an option appears explicitly
-         in a usage pattern, we excise it from the shortcuts.
-
-         What Python docopt does is assert, if an option appears anywhere in any
-         usage, it may not be matched by [options]. This seems reasonable, because
-         it means that that option has more particular use cases. So remove all items
-         from shortcut_options() that appear in usage_options.
-
-         TODO: this currently only removes the matched variant. For example,
-           prog -a --alpha
-         would still be allowed.
-         */
-
+        // Hackish. Consider the following usage:
+         // usage: prog [options] [-a]
+         // options: -a
+         //
+         // invoked as: prog -a -a
+         //
+         // Naively we would expect options to match the first -a arg, and the -a from
+         // usage to match the second. But we don't. Instead, if an option appears explicitly
+         // in a usage pattern, we excise it from the shortcuts.
+         //
+         // What Python docopt does is assert, if an option appears anywhere in any
+         // usage, it may not be matched by [options]. This seems reasonable, because
+         // it means that that option has more particular use cases. So remove all items
+         // from shortcut_options() that appear in usage_options.
+         //
+         // TODO: this currently only removes the matched variant. For example,
+         // prog -a --alpha
+         // would still be allowed.
         auto opt_is_in_usage = [&](const option_t &shortcut_opt) {
             for (const option_t &usage_opt : usage_options) {
                 if (shortcut_opt.has_same_name(usage_opt)) {
@@ -2224,7 +2201,7 @@ void argument_parser_t::set_options(std::vector<annotated_option_t> opts) {
     delete new_impl;  // may be null
 }
 
-/* Constructors */
+// Constructors and destructors
 
 argument_parser_t::argument_parser_t() : impl(nullptr) {}
 
@@ -2242,8 +2219,6 @@ argument_parser_t &argument_parser_t::operator=(argument_parser_t &&rhs) {
     std::swap(this->impl, rhs.impl);
     return *this;
 }
-
-/* Destructor */
 
 argument_parser_t::~argument_parser_t() {
     delete impl;  // may be null
