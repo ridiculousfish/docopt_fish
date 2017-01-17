@@ -346,19 +346,6 @@ static rstring_t find_header(const rstring_t &src) {
     return result;
 }
 
-// Given a variable spec, parse out a command
-// A specification look like this:
-// <pid> stuff
-// Return the variable name <pid> and the command stuff by reference
-static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *out_variable_name,
-                                            rstring_t *out_command, error_list_t *out_errors) {
-    rstring_t remaining = spec;
-    rstring_t name = parse_variable_name(&remaining, out_errors);
-    *out_variable_name = name;
-    *out_command = remaining.trim_whitespace();
-    return ! name.empty();
-}
-
 // Given a string 'src' and a whitespace-trimmed substring trimmed_src, compute
 // how much trimmed_src
 // is indented. Tabs are treated as 4 spaces. newlines are unexpected, and
@@ -900,7 +887,7 @@ class docopt_impl {
                 all_consumed_lines = all_consumed_lines.merge(next_line);
             }
 
-            rstring_t::char_t first_char = line_group[0];
+            rstring_t::char_t first_char = line_group.front();
             if (first_char == '-') {
                 // It's an option spec
                 this->shortcut_options.push_back(
@@ -908,16 +895,16 @@ class docopt_impl {
 
             } else if (first_char == '<') {
                 // It's a variable command spec
-                rstring_t variable_name, variable_command;
-                if (parse_one_variable_command_spec(line_group, &variable_name, &variable_command,
-                                                    out_errors)) {
+                rstring_t variable_name = parse_variable_name(&line_group, out_errors);
+                if (! variable_name.empty()) {
                     base_metadata_t<rstring_t> *md = &this->names_to_metadata[variable_name];
                     if (!md->command.empty()) {
                         append_token_error(out_errors, line_group,
-                                            error_one_variable_multiple_commands,
-                                            "Duplicate command for variable");
+                                           error_one_variable_multiple_commands,
+                                           "Duplicate command for variable");
                     }
-                    md->command = variable_command;
+                    // remaining part of line is the command
+                    md->command = line_group.trim_whitespace();;
                 }
             } else if (isalnum(first_char) || first_char == '_') {
                 // It's a usage spec. We will come back to this.
