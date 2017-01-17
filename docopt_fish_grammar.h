@@ -272,6 +272,12 @@ struct node_visitor_t {
     }
 };
 
+/// Returns the list of all options found in the list of usages
+option_list_t collect_options(const std::vector<usage_t> &usages);
+
+// Debug helper. Returns a human-parseable form of the usage.
+string_t dump_usage(const usage_t &usage);
+
 CLOSE_DOCOPT_IMPL
 
 #endif

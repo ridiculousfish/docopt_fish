@@ -211,75 +211,6 @@ option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_
     return option_t(type, dashes.merge(name), value, flags);
 }
 
-// Helper class for pretty-printing
-class node_dumper_t : public node_visitor_t<node_dumper_t> {
-    unsigned int depth;
-
-    std::vector<string_t> lines;
-
-    node_dumper_t() : depth(0) {}
-
-   public:
-    template <typename NODE_TYPE>
-    void accept(const NODE_TYPE &node) {
-        string_t result(2 * depth, ' ');
-        const std::string name = node.name();
-        result.append(name.begin(), name.end());
-        lines.push_back(result);
-    }
-
-    // Override of visit() to bump the depth
-    template <typename NODE_TYPE>
-    void visit(const NODE_TYPE &t) {
-        depth += 1;
-        node_visitor_t<node_dumper_t>::visit(t);
-        depth -= 1;
-    }
-
-    void accept(const rstring_t &t1) {
-        if (!t1.empty()) {
-            string_t result(2 * depth, ' ');
-            const string_t quote(1, '\'');
-
-            result += quote + t1.std_string() + quote;
-
-            char buff[32];
-            if (t1.length() == 1) {
-                snprintf(buff, sizeof buff, "{%lu}", t1.offset());
-            } else {
-                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.offset(), t1.length());
-            }
-            result.append(buff, buff + strlen(buff));
-            lines.push_back(result);
-        }
-    }
-
-    template <typename NODE_TYPE>
-    static string_t dump_tree(const NODE_TYPE &node) {
-        node_dumper_t dumper;
-        dumper.begin(node);
-        string_t result;
-        for (const string_t &line : dumper.lines) {
-            result.append(line);
-            result.push_back('\n');
-        }
-        return result;
-    }
-};
-
-// Helper class for collecting clauses from a tree
-struct option_collector_t : public node_visitor_t<option_collector_t> {
-    option_list_t options;
-
-    // The requested types we capture
-    void accept(const option_clause_t &node) {
-        options.push_back(node.option);
-    }
-
-    // Other types we ignore
-    template <typename IGNORED_TYPE>
-    void accept(const IGNORED_TYPE &t UNUSED) {}
-};
 
 // Helper to efficiently iterate over lines of a string 'base'. inout_line should be initially empty.
 // On return, it will contain the line, with its end pointing just after the trailing newline, or
@@ -303,15 +234,6 @@ static bool get_next_line(const string_t &base, rstring_t *inout_line) {
     // Empty lines are impossible
     assert(!inout_line->empty());
     return true;
-}
-
-// Collects options, i.e. tokens of the form --foo
-static option_list_t collect_options(const std::vector<usage_t> &usages) {
-    option_collector_t collector;
-    for (const usage_t &usage : usages) {
-        collector.begin(usage);
-    }
-    return std::move(collector.options);
 }
 
 // Given an option spec, that extends from the initial - to the end of the
@@ -1092,7 +1014,7 @@ class docopt_impl {
             this->usages.push_back(usage_t::make_default());
         }
 
-        // Extract options and variables from the usage sections
+        // Extract options from the usage section
         option_list_t usage_options = collect_options(this->usages);
 
         // Combine these into a single list
@@ -1136,11 +1058,9 @@ class docopt_impl {
 
         // Example of how to dump
         if ((0)) {
-            string_t dumped;
-            for (size_t i = 0; i < this->usages.size(); i++) {
-                dumped += node_dumper_t::dump_tree(this->usages.at(i));
+            for (const usage_t &usage : this->usages) {
+                errstream() << dump_usage(usage) << "\n";
             }
-            errstream() << dumped << "\n";
         }
 
         // Successfully preflighted

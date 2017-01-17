@@ -473,4 +473,81 @@ usage_t usage_t::build_from_variables(const std::vector<rstring_t> &variables,
     return usage;
 }
 
+// Helper class for pretty-printing
+struct node_dumper_t : public node_visitor_t<node_dumper_t> {
+    unsigned int depth;
+    
+    std::vector<string_t> lines;
+    
+    node_dumper_t() : depth(0) {}
+    
+    template <typename NODE_TYPE>
+    void accept(const NODE_TYPE &node) {
+        string_t result(2 * depth, ' ');
+        const std::string name = node.name();
+        result.append(name.begin(), name.end());
+        lines.push_back(result);
+    }
+    
+    // Override of visit() to bump the depth
+    template <typename NODE_TYPE>
+    void visit(const NODE_TYPE &t) {
+        depth += 1;
+        node_visitor_t<node_dumper_t>::visit(t);
+        depth -= 1;
+    }
+    
+    void accept(const rstring_t &t1) {
+        if (!t1.empty()) {
+            string_t result(2 * depth, ' ');
+            const string_t quote(1, '\'');
+            
+            result += quote + t1.std_string() + quote;
+            
+            char buff[32];
+            if (t1.length() == 1) {
+                snprintf(buff, sizeof buff, "{%lu}", t1.offset());
+            } else {
+                snprintf(buff, sizeof buff, "{%lu-%lu}", t1.offset(), t1.length());
+            }
+            result.append(buff, buff + strlen(buff));
+            lines.push_back(result);
+        }
+    }    
+};
+
+string_t dump_usage(const usage_t &usage) {
+    node_dumper_t dumper;
+    dumper.begin(usage);
+    string_t result;
+    for (const string_t &line : dumper.lines) {
+        result.append(line);
+        result.push_back('\n');
+    }
+    return result;
+}
+
+// Helper class for collecting clauses from a tree
+struct option_collector_t : public node_visitor_t<option_collector_t> {
+    option_list_t options;
+    
+    // The requested types we capture
+    void accept(const option_clause_t &node) {
+        options.push_back(node.option);
+    }
+    
+    // Other types we ignore
+    template <typename IGNORED_TYPE>
+    void accept(const IGNORED_TYPE &t UNUSED) {}
+};
+
+option_list_t collect_options(const std::vector<usage_t> &usages) {
+    option_collector_t collector;
+    for (const usage_t &usage : usages) {
+        collector.begin(usage);
+    }
+    return std::move(collector.options);
+}
+
+
 CLOSE_DOCOPT_IMPL /* namespace */
