@@ -2578,7 +2578,7 @@ static void test_errors_in_usage()
         },
         /* Case 13 */
         {   "Usage: prog --foo=<ba \n",
-            error_invalid_variable_name
+            error_missing_close_variable
         },
         /* Case 14 */
         {   "Usage: prog --foo=<bar>baz \n",
@@ -2587,6 +2587,23 @@ static void test_errors_in_usage()
         /* Case 15 */
         {   "Usage: prog [    ] \n",
             error_empty_bracket_paren
+        },
+        /* Case 16 */
+        {   "Usage: <foo>\n"
+            "<foo",
+            error_missing_close_variable
+        },
+        /* Case 17 */
+        {   "<foo()()>",
+            error_invalid_variable_name
+        },
+        /* Case 18 */
+        {   "<>",
+            error_invalid_variable_name
+        },
+        /* Case 19 */
+        {   "<",
+            error_missing_close_variable
         },
         {nullptr, 0}
         

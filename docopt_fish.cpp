@@ -77,6 +77,46 @@ static void append_token_error(error_list_t *errors, const rstring_t &token, int
     append_error(errors, token.offset(), code, txt, -1);
 }
 
+// Parses a variable name like '<foo>' from the remaining string
+// Returns the variable name if we succeed, empty string if we fail
+// Returns the remainder of the string by reference
+static rstring_t parse_variable_name(rstring_t *inout_spec, error_list_t *out_errors) {
+    assert(! inout_spec->empty());
+    assert(inout_spec->front() == '<');
+    rstring_t result;
+    rstring_t remaining = *inout_spec;
+    
+    rstring_t open_bracket, name, close_bracket;
+    std::tie(open_bracket, name, close_bracket) =
+        remaining.scan_multiple<it_equals<'<'>, char_is_valid_in_variable_name, it_equals<'>'>>();
+    assert(! open_bracket.empty());
+    
+    if (close_bracket.empty()) {
+        // Invalid variable name, or missing > outright
+        if (remaining.empty()) {
+            // like '<foo'
+            append_token_error(out_errors, open_bracket, error_missing_close_variable,
+                               "No > to balance this <");
+        } else {
+            // like '<foo<'
+            append_token_error(out_errors, remaining, error_invalid_variable_name,
+                               "Character not allowed in variable name");
+        }
+    } else if (name.empty()) {
+        append_token_error(out_errors, close_bracket, error_invalid_variable_name,
+                           "Missing variable name");
+    } else if (! remaining.empty() && char_is_valid_in_option_name(remaining.front())) {
+        // Some extra stuff after the closing >
+        append_token_error(out_errors, remaining, error_invalid_variable_name,
+                           "Extra stuff after closing '>'");
+    } else {
+        result = open_bracket.merge(name).merge(close_bracket);
+        *inout_spec = remaining;
+    }
+    return result;
+
+}
+
 // Given an inout string, parse out an option and return it by reference.
 // Update the string to reflect the number of characters used.
 bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_list_t *out_errors) {
@@ -89,49 +129,31 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         remaining->scan_multiple<it_equals<'-'>, char_is_valid_in_option_name, char_is_space,
                                  it_equals<'='>, char_is_space>();
 
-    // Now maybe scan the variable name as <var_name>
-    rstring_t variable_name, open_sign, close_sign;
-    open_sign = remaining->scan_1_char('<');
-    const bool has_variable = !open_sign.empty();
-    if (has_variable) {
-        variable_name = remaining->scan_while<char_is_valid_in_variable_name>();
-        close_sign = remaining->scan_1_char('>');
-    }
-
     // Validate our fields
     const size_t dash_count = leading_dashes.length();
     assert(dash_count > 0);
     if (dash_count > 2) {
         append_token_error(&errors, leading_dashes, error_excessive_dashes, "Too many dashes");
     }
-
+    
     if (name.empty()) {
         append_token_error(&errors, name, error_invalid_option_name, "Missing option name");
     }
-
+    
     if (equals.length() > 1) {
         append_token_error(&errors, equals, error_excessive_equal_signs, "Too many equal signs");
     }
-
-    // Report an error for cases like '--foo='
-    if (!has_variable && !equals.empty()) {
-        append_token_error(&errors, equals, error_invalid_variable_name,
-                            "Missing variable for this assignment");
+    
+    // Maybe parse a variable name
+    rstring_t var_name;
+    if (remaining->has_prefix("<")) {
+        var_name = parse_variable_name(remaining, out_errors);
     }
-
-    // Validate variable
-    if (has_variable) {
-        if (variable_name.empty()) {
-            append_token_error(&errors, variable_name, error_invalid_variable_name,
-                                "Missing variable name");
-        } else if (close_sign.empty()) {
-            append_token_error(&errors, open_sign, error_invalid_variable_name,
-                                "Missing '>' to match this '<'");
-        } else if (!remaining->empty() && char_is_valid_in_option_name(remaining->at(0))) {
-            // Next character is not whitespace and not the end of the string
-            append_token_error(&errors, *remaining, error_invalid_variable_name,
-                                "Extra stuff after closing '>'");
-        }
+    
+    // Report an error for cases like '--foo='
+    if (var_name.empty() && !equals.empty()) {
+        append_token_error(&errors, equals, error_invalid_variable_name,
+                           "Missing variable for this assignment");
     }
     
     // Determine the type
@@ -146,7 +168,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
 
     // Generate an error on long options with no separators (--foo<bar>). Only
     // short options support these.
-    if (type != single_short && has_variable &&
+    if (type != single_short && ! var_name.empty() &&
         space_separator.empty() && equals.empty()) {
         append_token_error(&errors, name, error_bad_option_separator,
                            "Long options must use a space or equals separator");
@@ -154,10 +176,6 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     
     bool success = errors.empty();
     if (success) {
-        // Build the variable like '<foo>'
-        // If we don't have one, this will be empty
-        const rstring_t variable = open_sign.merge(variable_name).merge(close_sign);
-        
         // Build flags
         option_flags_t flags = 0;
         if (type == single_long && ! equals.empty()) {
@@ -165,7 +183,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
             flags |= single_long_strict_eqsep;
         }
         
-        *result = option_t(type, leading_dashes.merge(name), variable, flags);
+        *result = option_t(type, leading_dashes.merge(name), var_name, flags);
     }
     if (out_errors) {
         std::move(errors.begin(), errors.end(), std::back_inserter(*out_errors));
@@ -334,23 +352,11 @@ static rstring_t find_header(const rstring_t &src) {
 // Return the variable name <pid> and the command stuff by reference
 static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *out_variable_name,
                                             rstring_t *out_command, error_list_t *out_errors) {
-    bool result = false;
-    assert(!spec.empty() && spec[0] == '<');
     rstring_t remaining = spec;
-
-    rstring_t open_bracket, name, close_bracket;
-    std::tie(open_bracket, name, close_bracket) =
-        remaining.scan_multiple<it_equals<'<'>, char_is_valid_in_variable_name, it_equals<'>'>>();
-
-    if (close_bracket.empty()) {
-        append_token_error(out_errors, spec, error_missing_close_variable,
-                           "No > to balance this <");
-    } else {
-        *out_variable_name = open_bracket.merge(name).merge(close_bracket);
-        *out_command = remaining.trim_whitespace();
-        result = true;
-    }
-    return result;
+    rstring_t name = parse_variable_name(&remaining, out_errors);
+    *out_variable_name = name;
+    *out_command = remaining.trim_whitespace();
+    return ! name.empty();
 }
 
 // Given a string 'src' and a whitespace-trimmed substring trimmed_src, compute
