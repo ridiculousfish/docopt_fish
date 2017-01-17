@@ -20,9 +20,8 @@ static const size_t npos = string_t::npos;
 typedef std::vector<rstring_t> rstring_list_t;
 typedef std::vector<error_t> error_list_t;
 
-// Class representing a metadata map. Keys are options and variables.
-typedef base_metadata_t<rstring_t> rmetadata_t;
-typedef std::map<rstring_t, rmetadata_t> metadata_map_t;
+// Class representing a metadata map. Keys are option names and variables.
+typedef std::map<rstring_t, base_metadata_t<rstring_t>> metadata_map_t;
 
 static inline std::basic_ostream<string_t::value_type> &errstream() {
 #if DOCOPT_USE_WCHAR
@@ -32,18 +31,14 @@ static inline std::basic_ostream<string_t::value_type> &errstream() {
 #endif
 }
 
+#pragma mark -
+#pragma mark Character classification
+#pragma mark -
+
+
 // Little helper function
 bool is_double_dash(const string_t &str) {
     return str.size() == 2 && str[0] == '-' && str[1] == '-';
-}
-
-// This represents an error in the docopt specification itself
-// The token is a substring of the docopt spec, and its location is used to
-// determine the error
-// position
-static void append_token_error(error_list_t *errors, const rstring_t &token, int code,
-                                const char *txt) {
-    append_error(errors, token.offset(), code, txt, -1);
 }
 
 // Parsing helpers
@@ -67,6 +62,19 @@ static bool char_is_valid_in_variable_name(rstring_t::char_t c) {
 
 bool char_is_space(rstring_t::char_t c) {
     return c == ' ';
+}
+
+#pragma mark -
+#pragma mark Usage Spec Parsing
+#pragma mark -
+
+// This represents an error in the docopt specification itself
+// The token is a substring of the docopt spec, and its location is used to
+// determine the error
+// position
+static void append_token_error(error_list_t *errors, const rstring_t &token, int code,
+                               const char *txt) {
+    append_error(errors, token.offset(), code, txt, -1);
 }
 
 // Given an inout string, parse out an option and return it by reference.
@@ -271,8 +279,8 @@ static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *met
     }
 
     // Parse the options portion
-    rstring_t remaining = spec.substr(0, options_end);
-    remaining.scan_while<char_is_space>();
+    // This looks like '-f, --foo'
+    rstring_t remaining = spec.substr(0, options_end).trim_whitespace();
     while (!remaining.empty()) {
         if (remaining[0] != '-') {
             append_token_error(errors, remaining, error_invalid_option_name, "Not an option");
@@ -292,8 +300,7 @@ static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *met
 
     // Store any description in the metadata
     if (!description.empty()) {
-        for (size_t i = 0; i < option_t::NAME_TYPE_COUNT; i++) {
-            rstring_t name = result.names[i];
+        for (const rstring_t &name : result.names) {
             if (!name.empty()) {
                 (*metadata)[name].description = description;
             }
@@ -303,8 +310,9 @@ static option_t parse_one_option_spec(const rstring_t &spec, metadata_map_t *met
     return result;
 }
 
-// Returns a header in the given string, or an empty string if none. We are
-// considered a header if we contain a colon, and only space / alpha text before it.
+// Returns a 'header' in the given string, or an empty string if none.
+// The "header" is the prefix ending with a colon, and only space / alpha text
+// before it.
 static rstring_t find_header(const rstring_t &src) {
     rstring_t result;
     for (size_t i = 0; i < src.length(); i++) {
@@ -328,14 +336,18 @@ static bool parse_one_variable_command_spec(const rstring_t &spec, rstring_t *ou
                                             rstring_t *out_command, error_list_t *out_errors) {
     bool result = false;
     assert(!spec.empty() && spec[0] == '<');
-    const size_t close_bracket = spec.find(">");
-    if (close_bracket == rstring_t::npos) {
+    rstring_t remaining = spec;
+
+    rstring_t open_bracket, name, close_bracket;
+    std::tie(open_bracket, name, close_bracket) =
+        remaining.scan_multiple<it_equals<'<'>, char_is_valid_in_variable_name, it_equals<'>'>>();
+
+    if (close_bracket.empty()) {
         append_token_error(out_errors, spec, error_missing_close_variable,
-                            "No > to balance this <");
+                           "No > to balance this <");
     } else {
-        assert(close_bracket < spec.length());
-        *out_variable_name = spec.substr(0, close_bracket + 1).trim_whitespace();
-        *out_command = spec.substr_from(close_bracket + 1).trim_whitespace();
+        *out_variable_name = open_bracket.merge(name).merge(close_bracket);
+        *out_command = remaining.trim_whitespace();
         result = true;
     }
     return result;
