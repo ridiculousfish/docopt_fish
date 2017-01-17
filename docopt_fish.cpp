@@ -46,26 +46,20 @@ static void append_token_error(error_list_t *errors, const rstring_t &token, int
     append_error(errors, token.offset(), code, txt, -1);
 }
 
-// Annoying helper unction to move-append one vector to a receiver
-template<typename T>
-void append(std::vector<T> &&victim, std::vector<T> *receiver) {
-    if (receiver)
-        std::move(victim.begin(), victim.end(), std::back_inserter(*receiver));
-}
-
 // Parsing helpers
 template <char T>
 bool it_equals(rstring_t::char_t c) {
     return c == T;
 }
 
-bool char_is_valid_in_parameter(rstring_t::char_t c) {
+// Set of characters which
+static bool char_is_valid_in_option_name(rstring_t::char_t c) {
     const char *invalid = ".|<>,=()[] \t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
 }
 
-bool char_is_valid_in_variable_name(rstring_t::char_t c) {
+static bool char_is_valid_in_variable_name(rstring_t::char_t c) {
     const char *invalid = "|()[]>\t\n";
     const char *end = invalid + strlen(invalid);
     return std::find(invalid, end, c) == end;
@@ -84,7 +78,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
     // An option is one or more dashes, the option name, maybe space and/or equals
     rstring_t leading_dashes, name, space_separator, equals;
     std::tie(leading_dashes, name, space_separator, equals, std::ignore) =
-        remaining->scan_multiple<it_equals<'-'>, char_is_valid_in_parameter, char_is_space,
+        remaining->scan_multiple<it_equals<'-'>, char_is_valid_in_option_name, char_is_space,
                                  it_equals<'='>, char_is_space>();
 
     // Now maybe scan the variable name as <var_name>
@@ -125,7 +119,7 @@ bool option_t::parse_from_string(rstring_t *remaining, option_t *result, error_l
         } else if (close_sign.empty()) {
             append_token_error(&errors, open_sign, error_invalid_variable_name,
                                 "Missing '>' to match this '<'");
-        } else if (!remaining->empty() && char_is_valid_in_parameter(remaining->at(0))) {
+        } else if (!remaining->empty() && char_is_valid_in_option_name(remaining->at(0))) {
             // Next character is not whitespace and not the end of the string
             append_token_error(&errors, *remaining, error_invalid_variable_name,
                                 "Extra stuff after closing '>'");
@@ -192,7 +186,7 @@ option_t option_t::parse_from_argument(const string_t &str, option_t::name_type_
         }
     } else {
         // Long option
-        name = remaining.scan_while<char_is_valid_in_parameter>();
+        name = remaining.scan_while<char_is_valid_in_option_name>();
 
         // Check to see if there's an = sign
         // If we got an equals sign, the rest is the value
@@ -738,8 +732,11 @@ void argv_classifier_t::parse_next_arg(error_list_t *out_errors) {
             // short option with a value. If there is a short option -D, then it is
             // more likely that the error from the short option parsing is what we
             // want. So append our short errors first.
-            append(std::move(short_errors), out_errors);
-            append(std::move(long_errors), out_errors);
+            if (out_errors) {
+                auto dst = std::back_inserter(*out_errors);
+                std::move(short_errors.begin(), short_errors.end(), dst);
+                std::move(long_errors.begin(), long_errors.end(), dst);
+            }
             this->idx += 1;
         }
     } else {
