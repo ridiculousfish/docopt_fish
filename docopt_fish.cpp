@@ -770,7 +770,6 @@ arg_classification_t argv_classifier_t::classify_arguments(const string_list_t &
 
 // This is the private implementation class of argument_parser_t
 class docopt_impl {
-    /* Constructor takes the source in either narrow or wide form. */
    public:
     explicit docopt_impl(string_t s) : usage_storage(std::move(s)) {}
     explicit docopt_impl(std::vector<annotated_option_t> opts)
@@ -811,7 +810,8 @@ class docopt_impl {
     metadata_map_t names_to_metadata;
 
    public:
-    /* Populate ourselves from our usage storage. */
+    
+    // Populate ourselves from our usage storage.
     void populate_from_usage(error_list_t *out_errors) {
         // Distinguish between normal (docopt) and exposition (e.g. description). */
         enum mode_t { mode_normal, mode_exposition } mode = mode_normal;
@@ -1009,7 +1009,7 @@ class docopt_impl {
     // Parses the docopt usage spec and sets up internal state.
     // Returns true on success, false on error
     bool preflight(error_list_t *out_errors) {
-        /* If we have no usage, apply the default one */
+        // If we have no usage, apply the default one
         if (this->usages.empty()) {
             this->usages.push_back(usage_t::make_default());
         }

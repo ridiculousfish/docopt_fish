@@ -17,8 +17,8 @@ OPEN_DOCOPT_IMPL
 #pragma mark Usage Grammar
 #pragma mark -
 
-// Helper to reset a unique_ptr to a new value constructed from the given
-// arg
+// Helper to reset a unique_ptr to a new value constructed
+// from the given arg
 template <typename Contents, typename Arg>
 void emplace_unique(std::unique_ptr<Contents> *ptr, Arg &&arg) {
     return ptr->reset(new Contents(std::forward<Arg>(arg)));
@@ -357,34 +357,40 @@ struct parse_context_t {
         return option_clause ? &option_clause->option : nullptr;
     }
 
-    /* For example:
-     usage: prog [-e | --erase]
-     prog [-a <name> | --add <name>]
-
-     Here we need to mark -e's corresponding long name as --erase, and same for
-     -a/--add.
-     This applies if we have exactly two options.
-     */
+    // For example:
+    // usage: prog [-e | --erase]
+    // prog [-a <name> | --add <name>]
+    //
+    // Here we need to mark -e's corresponding long name as --erase, and same for
+    // -a/--add.
+    // This applies if we have exactly two options.
     void collapse_corresponding_options(alternation_list_t *list) {
         assert(list != nullptr);
         // Must have exactly 2 alternations
         if (list->alternations.size() != 2) {
             return;
         }
-        option_t *first = single_option(&list->alternations[0]);
-        option_t *second = single_option(&list->alternations[1]);
+        option_t *opt1 = single_option(&list->alternations[0]);
+        option_t *opt2 = single_option(&list->alternations[1]);
 
         // Both options must be non-NULL, and they must not have overlapping name types, and their
         // values must agree (perhaps both empty)
-        bool options_correspond =
-            (first != nullptr && second != nullptr && first->value == second->value &&
-             !first->name_types_overlap(*second));
-        if (options_correspond) {
-            // Merge them. Note: this merge_from call writes deep into our tree!
-            // Then delete the second alternation
-            first->merge_from(*second);
-            list->alternations.pop_back();
-            assert(list->alternations.size() == 1);
+        if (opt1 && opt2 && opt1->value == opt2->value) {
+            // check to see if their name types overlap
+            bool names_overlap = false;
+            for (size_t i=0; i < option_t::NAME_TYPE_COUNT; i++) {
+                if (!opt1->names[i].empty() && !opt2->names[i].empty()) {
+                    names_overlap = true;
+                    break;
+                }
+            }
+            if (! names_overlap) {
+                // Merge them. Note: this merge_from call writes deep into our tree!
+                // Then delete the second alternation
+                opt1->merge_from(*opt2);
+                list->alternations.pop_back();
+                assert(list->alternations.size() == 1);
+            }
         }
     }
 };

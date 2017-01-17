@@ -107,15 +107,13 @@ struct usage_t {
         v->visit(alternation_list);
     }
 
-    /* Create a "default" usage that has an empty program name and just the
-     * [options] portion. */
+    // Create a "default" usage that has an empty program name and just the
+    // [options] portion.
     static usage_t make_default();
 
-    /* Hackish function to build a parse tree from a (possibly empty) list of
-       variable names,
-       optionally including an options shortcut.
-       Each variable becomes an element in an alternation list.
-     */
+    // Function to build a parse tree from a (possibly empty) list of
+    // variable names, optionally including an options shortcut.
+    // Each variable becomes an element in an alternation list.
     static usage_t build_from_variables(const std::vector<rstring_t> &variables,
                                         bool include_options_shortcut);
 };

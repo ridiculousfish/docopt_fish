@@ -428,19 +428,6 @@ public:
         return where != this->names.end();
     }
 
-    // Hackish? Returns true if we share a name type
-    bool name_types_overlap(const option_t &rhs) const {
-        bool result = false;
-        size_t idx = NAME_TYPE_COUNT;
-        while (idx--) {
-            if (!this->names[idx].empty() && !rhs.names[idx].empty()) {
-                result = true;
-                break;
-            }
-        }
-        return result;
-    }
-
     // Returns true if the options have the same name
     bool has_same_name(const option_t &opt2) const {
         bool result = false;
