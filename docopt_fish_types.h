@@ -9,6 +9,7 @@
 #include <climits>
 #include <vector>
 #include <array>
+#include <set>
 
 // Hide open and close brackets to avoid an annoying leading indent inside our class
 #define OPEN_DOCOPT_IMPL namespace docopt_fish {
@@ -511,19 +512,18 @@ inline void append_error(std::vector<error_t> *errors, size_t location, int code
     }
 }
 
-/* Internal flags */
+
+// Internal flags
 enum {
-    /* When matching, if we run out of positionals or options, instead of failing,
-       return a match
-       containing a suggestion */
+    // When matching, if we run out of positionals or options, instead of failing,
+    // return a match containing a suggestion
     flag_generate_suggestions = 1U << 16,
 
-    /* When matching, if we consume all positionals and options, stop searching.
-       */
+    // When matching, if we consume all positionals and options, stop searching.
     flag_stop_after_consuming_everything = 1U << 17
 };
 
-/* Error codes */
+// Error codes
 enum {
     error_none,
 
@@ -560,6 +560,73 @@ enum {
     error_unknown_option,              // Option is not present in usage
     error_wrong_separator              // Wrong sort of separator
 };
+
+// A positional argument like 'checkout'
+// This tracks its index in argv
+struct positional_argument_t {
+    size_t idx_in_argv;
+    explicit positional_argument_t(size_t idx) : idx_in_argv(idx) {}
+};
+typedef std::vector<positional_argument_t> positional_argument_list_t;
+
+
+// A resolved option references an option in argv
+struct resolved_option_t {
+    // The option from the usage referenced by this
+    option_t option;
+    
+    // The index (in argv) of the name portion of the option
+    size_t name_idx_in_argv;
+    
+    // The index of the argument where the value was found. npos for none.
+    size_t value_idx_in_argv;
+    
+    // The range within that argument where the value was found. This will be the
+    // entire string if
+    // the argument is separate (--foo bar) but will be the portion after the
+    // equals if not
+    // (--foo=bar, -Dfoo)
+    rstring_t value_in_arg;
+    
+    resolved_option_t(const option_t &opt, size_t name_idx, size_t val_idx, const rstring_t &value)
+    : option(opt),
+    name_idx_in_argv(name_idx),
+    value_idx_in_argv(val_idx),
+    value_in_arg(value) {}
+};
+typedef std::vector<resolved_option_t> resolved_option_list_t;
+
+// Type that tracks how we classify arguments into positionals, options, and --
+struct arg_classification_t {
+    positional_argument_list_t positionals;
+    resolved_option_list_t resolved_options;
+    size_t double_dash_idx = -1;
+};
+
+typedef std::vector<size_t> index_list_t;
+typedef std::map<rstring_t, argument_t> option_rmap_t;
+
+// The result of matching
+struct match_results_t {
+    // Index list of unused arguments
+    index_list_t unused_args;
+    
+    // List of options
+    option_rmap_t option_map;
+    
+    // Set of suggestions.
+    // This is only generated if flag_generate_suggestions is set
+    std::set<rstring_t> suggestions;
+    
+};
+
+struct usage_t;
+match_results_t match_usages(const std::vector<usage_t> &usages,
+                             parse_flags_t flags,
+                             const option_list_t &shortcut_options,
+                             const arg_classification_t &aclass,
+                             const string_list_t &argv);
+
 
 CLOSE_DOCOPT_IMPL
 

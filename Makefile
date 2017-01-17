@@ -1,4 +1,5 @@
-DOCOPT_SRC_FILES=docopt_fish.cpp docopt_fish_parse_tree.cpp
+DOCOPT_SRC_FILES=docopt_fish.cpp docopt_fish_parse_tree.cpp \
+                 docopt_matching.cpp
 TEST_SRC_FILES=${DOCOPT_SRC_FILES} docopt_fish_test.cpp
 BENCHMARK_SRC_FILES=${DOCOPT_SRC_FILES} docopt_fish_benchmark.cpp
 FUZZTARGET_SRC_FILES=${DOCOPT_SRC_FILES} docopt_fuzz_driver.cpp
